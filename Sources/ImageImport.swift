@@ -15,7 +15,7 @@ enum HubImageImportError: LocalizedError {
 
 /// Reads image headers before decoding. Call on a worker queue, never the UI queue.
 enum HubImageImport {
-    static let workerQueue = DispatchQueue(label: "FolderHubReplica.ImageImport", qos: .userInitiated)
+    static let workerQueue = DispatchQueue(label: "FileDock.ImageImport", qos: .userInitiated)
     static func pngData(from data: Data) throws -> Data {
         guard data.count <= 32 * 1024 * 1024 else { throw HubImageImportError.tooLarge }
         let options = [kCGImageSourceShouldCache: false] as CFDictionary

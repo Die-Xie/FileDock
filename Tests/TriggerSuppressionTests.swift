@@ -2,7 +2,7 @@ import AppKit
 
 @main
 struct TriggerSuppressionTests {
-    static let own = "local.diexie.folderhub-replica"
+    static let own = "local.diexie.filedock"
     static let primary = CGRect(x: 0, y: 0, width: 1512, height: 982)
     static let secondary = CGRect(x: -1920, y: 100, width: 1920, height: 1080)
 

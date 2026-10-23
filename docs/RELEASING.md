@@ -4,7 +4,7 @@
 
 ## 本机准备
 
-1. 更新 `Resources/Info.plist` 的版本号和 build，完成测试、通用架构构建及本机界面验证。继续使用现有 `local.diexie.folderhub-replica` bundle ID 和固定证书；不要为发布创建新签名身份。
+1. 更新 `Resources/Info.plist` 的版本号和 build，完成测试、通用架构构建及本机界面验证。继续使用现有 `local.diexie.filedock` bundle ID 和固定证书；不要为发布创建新签名身份。
 2. 对交付应用执行 `codesign --verify --deep --strict --all-architectures`，并使用 `sign.sh` 中相同的 designated requirement 核对固定证书和 bundle ID。确认 ZIP 内只有 `FileDock.app` 及其资源元数据，不包含配置、Signing 目录、证书备份、钥匙串或私钥。此处是实际签名验证；发布脚本不会在 Linux 上声称验证 macOS 信任或公证。
 3. 将应用打包为 ZIP，准备独立的 UTF-8 `RELEASE_NOTES.md`。说明版本、关键变更、macOS 支持范围与未公证状态。ZIP 必须小于 95 MiB，以便通过临时 Git 分支上传。
 4. 提交源码、工作流和必要文档后通过 SSH 推送到 `origin/main`。发布脚本要求工作树干净、`HEAD` 与远程 `main` 完全相同，且目标 tag、临时资源分支均不存在。ZIP 和发布说明放在仓库外或被忽略的构建目录中。

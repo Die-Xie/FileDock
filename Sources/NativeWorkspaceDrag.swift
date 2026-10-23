@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-let hubWorkspaceDragType = NSPasteboard.PasteboardType("local.diexie.folderhub-replica.workspace-reorder")
+let hubWorkspaceDragType = NSPasteboard.PasteboardType("local.diexie.filedock.workspace-reorder")
 let hubWorkspaceDragDidEnd = Notification.Name("HubWorkspaceDragDidEnd")
 
 struct HubWorkspaceDragPayload: Equatable {

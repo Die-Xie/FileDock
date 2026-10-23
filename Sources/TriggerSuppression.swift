@@ -162,7 +162,7 @@ private enum HubTriggerAccessibility {
 @MainActor
 final class HubTriggerSuppressionMonitor {
     private let ownBundleID: String
-    private let worker = DispatchQueue(label: "local.diexie.folderhub.trigger-context", qos: .utility)
+    private let worker = DispatchQueue(label: "local.diexie.filedock.trigger-context", qos: .utility)
     private var foreground = HubTriggerForeground()
     private var screens: [CGRect] = []
     private var timer: Timer?
@@ -175,7 +175,7 @@ final class HubTriggerSuppressionMonitor {
     private var previousExternalSystemFullScreen = false
     private var lastObservedFrontmostPID: pid_t?
 
-    init(ownBundleID: String = Bundle.main.bundleIdentifier ?? "local.diexie.folderhub-replica") {
+    init(ownBundleID: String = Bundle.main.bundleIdentifier ?? "local.diexie.filedock") {
         self.ownBundleID = ownBundleID
     }
 

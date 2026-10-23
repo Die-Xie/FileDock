@@ -217,6 +217,23 @@ struct HubView: View {
         }
     }
 
+    @State private var stagingHoverID = UUID()
+    private func shortcutHover(_ entered: Bool, key: UUID, action: @escaping () -> Void) {
+        guard entered else {
+            if hoveredWorkspace == key { hoverTask?.cancel(); hoveredWorkspace = nil }
+            return
+        }
+        hoverTask?.cancel()
+        guard !HubWorkspaceDragState.isDragging, !HubFileDragState.isDragging, model.settings.switchDelay > 0 else { return }
+        hoveredWorkspace = key
+        let task = DispatchWorkItem {
+            guard hoveredWorkspace == key, !HubWorkspaceDragState.isDragging, !HubFileDragState.isDragging else { return }
+            action()
+        }
+        hoverTask = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + model.settings.switchDelay, execute: task)
+    }
+
     @ViewBuilder private var workspaceControls: some View {
         if let favorite = model.fixedFavoriteWorkspace {
             Button { model.selectWorkspace(favorite.id) } label: {
@@ -226,6 +243,7 @@ struct HubView: View {
             }.buttonStyle(.plain)
                 .accessibilityLabel("收藏：\(favorite.name)")
                 .help("\(favorite.name) · 右键可隐藏快捷入口")
+                .onHover { shortcutHover($0, key: favorite.id, action: { model.selectWorkspace(favorite.id) }) }
                 .contextMenu {
                     HubMenuButton("编辑收藏…", systemImage: "pencil") { editingWorkspace = favorite }
                     HubMenuButton("隐藏收藏快捷入口", systemImage: "eye.slash") { model.setFavoriteShortcutVisible(false) }
@@ -248,6 +266,7 @@ struct HubView: View {
             }.buttonStyle(.plain)
                 .accessibilityLabel("暂存区，\(model.stagedURLs.count) 个项目")
                 .help("暂存区 · 拖入文件暂存引用，点击查看，右键快速转移")
+                .onHover { shortcutHover($0, key: model.settings.stagingWorkspaceID ?? stagingHoverID, action: { model.openStagingWorkspace() }) }
                 .onDrop(of: [hubFileDragType, .fileURL, .image, .url, .item], isTargeted: $stagingDropTargeted, perform: receiveStagingDrop)
                 .contextMenu {
                     HubMenuButton("打开暂存区", systemImage: "tray") { model.openStagingWorkspace() }

@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-let hubFileDragType = UTType(exportedAs: "com.folderhub.replica.file-drag-context")
+let hubFileDragType = UTType(exportedAs: "com.filedock.replica.file-drag-context")
 let hubFileDragDidEnd = Notification.Name("HubFileDragDidEnd")
 let hubWindowDragWillBegin = Notification.Name("HubWindowDragWillBegin")
 

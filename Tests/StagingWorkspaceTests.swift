@@ -4,7 +4,7 @@ import Foundation
 @main struct StagingWorkspaceTests {
     @MainActor static func main() async throws {
         let fm = FileManager.default
-        let base = fm.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("FolderHub-StagingTests-\(UUID().uuidString)").standardizedFileURL
+        let base = fm.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("FileDock-StagingTests-\(UUID().uuidString)").standardizedFileURL
         try fm.createDirectory(at: base, withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: base) }
         try migrationAndReferenceSafety(base)
@@ -320,7 +320,7 @@ import Foundation
         let before = FileEntry(url: folder)
         var changes = URLResourceValues()
         changes.labelNumber = before.labelNumber == 6 ? 2 : 6
-        changes.tagNames = ["FolderHub Test Tag"]
+        changes.tagNames = ["FileDock Test Tag"]
         var writable = folder
         try writable.setResourceValues(changes)
         var fresh = URL(fileURLWithPath: folder.path)

@@ -7,7 +7,7 @@ import UniformTypeIdentifiers
 struct StagingDropTests {
     @MainActor static func main() async throws {
         let manager = FileManager.default
-        let root = manager.temporaryDirectory.appendingPathComponent("FolderHub-StagingDrop-\(UUID().uuidString)", isDirectory: true)
+        let root = manager.temporaryDirectory.appendingPathComponent("FileDock-StagingDrop-\(UUID().uuidString)", isDirectory: true)
         try manager.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? manager.removeItem(at: root) }
         try await localFilesRemainReferences(root)

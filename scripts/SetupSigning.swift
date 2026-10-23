@@ -34,9 +34,9 @@ func run(_ executable: String, _ arguments: [String]) throws {
 }
 
 let fm = FileManager.default
-let bundleID = "local.diexie.folderhub-replica"
+let bundleID = "local.diexie.filedock"
 let support = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-let directory = support.appendingPathComponent("FolderHubReplica/Signing", isDirectory: true)
+let directory = support.appendingPathComponent("FileDock/Signing", isDirectory: true)
 let configURL = directory.appendingPathComponent("identity.plist")
 let certURL = directory.appendingPathComponent("certificate.der")
 let loginKeychainURL = fm.homeDirectoryForCurrentUser.appendingPathComponent("Library/Keychains/login.keychain-db")
@@ -75,6 +75,22 @@ func checkExisting() throws {
 }
 
 do {
+    // One-time compatibility import; all subsequent reads use FileDock only.
+    let legacy = support.appendingPathComponent("FolderHubReplica", isDirectory: true)
+    let current = support.appendingPathComponent("FileDock", isDirectory: true)
+    if !fm.fileExists(atPath: current.path), fm.fileExists(atPath: legacy.path) {
+        try requireOwnedFile(legacy, directory: true)
+        try fm.moveItem(at: legacy, to: current)
+    }
+    if fm.fileExists(atPath: configURL.path) {
+        try requireOwnedFile(configURL)
+        var configuration = try PropertyListSerialization.propertyList(from: Data(contentsOf: configURL), format: nil) as! [String: Any]
+        if configuration["bundleIdentifier"] as? String == "local.diexie.folderhub-replica" {
+            configuration["bundleIdentifier"] = bundleID
+            try PropertyListSerialization.data(fromPropertyList: configuration, format: .xml, options: 0).write(to: configURL, options: .atomic)
+            try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: configURL.path)
+        }
+    }
     if fm.fileExists(atPath: configURL.path) {
         try checkExisting()
         exit(0)
@@ -95,7 +111,7 @@ do {
     guard !fm.fileExists(atPath: certURL.path) else {
         throw SetupFailure.message("A certificate already exists without its configuration. Restore the configuration instead of replacing the identity.")
     }
-    let temporary = fm.temporaryDirectory.appendingPathComponent("FolderHubSigning-\(UUID().uuidString)", isDirectory: true)
+    let temporary = fm.temporaryDirectory.appendingPathComponent("FileDockSigning-\(UUID().uuidString)", isDirectory: true)
     try fm.createDirectory(at: temporary, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
     defer { try? fm.removeItem(at: temporary) }
     let keyPEM = temporary.appendingPathComponent("key.pem")
@@ -108,7 +124,7 @@ do {
     x509_extensions = signing
     prompt = no
     [subject]
-    CN = Folder Hub Replica Local Signing
+    CN = FileDock Local Signing
     [signing]
     basicConstraints = critical,CA:FALSE
     keyUsage = critical,digitalSignature
@@ -132,7 +148,7 @@ do {
     try require(SecTrustedApplicationCreateFromPath("/usr/bin/codesign", &trustedCodesign), "Identify codesign")
     guard let trustedCodesign else { throw SetupFailure.message("codesign unavailable") }
     var access: SecAccess?
-    try require(SecAccessCreate("Folder Hub Replica signing key" as CFString, [trustedCodesign] as CFArray, &access), "Limit signing key access")
+    try require(SecAccessCreate("FileDock signing key" as CFString, [trustedCodesign] as CFArray, &access), "Limit signing key access")
     guard let access else { throw SetupFailure.message("Signing key access control unavailable") }
     let keyUsage = [kSecAttrCanSign] as CFArray
     let keyAttributes = [kSecAttrIsPermanent, kSecAttrIsSensitive] as CFArray

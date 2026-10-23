@@ -86,7 +86,7 @@ jobs:
                   assert not any(part.endswith(('.pem', '.p12', '.pfx', '.keychain', '.keychain-db')) or part == 'identity.plist' for part in parts), 'Signing material in ZIP'
               info = plistlib.loads(package.read('FileDock.app/Contents/Info.plist'))
               assert info['CFBundleShortVersionString'] == tag[1:]
-              assert info['CFBundleIdentifier'] == 'local.diexie.folderhub-replica'
+              assert info['CFBundleIdentifier'] == 'local.diexie.filedock'
               assert info['CFBundleName'] == 'FileDock' and info['CFBundleDisplayName'] == 'FileDock'
           PY
           sha256sum --check --strict SHA256SUMS.txt

@@ -133,7 +133,7 @@ final class HubQQMusicController: ObservableObject {
     @Published private(set) var message: String?
 
     private let backend: HubQQMusicBackend
-    private let queue = DispatchQueue(label: "app.folderhub.qqmusic.accessibility", qos: .userInitiated)
+    private let queue = DispatchQueue(label: "app.filedock.qqmusic.accessibility", qos: .userInitiated)
     private let epoch = HubQQMusicEpoch()
     private let pollInterval: TimeInterval
     private var generation: UInt64 = 0
@@ -299,7 +299,7 @@ final class HubQQMusicController: ObservableObject {
 // QQ main-window playback group is inspected; web views and playlists are excluded.
 final class HubQQMusicAXBackend: HubQQMusicBackend {
     private let timeout: Float = 0.35
-    private static let logger = Logger(subsystem: "app.folderhub.qqmusic", category: "PlaybackLayout")
+    private static let logger = Logger(subsystem: "app.filedock.qqmusic", category: "PlaybackLayout")
 
     func probe() -> HubQQMusicProbe {
         let installed = NSWorkspace.shared.urlForApplication(withBundleIdentifier: HubQQMusicAccessibility.bundleID) != nil

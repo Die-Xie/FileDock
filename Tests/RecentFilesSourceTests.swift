@@ -60,7 +60,7 @@ struct RecentFilesSourceTests {
     @MainActor
     static func main() throws {
         let manager = FileManager.default
-        let fixture = manager.temporaryDirectory.appendingPathComponent("FolderHubRecentTests-\(UUID().uuidString)", isDirectory: true)
+        let fixture = manager.temporaryDirectory.appendingPathComponent("FileDockRecentTests-\(UUID().uuidString)", isDirectory: true)
         let home = fixture.appendingPathComponent("user", isDirectory: true)
         try manager.createDirectory(at: home, withIntermediateDirectories: true)
         defer { try? manager.removeItem(at: fixture) }

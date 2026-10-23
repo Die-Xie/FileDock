@@ -65,6 +65,8 @@ struct HubSettings: Codable, Equatable {
     var iconSize: Double = 46
     var horizontalScroll = false
     var showScrollbar = true
+    var notchClickToWake: Bool? = nil
+    var usesNotchClickToWake: Bool { hotCorner == "notch" && notchClickToWake == true }
     var hoverDelay: Double = 0.12
     var autoHideDelay: Double? = nil
     var globalShortcuts: HubGlobalShortcuts? = nil
@@ -334,8 +336,16 @@ enum HubFileOperations {
          recentFiles: HubRecentFilesProviding? = nil) {
         self.recentFiles = recentFiles ?? HubRecentFilesSource()
         let support = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("FolderHubReplica", isDirectory: true)
+            .appendingPathComponent("FileDock", isDirectory: true)
         self.configurationURL = storageURL ?? support.appendingPathComponent(demo ? "demo-config.json" : "config.json")
+        if storageURL == nil {
+            let legacy = support.deletingLastPathComponent().appendingPathComponent("FolderHubReplica", isDirectory: true)
+            if !fm.fileExists(atPath: support.path), fm.fileExists(atPath: legacy.path) {
+                do { try fm.moveItem(at: legacy, to: support) }
+                catch { errorMessage = "旧配置迁移失败：\(error.localizedDescription)"; return }
+            }
+        }
+
         var loadedConfiguration = false
         if fm.fileExists(atPath: self.configurationURL.path) {
             do {
@@ -1239,6 +1249,22 @@ enum HubFileOperations {
     private func apply(data: Data) throws {
         guard data.count <= Self.maximumConfigurationBytes else { throw HubFileError.corruptConfig }
         var state = try JSONDecoder().decode(SavedState.self, from: data)
+        // Retire stored paths inside the migrated support directory as well.
+        let support = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let oldRoot = support.appendingPathComponent("FolderHubReplica").path
+        let newRoot = support.appendingPathComponent("FileDock").path
+        func migrated(_ path: String) -> String {
+            guard path == oldRoot || path.hasPrefix(oldRoot + "/") else { return path }
+            return newRoot + path.dropFirst(oldRoot.count)
+        }
+        for index in state.workspaces.indices {
+            state.workspaces[index].rootPath = state.workspaces[index].rootPath.map(migrated)
+            state.workspaces[index].customIconPath = state.workspaces[index].customIconPath.map(migrated)
+            state.workspaces[index].referencePaths = state.workspaces[index].referencePaths.map(migrated)
+            if let orders = state.workspaces[index].directoryOrders {
+                state.workspaces[index].directoryOrders = Dictionary(orders.map { (migrated($0.key), $0.value.map(migrated)) }, uniquingKeysWith: { first, _ in first })
+            }
+        }
         for index in state.workspaces.indices where state.workspaces[index].mode == .recents {
             state.workspaces[index].rootPath = nil
             state.workspaces[index].referencePaths = []

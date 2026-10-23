@@ -56,7 +56,7 @@ with zipfile.ZipFile(archive) as package:
         assert not any(part.endswith(('.pem', '.p12', '.pfx', '.keychain', '.keychain-db')) or part == 'identity.plist' for part in parts), 'Signing material must never be packaged'
     info = plistlib.loads(package.read('FileDock.app/Contents/Info.plist'))
     assert info['CFBundleShortVersionString'] == version, 'ZIP version differs from the committed source version'
-    assert info['CFBundleIdentifier'] == 'local.diexie.folderhub-replica', 'The fixed application identity must not change'
+    assert info['CFBundleIdentifier'] == 'local.diexie.filedock', 'The fixed application identity must not change'
     assert info['CFBundleName'] == 'FileDock' and info['CFBundleDisplayName'] == 'FileDock', 'Unexpected application name'
     assert package.testzip() is None, 'ZIP integrity check failed'
 PY

@@ -42,6 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
     private var subscriptions: Set<AnyCancellable> = []
     private var notificationTokens: [NSObjectProtocol] = []
     private var keyMonitor: Any?
+    private var notchClickMonitors: [Any] = []
     private var hoverActivation = HubHoverActivation()
     private var hoverDismissal = HubHoverDismissal()
     private let triggerSuppression = HubTriggerSuppressionMonitor()
@@ -99,6 +100,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         configureHotKeys()
         configureNotifications()
         configureKeyboard()
+        if let monitor = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDown, handler: { [weak self] _ in self?.wakeFromNotchClick() }) { notchClickMonitors.append(monitor) }
+        if let monitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown, handler: { [weak self] event in self?.wakeFromNotchClick(); return event }) { notchClickMonitors.append(monitor) }
         model.$settings.sink { [weak self] _ in
             DispatchQueue.main.async { self?.applySettings() }
         }.store(in: &subscriptions)
@@ -121,7 +124,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         panel.hubDelegate = self
         panel.delegate = self
         panel.title = "FileDock"
-        panel.identifier = NSUserInterfaceItemIdentifier("FolderHubReplicaPanel")
+        panel.identifier = NSUserInterfaceItemIdentifier("FileDockPanel")
         panel.minSize = NSSize(width: 600, height: 300)
         panel.maxSize = NSSize(width: 1600, height: 1100)
         panel.isFloatingPanel = true
@@ -637,6 +640,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         }
     }
 
+    private func wakeFromNotchClick() {
+        guard let model, model.settings.usesNotchClickToWake,
+              model.settings.triggerMode != "keyboard", !desiredVisible,
+              windowDragSession == nil, settingsWindow?.isVisible != true,
+              !hasActiveDialog, !NSMenuHasTrackingMenu(),
+              !HubFileDragState.isDragging, !HubWorkspaceDragState.isDragging else { return }
+        let pointer = NSEvent.mouseLocation
+        guard hoverActivationRegion(at: pointer).id != nil,
+              !triggerSuppression.shouldSuppressHover(at: pointer,
+                blockedBundleIDs: model.settings.resolvedBlockedApplicationBundleIDs,
+                suppressFullScreen: model.settings.resolvedSuppressHoverInFullScreen) else { return }
+        shownFromHover = true
+        showPanel(atCursor: false)
+    }
+
     private func tick() {
         guard let model, let panel else { return }
         finishWindowDragIfReleased()
@@ -652,7 +670,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
                 blockedBundleIDs: model.settings.resolvedBlockedApplicationBundleIDs,
                 suppressFullScreen: model.settings.resolvedSuppressHoverInFullScreen)
         if hoverActivation.update(regionID: activationRegion.id, now: ProcessInfo.processInfo.systemUptime,
-                                  delay: model.settings.hoverDelay, enabled: hoverEnabled,
+                                  delay: model.settings.hoverDelay, enabled: hoverEnabled && !model.settings.usesNotchClickToWake,
                                   strictDwell: activationRegion.strictDwell) {
             shownFromHover = true
             showPanel(atCursor: false)
@@ -764,7 +782,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         lastSettingsData = data
         triggerSuppression.configure(enabled: model.settings.triggerMode != "keyboard",
                                      needsWindowProbe: model.settings.resolvedSuppressHoverInFullScreen)
-        let triggerSignature = [model.settings.triggerMode, model.settings.hotCorner,
+        let triggerSignature = [String(model.settings.usesNotchClickToWake), model.settings.triggerMode, model.settings.hotCorner,
                                 String(model.settings.secondaryScreens), String(model.settings.hoverDelay),
                                 String(model.settings.resolvedSuppressHoverInFullScreen)] + model.settings.resolvedBlockedApplicationBundleIDs
         let signature = triggerSignature.joined(separator: "\u{0}")
@@ -942,6 +960,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         timer?.invalidate()
         triggerSuppression.stop()
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
+        notchClickMonitors.forEach { NSEvent.removeMonitor($0) }
         hotKeys.forEach { UnregisterEventHotKey($0) }
         if let hotKeyHandler { RemoveEventHandler(hotKeyHandler) }
         for token in notificationTokens {
@@ -957,7 +976,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
 private func NSMenuHasTrackingMenu() -> Bool { RunLoop.current.currentMode == .eventTracking }
 
 @main
-struct FolderHubReplicaMain {
+struct FileDockMain {
     @MainActor static func main() {
         let app = NSApplication.shared
         let delegate = AppDelegate()

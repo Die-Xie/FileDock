@@ -7,7 +7,7 @@ import Darwin
 @main struct StagingImportTests {
     static func main() throws {
         let manager = FileManager.default
-        let base = manager.temporaryDirectory.appendingPathComponent("FolderHubStagingImportTests-" + UUID().uuidString, isDirectory: true)
+        let base = manager.temporaryDirectory.appendingPathComponent("FileDockStagingImportTests-" + UUID().uuidString, isDirectory: true)
         try manager.createDirectory(at: base, withIntermediateDirectories: true)
         defer { try? manager.removeItem(at: base) }
         let root = base.appendingPathComponent("stored", isDirectory: true)

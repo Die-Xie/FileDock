@@ -18,7 +18,7 @@ import Foundation
         configuration.timeoutIntervalForResource = 20
         let delegate = HubImageDownload(completion: completion)
         let queue = OperationQueue()
-        queue.name = "FolderHubReplica.WebImageDownload"
+        queue.name = "FileDock.WebImageDownload"
         queue.maxConcurrentOperationCount = 1
         let session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: queue)
         delegate.session = session

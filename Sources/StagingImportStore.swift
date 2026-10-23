@@ -24,7 +24,7 @@ struct HubStagingImportStore: Sendable {
     init(rootURL: URL? = nil) {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support", isDirectory: true)
-        self.rootURL = (rootURL ?? support.appendingPathComponent("FolderHubReplica/Staged Imports", isDirectory: true))
+        self.rootURL = (rootURL ?? support.appendingPathComponent("FileDock/Staged Imports", isDirectory: true))
             .standardizedFileURL
     }
 

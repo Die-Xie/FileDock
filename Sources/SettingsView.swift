@@ -32,6 +32,10 @@ struct HubSettingsView: View {
                             Text("刘海 / 屏幕顶部中央").tag("notch"); Text("左上角").tag("topLeft"); Text("右上角").tag("topRight"); Text("左下角").tag("bottomLeft"); Text("右下角").tag("bottomRight")
                         }.labelsHidden().frame(width: 190)
                     }
+                    if model.settings.hotCorner == "notch" {
+                        Toggle("点按刘海呼出（关闭时悬停呼出）", isOn: Binding(get: { model.settings.notchClickToWake ?? false }, set: { model.settings.notchClickToWake = $0 }))
+                            .disabled(model.settings.triggerMode == "keyboard")
+                    }
                     VStack(alignment: .leading, spacing: 7) {
                         settingsRow("顶部展开样式") {
                             Picker("顶部展开样式", selection: Binding(get: { model.settings.resolvedNotchIntegrationStyle }, set: { model.settings.notchIntegrationStyle = $0 })) {
@@ -247,7 +251,7 @@ struct HubSettingsView: View {
         VStack(spacing: 15) {
             ZStack {
                 RoundedRectangle(cornerRadius: 20).fill(LinearGradient(colors: [Color(red: 0.24, green: 0.42, blue: 0.59), Color(red: 0.10, green: 0.17, blue: 0.25)], startPoint: .topLeading, endPoint: .bottomTrailing)).frame(width: 86, height: 86)
-                Image(systemName: "folder.fill").font(.system(size: 40, weight: .light)).foregroundStyle(.white.opacity(0.92))
+                Image(systemName: "chart.bar.fill").font(.system(size: 40, weight: .light)).foregroundStyle(.white.opacity(0.92))
             }
             Text("FileDock").font(.title2.bold())
             Text("版本 \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—")")

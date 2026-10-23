@@ -4,7 +4,18 @@ import Foundation
 @main struct ModelTests {
     @MainActor static func main() throws {
         let fm = FileManager.default
-        let base = fm.temporaryDirectory.appendingPathComponent("FolderHubReplica-Tests-\(UUID().uuidString)", isDirectory: true)
+        var wakeSettings = HubSettings()
+        precondition(!wakeSettings.usesNotchClickToWake)
+        wakeSettings.notchClickToWake = true
+        precondition(wakeSettings.usesNotchClickToWake)
+        for corner in ["topLeft", "topRight", "bottomLeft", "bottomRight"] {
+            wakeSettings.hotCorner = corner
+            precondition(!wakeSettings.usesNotchClickToWake)
+        }
+        let encodedWake = try JSONEncoder().encode(wakeSettings)
+        let decodedWake = try JSONDecoder().decode(HubSettings.self, from: encodedWake)
+        precondition(decodedWake.notchClickToWake == true)
+        let base = fm.temporaryDirectory.appendingPathComponent("FileDock-Tests-\(UUID().uuidString)", isDirectory: true)
         try fm.createDirectory(at: base, withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: base) }
         let source = base.appendingPathComponent("source", isDirectory: true)

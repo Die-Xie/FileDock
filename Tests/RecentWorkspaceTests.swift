@@ -23,7 +23,7 @@ import Foundation
 @main struct RecentWorkspaceTests {
     @MainActor static func main() throws {
         let fm = FileManager.default
-        let base = fm.temporaryDirectory.appendingPathComponent("FolderHubReplica-RecentTests-\(UUID().uuidString)", isDirectory: true)
+        let base = fm.temporaryDirectory.appendingPathComponent("FileDock-RecentTests-\(UUID().uuidString)", isDirectory: true)
         try fm.createDirectory(at: base, withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: base) }
         let directory = base.appendingPathComponent("files", isDirectory: true)

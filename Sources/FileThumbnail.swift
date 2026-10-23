@@ -37,7 +37,7 @@ import QuickLookThumbnailing
         let cache = NSCache<NSString, NSImage>()
         cache.countLimit = 240
         cache.totalCostLimit = 40 * 1024 * 1024
-        cache.name = "FolderHubReplica.QuickLookThumbnails"
+        cache.name = "FileDock.QuickLookThumbnails"
         return cache
     }()
 
