@@ -1,0 +1,141 @@
+import AppKit
+import Combine
+import SwiftUI
+
+@main
+struct NativeWorkspaceDragTests {
+    @MainActor static func main() {
+        precondition(HubWorkspaceDragData.takesMouseDown(.leftMouseDown, modifiers: []))
+        precondition(HubWorkspaceDragData.takesMouseDown(.leftMouseDown, modifiers: [.command, .shift]))
+        precondition(!HubWorkspaceDragData.takesMouseDown(.leftMouseDown, modifiers: .control))
+        for type in [NSEvent.EventType.rightMouseDown, .rightMouseUp, .scrollWheel, .mouseMoved, .leftMouseDragged, .leftMouseUp] {
+            precondition(!HubWorkspaceDragData.takesMouseDown(type, modifiers: []), "Only an ordinary initial left press starts workspace tracking")
+        }
+        for type in [NSEvent.EventType.leftMouseDragged, .leftMouseUp, .appKitDefined, .applicationDefined] {
+            precondition(!HubWorkspaceDragData.takesHitTest(type, modifiers: [], localDragActive: false))
+            precondition(HubWorkspaceDragData.takesHitTest(type, modifiers: [], localDragActive: true), "Native destination lookup must remain possible through tracking and the final release")
+        }
+        for type in [NSEvent.EventType.rightMouseDown, .rightMouseUp, .scrollWheel] {
+            precondition(!HubWorkspaceDragData.takesHitTest(type, modifiers: [], localDragActive: true))
+        }
+        precondition(!HubWorkspaceDragData.takesHitTest(.leftMouseDown, modifiers: .control, localDragActive: true))
+        precondition(!HubWorkspaceDragData.shouldBegin(distance: 4.99, clickCount: 1))
+        precondition(HubWorkspaceDragData.shouldBegin(distance: 5, clickCount: 1))
+        precondition(!HubWorkspaceDragData.shouldBegin(distance: 8, clickCount: 2))
+        precondition(!HubWorkspaceDragData.shouldBegin(distance: .infinity, clickCount: 1))
+        precondition(!HubWorkspaceDragData.shouldBegin(distance: .nan, clickCount: 1))
+
+        let bounds = NSRect(x: 0, y: 0, width: 100, height: 40)
+        let oversizedClip = NSRect(x: -200, y: -100, width: 900, height: 400)
+        precondition(HubWorkspaceDragData.contains(NSPoint(x: 50, y: 20), bounds: bounds, visibleRect: oversizedClip))
+        precondition(!HubWorkspaceDragData.contains(NSPoint(x: 180, y: 20), bounds: bounds, visibleRect: oversizedClip))
+        precondition(!HubWorkspaceDragData.contains(NSPoint(x: 50, y: 20), bounds: bounds, visibleRect: .zero))
+        let partialClip = NSRect(x: 30, y: 0, width: 70, height: 40)
+        precondition(!HubWorkspaceDragData.contains(NSPoint(x: 20, y: 20), bounds: bounds, visibleRect: partialClip))
+        precondition(HubWorkspaceDragData.contains(NSPoint(x: 40, y: 20), bounds: bounds, visibleRect: partialClip))
+        precondition(!HubWorkspaceDragData.insertionAfter(NSPoint(x: 49, y: 20), bounds: bounds))
+        precondition(HubWorkspaceDragData.insertionAfter(NSPoint(x: 50, y: 20), bounds: bounds))
+        precondition(HubWorkspaceDragData.insertionAfter(NSPoint(x: 80, y: 20), bounds: bounds))
+
+        let source = HubWorkspaceDragBridge.WorkspaceDragView(frame: bounds)
+        let otherSource = HubWorkspaceDragBridge.WorkspaceDragView(frame: bounds)
+        precondition(!source.mouseDownCanMoveWindow)
+        precondition(source.acceptsFirstResponder && source.acceptsFirstMouse(for: nil))
+        let parent = NSView(frame: NSRect(x: 0, y: 0, width: 200, height: 100))
+        source.frame.origin = NSPoint(x: 20, y: 20)
+        parent.addSubview(source)
+        precondition(source.hitTest(NSPoint(x: 50, y: 40)) === source)
+        precondition(source.hitTest(NSPoint(x: 10, y: 40)) == nil)
+        precondition(source.hitTest(NSPoint(x: 150, y: 40)) == nil)
+        source.isHidden = true
+        precondition(source.hitTest(NSPoint(x: 50, y: 40)) == nil)
+        source.isHidden = false
+        parent.isHidden = true
+        precondition(source.hitTest(NSPoint(x: 50, y: 40)) == nil)
+        parent.isHidden = false
+        let clippedParent = NSView(frame: NSRect(x: 0, y: 0, width: 80, height: 40))
+        clippedParent.clipsToBounds = true
+        source.removeFromSuperview()
+        source.frame = NSRect(x: 30, y: 0, width: 100, height: 40)
+        clippedParent.addSubview(source)
+        precondition(source.hitTest(NSPoint(x: 60, y: 20)) === source)
+        precondition(source.hitTest(NSPoint(x: 95, y: 20)) == nil, "A tab clipped by its strip viewport cannot become a hidden target")
+        source.cancelPendingInteraction()
+        precondition(!HubWorkspaceDragState.isDragging)
+        precondition(source.insertionAfter == nil)
+
+        let pasteboard = NSPasteboard.withUniqueName()
+        let otherPasteboard = NSPasteboard.withUniqueName()
+        defer { pasteboard.releaseGlobally(); otherPasteboard.releaseGlobally() }
+        let first = HubWorkspaceDragPayload(id: UUID(), workspaceID: UUID())
+        var notifications = 0
+        let subscription = NotificationCenter.default.publisher(for: hubWorkspaceDragDidEnd).sink { notification in
+            precondition(notification.object == nil && notification.userInfo == nil, "Drag completion must not expose workspace metadata")
+            notifications += 1
+        }
+        defer { subscription.cancel() }
+        func write(_ payload: HubWorkspaceDragPayload, to destination: NSPasteboard = pasteboard) {
+            destination.clearContents()
+            precondition(destination.writeObjects([HubWorkspaceDragData.pasteboardItem(for: payload)]))
+        }
+        write(first)
+        precondition(HubWorkspaceDragState.localPayload(source: source, pasteboard: pasteboard) == nil)
+        HubWorkspaceDragState.begin(first, source: source)
+        precondition(HubWorkspaceDragState.isDragging)
+        precondition(HubWorkspaceDragState.localPayload(source: source, pasteboard: pasteboard) == nil, "Arming without a native pasteboard binding cannot authorize a drop")
+        HubWorkspaceDragState.bind(pasteboard: pasteboard, source: otherSource, for: first.id)
+        HubWorkspaceDragState.bind(pasteboard: pasteboard, source: source, for: UUID())
+        precondition(HubWorkspaceDragState.localPayload(source: source, pasteboard: pasteboard) == nil)
+        HubWorkspaceDragState.bind(pasteboard: pasteboard, source: source, for: first.id)
+        precondition(HubWorkspaceDragState.localPayload(source: source, pasteboard: pasteboard) == first)
+        precondition(HubWorkspaceDragState.localPayload(source: otherSource, pasteboard: pasteboard) == nil)
+        precondition(HubWorkspaceDragState.localPayload(source: nil, pasteboard: pasteboard) == nil)
+        write(first, to: otherPasteboard)
+        precondition(HubWorkspaceDragState.localPayload(source: source, pasteboard: otherPasteboard) == nil, "A lookalike private token on another pasteboard must not authorize a reorder")
+        write(first)
+        precondition(HubWorkspaceDragState.localPayload(source: source, pasteboard: pasteboard) == nil, "Changing pasteboard contents invalidates its native binding")
+        HubWorkspaceDragState.bind(pasteboard: pasteboard, source: source, for: first.id)
+        precondition(HubWorkspaceDragState.localPayload(source: source, pasteboard: pasteboard) == first)
+        let wrongWorkspace = HubWorkspaceDragPayload(id: first.id, workspaceID: UUID())
+        write(wrongWorkspace)
+        HubWorkspaceDragState.bind(pasteboard: pasteboard, source: source, for: first.id)
+        precondition(HubWorkspaceDragState.localPayload(source: source, pasteboard: pasteboard) == nil)
+        let mixedItem = HubWorkspaceDragData.pasteboardItem(for: first)
+        mixedItem.setString("file:///unexpected", forType: .fileURL)
+        pasteboard.clearContents()
+        precondition(pasteboard.writeObjects([mixedItem]))
+        HubWorkspaceDragState.bind(pasteboard: pasteboard, source: source, for: first.id)
+        precondition(HubWorkspaceDragState.localPayload(source: source, pasteboard: pasteboard) == nil)
+        pasteboard.clearContents()
+        precondition(pasteboard.writeObjects([HubWorkspaceDragData.pasteboardItem(for: first), HubWorkspaceDragData.pasteboardItem(for: first)]))
+        HubWorkspaceDragState.bind(pasteboard: pasteboard, source: source, for: first.id)
+        precondition(HubWorkspaceDragState.localPayload(source: source, pasteboard: pasteboard) == nil)
+        write(first)
+        HubWorkspaceDragState.bind(pasteboard: pasteboard, source: source, for: first.id)
+        source.cancelPendingInteraction()
+        precondition(HubWorkspaceDragState.localPayload(source: source, pasteboard: pasteboard) == first, "Dismantling during a reorder must not discard the active native session")
+        HubWorkspaceDragState.end(UUID(), source: source)
+        HubWorkspaceDragState.end(first.id, source: otherSource)
+        precondition(HubWorkspaceDragState.isDragging && notifications == 0)
+        HubWorkspaceDragState.end(first.id, source: source)
+        precondition(!HubWorkspaceDragState.isDragging && notifications == 1)
+        precondition(HubWorkspaceDragState.localPayload(source: source, pasteboard: pasteboard) == nil)
+        HubWorkspaceDragState.end(first.id, source: source)
+        precondition(notifications == 1, "Duplicate or stale completion must not post a second drag end")
+
+        let second = HubWorkspaceDragPayload(id: UUID(), workspaceID: UUID())
+        HubWorkspaceDragState.begin(second, source: otherSource)
+        write(second)
+        HubWorkspaceDragState.bind(pasteboard: pasteboard, source: source, for: first.id)
+        HubWorkspaceDragState.end(first.id, source: source)
+        precondition(HubWorkspaceDragState.isDragging && notifications == 1)
+        precondition(HubWorkspaceDragState.localPayload(source: otherSource, pasteboard: pasteboard) == nil)
+        HubWorkspaceDragState.bind(pasteboard: pasteboard, source: otherSource, for: second.id)
+        precondition(HubWorkspaceDragState.localPayload(source: otherSource, pasteboard: pasteboard) == second)
+        HubWorkspaceDragState.end(second.id, source: otherSource)
+        precondition(!HubWorkspaceDragState.isDragging && notifications == 2)
+
+        print("PASS: workspace drag threshold, midpoint insertion, clipped native responder, private single-item pasteboard authentication, local source identity, cancellation and stale session callbacks")
+        print("LIMIT: Real pointer dragging, native destination routing, edge autoscroll and animated tab reorder require UI verification; tests create no visible windows or files")
+    }
+}

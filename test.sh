@@ -1,0 +1,89 @@
+#!/bin/zsh
+set -eu
+cd "${0:A:h}"
+mkdir -p .build
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
+    Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/HubModel.swift Tests/ModelTests.swift -o .build/model-tests \
+    -framework AppKit -framework Carbon -framework Combine -framework UniformTypeIdentifiers
+.build/model-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
+    Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/HubModel.swift Tests/FileAppearanceTests.swift -o .build/file-appearance-tests \
+    -framework AppKit -framework Carbon -framework Combine -framework UniformTypeIdentifiers
+.build/file-appearance-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
+    Sources/RecentFiles.swift Tests/RecentFilesSourceTests.swift -o .build/recent-source-tests
+.build/recent-source-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
+    Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/HubModel.swift Tests/RecentWorkspaceTests.swift -o .build/recent-workspace-tests \
+    -framework AppKit -framework Carbon -framework Combine -framework UniformTypeIdentifiers
+.build/recent-workspace-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
+    Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/HubModel.swift Tests/StagingWorkspaceTests.swift -o .build/staging-workspace-tests \
+    -framework AppKit -framework Carbon -framework Combine -framework UniformTypeIdentifiers
+.build/staging-workspace-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
+    Sources/ImageImport.swift Tests/ImageImportTests.swift -o .build/image-tests \
+    -framework ImageIO -framework UniformTypeIdentifiers -framework CoreGraphics
+.build/image-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
+    Sources/ImageImport.swift Sources/StagingImportStore.swift Tests/StagingImportTests.swift -o .build/staging-import-tests \
+    -framework ImageIO -framework UniformTypeIdentifiers -framework CoreGraphics
+.build/staging-import-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
+    Sources/ImageImport.swift Sources/WebImageLoader.swift Sources/StagingImportStore.swift Sources/StagingDropReceiver.swift Tests/StagingDropTests.swift -o .build/staging-drop-tests \
+    -framework ImageIO -framework UniformTypeIdentifiers -framework CoreGraphics
+.build/staging-drop-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
+    Sources/NotchMotion.swift Sources/NotchGeometry.swift Tests/NotchGeometryTests.swift -o .build/notch-geometry-tests \
+    -framework CoreGraphics
+.build/notch-geometry-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
+    Sources/NotchMotion.swift Sources/HubGlassMaterial.swift Sources/NotchSurface.swift Tests/NotchSurfaceTests.swift -o .build/notch-surface-tests \
+    -framework AppKit -framework QuartzCore
+.build/notch-surface-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
+    Sources/HoverActivation.swift Sources/HoverCursor.swift Tests/HoverActivationTests.swift -o .build/hover-tests -framework AppKit
+.build/hover-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
+    Sources/TriggerSuppression.swift Tests/TriggerSuppressionTests.swift -o .build/trigger-suppression-tests \
+    -framework AppKit -framework ApplicationServices
+.build/trigger-suppression-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
+    Sources/WindowAttachment.swift Tests/WindowAttachmentTests.swift -o .build/window-attachment-tests
+.build/window-attachment-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
+    Sources/CornerPlacement.swift Tests/CornerPlacementTests.swift -o .build/corner-placement-tests
+.build/corner-placement-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
+    Sources/WindowPresentation.swift Tests/WindowPresentationTests.swift -o .build/window-presentation-tests \
+    -framework AppKit
+.build/window-presentation-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
+    Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/HubModel.swift Tests/GlobalShortcutTests.swift -o .build/shortcut-tests \
+    -framework AppKit -framework Carbon -framework Combine -framework UniformTypeIdentifiers
+.build/shortcut-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
+    Sources/NativeFileDrag.swift Sources/NativeWorkspaceDrag.swift Tests/NativeFileDragTests.swift -o .build/native-drag-tests \
+    -framework AppKit -framework SwiftUI -framework UniformTypeIdentifiers
+.build/native-drag-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
+    Sources/NativeWorkspaceDrag.swift Tests/NativeWorkspaceDragTests.swift -o .build/workspace-drag-tests \
+    -framework AppKit -framework SwiftUI -framework UniformTypeIdentifiers
+.build/workspace-drag-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
+    Sources/WorkspaceHeaderLayout.swift Tests/WorkspaceHeaderLayoutTests.swift -o .build/workspace-header-tests
+.build/workspace-header-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
+    Sources/EmbeddedMusicLayout.swift Tests/EmbeddedMusicLayoutTests.swift -o .build/embedded-music-tests
+.build/embedded-music-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
+    Sources/MusicMarquee.swift Tests/MusicMarqueeTests.swift -o .build/music-marquee-tests \
+    -framework AppKit -framework SwiftUI -framework QuartzCore
+.build/music-marquee-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
+    Sources/InlinePreviewPolicy.swift Tests/InlinePreviewTests.swift -o .build/inline-preview-tests
+.build/inline-preview-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
+    Sources/QQMusicController.swift Tests/QQMusicTests.swift -o .build/qqmusic-tests \
+    -framework AppKit -framework Combine -framework ApplicationServices
+.build/qqmusic-tests

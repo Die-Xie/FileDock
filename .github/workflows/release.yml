@@ -1,0 +1,114 @@
+name: Publish signed FileDock release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: filedock-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Validate static release payload and publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          tag="$GITHUB_REF_NAME"
+          [[ "$GITHUB_REF_TYPE" == tag && "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          branch="release-assets/$tag"
+          payload="$RUNNER_TEMP/release-payload"
+          repository="$RUNNER_TEMP/release-objects.git"
+          mkdir -p "$payload"
+          git init --bare --quiet "$repository"
+          # Keep authorization out of URLs, command output and persistent Git config.
+          authorization="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$authorization"
+          GIT_CONFIG_COUNT=1 \
+            GIT_CONFIG_KEY_0=http.https://github.com/.extraheader \
+            GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $authorization" \
+            git -C "$repository" fetch --quiet --no-tags --depth=1 \
+              "https://github.com/$GITHUB_REPOSITORY.git" "refs/heads/$branch:refs/heads/payload"
+          unset authorization
+          asset_commit="$(git -C "$repository" rev-parse refs/heads/payload)"
+          git -C "$repository" ls-tree -r --full-tree "$asset_commit" > "$RUNNER_TEMP/release-tree"
+          python3 - "$RUNNER_TEMP/release-tree" <<'PY'
+          import pathlib, sys
+          entries = pathlib.Path(sys.argv[1]).read_text().splitlines()
+          expected = {'FileDock.zip', 'SHA256SUMS.txt', 'RELEASE_NOTES.md', 'SOURCE_COMMIT'}
+          seen = set()
+          for entry in entries:
+              metadata, name = entry.split('\t', 1)
+              mode, kind, object_id = metadata.split()
+              assert mode == '100644' and kind == 'blob' and name in expected and name not in seen, 'Unexpected artifact tree entry'
+              seen.add(name)
+          assert seen == expected, 'Incomplete artifact tree'
+          PY
+          # Never checkout or run scripts from the artifact branch, including filters/hooks.
+          for file in FileDock.zip SHA256SUMS.txt RELEASE_NOTES.md SOURCE_COMMIT; do
+            git -C "$repository" show "$asset_commit:$file" > "$payload/$file"
+          done
+          cd "$payload"
+          python3 - "$tag" "$GITHUB_SHA" <<'PY'
+          import pathlib, plistlib, re, sys, zipfile
+          tag, source_sha = sys.argv[1:]
+          assert pathlib.Path('SOURCE_COMMIT').read_text() == source_sha + '\n', 'Artifact source differs from the pushed tag commit'
+          assert 0 < pathlib.Path('FileDock.zip').stat().st_size < 95 * 1024 * 1024
+          assert 0 < pathlib.Path('RELEASE_NOTES.md').stat().st_size <= 1024 * 1024
+          pathlib.Path('RELEASE_NOTES.md').read_text(encoding='utf-8')
+          lines = pathlib.Path('SHA256SUMS.txt').read_text().splitlines()
+          expected = {'FileDock.zip', 'RELEASE_NOTES.md', 'SOURCE_COMMIT'}
+          seen = set()
+          for line in lines:
+              match = re.fullmatch(r'[0-9a-f]{64}  (FileDock\.zip|RELEASE_NOTES\.md|SOURCE_COMMIT)', line)
+              assert match and match[1] not in seen, 'Invalid checksum manifest'
+              seen.add(match[1])
+          assert seen == expected, 'Incomplete checksum manifest'
+          with zipfile.ZipFile('FileDock.zip') as package:
+              names = package.namelist()
+              assert len(names) == len(set(names)), 'Duplicate ZIP entries'
+              for name in names:
+                  parts = pathlib.PurePosixPath(name).parts
+                  assert parts and not name.startswith('/') and '..' not in parts and '\\' not in name
+                  assert parts[0] == 'FileDock.app' or (parts[0] == '__MACOSX' and (len(parts) == 1 or parts[1] in ('FileDock.app', '._FileDock.app'))), 'Unexpected ZIP root'
+                  assert not any(part.endswith(('.pem', '.p12', '.pfx', '.keychain', '.keychain-db')) or part == 'identity.plist' for part in parts), 'Signing material in ZIP'
+              info = plistlib.loads(package.read('FileDock.app/Contents/Info.plist'))
+              assert info['CFBundleShortVersionString'] == tag[1:]
+              assert info['CFBundleIdentifier'] == 'local.diexie.folderhub-replica'
+              assert info['CFBundleName'] == 'FileDock' and info['CFBundleDisplayName'] == 'FileDock'
+          PY
+          sha256sum --check --strict SHA256SUMS.txt
+          unzip -tq FileDock.zip
+          # Resolve annotated tags through the API without fetching source history.
+          object="$(gh api "repos/$GH_REPO/git/ref/tags/$tag" --jq '.object | [.type, .sha] | @tsv')"
+          for attempt in {1..8}; do
+            IFS=$'\t' read -r type sha <<< "$object"
+            [[ "$sha" =~ ^[0-9a-f]{40}$ ]]
+            if [[ "$type" == commit ]]; then break; fi
+            [[ "$type" == tag ]]
+            object="$(gh api "repos/$GH_REPO/git/tags/$sha" --jq '.object | [.type, .sha] | @tsv')"
+          done
+          [[ "$type" == commit && "$sha" == "$GITHUB_SHA" ]]
+          # Existing published releases and drafts are both immutable to this workflow.
+          existing="$(gh api --paginate "repos/$GH_REPO/releases?per_page=100" --jq ".[] | select(.tag_name == \"$tag\") | .id")"
+          if [[ -n "$existing" ]]; then
+            printf 'A release or draft already exists for %s; refusing to overwrite it.\n' "$tag" >&2
+            exit 1
+          fi
+          gh release create "$tag" --verify-tag --draft --title "FileDock $tag" --notes-file RELEASE_NOTES.md
+          gh release upload "$tag" FileDock.zip SHA256SUMS.txt RELEASE_NOTES.md SOURCE_COMMIT
+          gh release edit "$tag" --draft=false --latest
+          gh release view "$tag" --json url --jq .url
+          printf 'Verify the published download, then remove the temporary branch via SSH: %s\n' "$branch"
