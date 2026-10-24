@@ -29,7 +29,8 @@ import Foundation
         precondition(second.snapshotSignature != first.snapshotSignature,
                      "Metadata-only appearance changes must invalidate the published entry")
         precondition(second.icon !== red, "A changed icon revision must not reuse the old image")
-        let bluePixel = center(second.icon)
+        let blue = second.icon
+        let bluePixel = center(blue)
         precondition(bluePixel.blueComponent > bluePixel.redComponent + 0.2,
                      "The icon cache must refresh the actual pixels after a customization")
 
@@ -40,6 +41,19 @@ import Foundation
         let labeled = model.entries.first { $0.url == folder.standardizedFileURL }!
         precondition(labeled.labelNumber == 6 && labeled.snapshotSignature != second.snapshotSignature,
                      "Finder label changes must be detected even without a content change")
+        let uncached = base.appendingPathComponent("new-folder")
+        try fm.createDirectory(at: uncached, withIntermediateDirectories: true)
+        precondition(NSWorkspace.shared.setIcon(icon(.red), forFile: uncached.path, options: []))
+        let newEntry = FileEntry(url: uncached)
+        HubFileIconCache.prefersLightweight = true
+        precondition(second.icon === blue, "Valid detailed icons remain cached while dragging")
+        let generic = newEntry.icon
+        precondition(newEntry.icon === generic, "Uncached entries share a cheap type icon while dragging")
+        HubFileIconCache.prefersLightweight = false
+        let restored = newEntry.icon
+        let restoredPixel = center(restored)
+        precondition(restored !== generic && restoredPixel.redComponent > restoredPixel.blueComponent + 0.2,
+                     "Ending a drag restores the actual custom icon; the generic placeholder never poisons the revision cache")
         print("PASS: Finder icon pixel changes, metadata refresh, label invalidation and bounded revision cache")
     }
 

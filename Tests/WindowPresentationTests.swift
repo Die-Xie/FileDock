@@ -61,7 +61,11 @@ struct WindowPresentationTests {
         }
         expect(browser.level == .statusBar, "Picker completion must restore the embedded presentation level")
         browser.level = HubWindowPresentation.browserLevel(embedded: true, auxiliaryVisible: true)
-        expect(browser.level == settings.level, "Embedded browser must yield to settings and preview window ordering")
+        expect(browser.level == settings.level, "Embedded browser must yield to settings window ordering")
+        expect(HubWindowPresentation.previewLevel(browserLevel: .statusBar).rawValue > NSWindow.Level.statusBar.rawValue,
+               "Quick Look must rise above embedded chrome without exposing the menu bar over its header")
+        expect(HubWindowPresentation.previewLevel(browserLevel: .floating) == .floating,
+               "Detached previews must retain ordinary floating ordering and yield to modal dialogs")
         expect(HubWindowPresentation.browserLevel(embedded: false, auxiliaryVisible: false) == .floating,
                "Connected and detached windows must retain their floating level")
         expect([browser, bridge, settings, sheet, dialog, nestedDialog, unrelated].allSatisfy { !$0.isVisible },

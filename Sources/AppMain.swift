@@ -159,7 +159,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         surface.effectiveAppearanceDidChange = { [weak self] in self?.updateSurfaceStyle() }
         HubWindowPresentation.backgroundWindows = { [weak self] in
             guard let self else { return [] }
-            return [self.panel, self.bridgePanel, self.settingsWindow, self.funBadge].compactMap { $0 }
+            let preview = QLPreviewPanel.sharedPreviewPanelExists() ? QLPreviewPanel.shared() : nil
+            return [self.panel, self.bridgePanel, self.settingsWindow, self.funBadge, preview].compactMap { $0 }
         }
         HubWindowPresentation.modalStateDidChange = { [weak self] active in
             guard let self else { return }
@@ -595,23 +596,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
 
     private func updatePanelLevel() {
         guard panel != nil else { return }
-        let previewVisible = QLPreviewPanel.sharedPreviewPanelExists() && QLPreviewPanel.shared()?.isVisible == true
         // The modal coordinator owns levels until its scoped restoration ends.
         guard !HubWindowPresentation.isPresentingDialog else {
             if presentation.header.menuBarMayOverlap != embeddedAtNotch { presentation.header.menuBarMayOverlap = embeddedAtNotch }
             return
         }
         let level = HubWindowPresentation.browserLevel(embedded: embeddedAtNotch,
-            auxiliaryVisible: settingsWindow?.isVisible == true || previewVisible || hasActiveDialog)
+            auxiliaryVisible: settingsWindow?.isVisible == true || hasActiveDialog)
         setPanelLevel(level)
     }
 
     private func setPanelLevel(_ level: NSWindow.Level) {
         if panel.level != level { panel.level = level }
-        // Yielding to Quick Look/settings also exposes the system menu bar.
+        // Yielding to settings/modals also exposes the system menu bar.
         // Keep the side controls below it until the embedded level is restored.
         let overlap = embeddedAtNotch && level.rawValue < NSWindow.Level.statusBar.rawValue
         if presentation.header.menuBarMayOverlap != overlap { presentation.header.menuBarMayOverlap = overlap }
+        if QLPreviewPanel.sharedPreviewPanelExists(), let preview = QLPreviewPanel.shared(), preview.isVisible {
+            let previewLevel = HubWindowPresentation.previewLevel(browserLevel: level)
+            if preview.level != previewLevel { preview.level = previewLevel }
+        }
     }
 
     func windowWillMove(_ notification: Notification) {
@@ -680,6 +684,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         guard let model, let panel else { return }
         finishWindowDragIfReleased()
         updatePanelLevel()
+        let fileDrag = HubFileDragState.isDragging || (presentation.fileDragActive && (NSEvent.pressedMouseButtons & 1) != 0)
+        presentation.setFileDragActive(fileDrag)
         let now = Date()
         let pointer = NSEvent.mouseLocation
         let regionID = hoveredRegionIdentifier(at: pointer)
@@ -928,7 +934,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         preview.dataSource = self
         preview.delegate = self
         preview.reloadData()
-        setPanelLevel(.floating)
+        updatePanelLevel()
+        preview.level = HubWindowPresentation.previewLevel(browserLevel: panel.level)
         preview.makeKeyAndOrderFront(nil)
     }
     func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int { previewURLs.count }

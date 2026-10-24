@@ -8,6 +8,7 @@ import QuickLookThumbnailing
     let entry: FileEntry
     let size: Double
     var allowsThumbnail = true
+    var lightweight = false
     @StateObject private var loader = HubThumbnailLoader()
 
     var body: some View {
@@ -17,14 +18,15 @@ import QuickLookThumbnailing
             .frame(width: size, height: size)
             .opacity(entry.exists ? 1 : 0.4)
             .task(id: requestKey) {
-                if allowsThumbnail { loader.load(entry: entry, size: size, key: requestKey) }
+                if lightweight { loader.cancel() }
+                else if allowsThumbnail { loader.load(entry: entry, size: size, key: requestKey) }
                 else { loader.clear() }
             }
             .onDisappear { loader.cancel() }
     }
 
     private var requestKey: String {
-        HubThumbnailLoader.key(for: entry, size: size) + "|thumbnail:\(allowsThumbnail)"
+        HubThumbnailLoader.key(for: entry, size: size) + "|thumbnail:\(allowsThumbnail)|drag:\(lightweight)"
     }
 }
 

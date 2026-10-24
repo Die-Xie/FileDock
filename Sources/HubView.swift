@@ -14,6 +14,11 @@ final class HubPresentationState: ObservableObject {
     }
     @Published var header = Header()
     @Published var previewVisible = true
+    @Published private(set) var fileDragActive = false
+    func setFileDragActive(_ active: Bool) {
+        HubFileIconCache.prefersLightweight = active
+        if fileDragActive != active { fileDragActive = active }
+    }
 }
 
 private struct HubMenuButton: View {
@@ -91,6 +96,7 @@ struct HubView: View {
         .background(backgroundColor)
         .background(HubKeyMonitor(handler: handleKey))
         .onReceive(NotificationCenter.default.publisher(for: hubFileDragDidEnd)) { _ in
+            presentation.setFileDragActive(false)
             workspaceSpringLoader.cancel()
             fileDropTarget = nil
             dropTargeted = false
@@ -105,6 +111,7 @@ struct HubView: View {
         .onChange(of: presentation.previewVisible) { if !$0 { workspaceSpringLoader.cancel() } }
         .onDisappear { workspaceSpringLoader.cancel(); hoverTask?.cancel() }
         .onChange(of: model.search) { _ in model.selectedIDs = [] }
+        .onChange(of: dropTargeted) { if $0 { presentation.setFileDragActive(true) } }
         .sheet(item: $editingWorkspace) { WorkspaceEditor(model: model, workspace: $0) }
         .alert("新建文件夹", isPresented: $newFolder) {
             TextField("名称", text: $folderName)
@@ -292,7 +299,7 @@ struct HubView: View {
                     delay: model.settings.switchDelay,
                     canActivate: { presentation.previewVisible && model.settings.resolvedStagingEnabled && !HubWorkspaceDragState.isDragging },
                     activate: { if !model.isStagingWorkspace { model.openStagingWorkspace() } },
-                    targeted: { stagingDropTargeted = $0 }, receive: receiveStagingDrop))
+                    targeted: { stagingDropTargeted = $0; if $0 { presentation.setFileDragActive(true) } }, receive: receiveStagingDrop))
                 .contextMenu {
                     HubMenuButton("打开暂存区", systemImage: "tray") { model.openStagingWorkspace() }
                     if model.currentURL != nil {
@@ -445,6 +452,7 @@ struct HubView: View {
             activate: { if model.selectedWorkspaceID != workspace.id { model.selectWorkspace(workspace.id) } },
             acceptsDrop: workspace.mode != .recents,
             movesFiles: workspace.mode == .folder,
+            targeted: { if $0 { presentation.setFileDragActive(true) } },
             receive: { providers in
                 guard workspace.mode != .recents else { return false }
                 // Releasing on a tab targets its root, never a stale directory
@@ -552,7 +560,8 @@ struct HubView: View {
 
     private func gridCell(_ entry: FileEntry) -> some View {
         VStack(spacing: 7) {
-            HubFileIcon(entry: entry, size: model.settings.iconSize, allowsThumbnail: !model.isCloudPlaceholder(entry)).opacity(entry.exists ? 1 : 0.4)
+            HubFileIcon(entry: entry, size: model.settings.iconSize, allowsThumbnail: !model.isCloudPlaceholder(entry),
+                        lightweight: presentation.fileDragActive).opacity(entry.exists ? 1 : 0.4)
             Text(entry.name).font(.system(size: model.settings.fontSize)).lineLimit(2).multilineTextAlignment(.center).frame(maxWidth: .infinity, minHeight: 29, alignment: .top)
         }
         .padding(.horizontal, 5).padding(.vertical, 9)
@@ -569,10 +578,10 @@ struct HubView: View {
     private var list: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("名称").frame(maxWidth: .infinity, alignment: .leading)
-                Text(model.isRecentsRoot ? "最近使用" : "修改日期").frame(width: 120, alignment: .leading)
-                Text("种类").frame(width: 80, alignment: .leading)
-                Text("大小").frame(width: 66, alignment: .trailing)
+                listSortColumn("名称", key: .name).frame(maxWidth: .infinity, alignment: .leading)
+                listSortColumn(model.isRecentsRoot ? "最近使用" : "修改日期", key: .modified).frame(width: 120)
+                listSortColumn("种类", key: .kind).frame(width: 80)
+                listSortColumn("大小", key: .size, alignment: .trailing).frame(width: 66)
             }.font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary).padding(.horizontal, 24).padding(.vertical, 7).background(Color.primary.opacity(0.025))
             ScrollView(.vertical, showsIndicators: model.settings.showScrollbar) {
                 LazyVStack(spacing: 1) {
@@ -597,6 +606,20 @@ struct HubView: View {
             }
             .marqueeFileSelection(context: fileDragContext, selection: model.selectedIDs) { model.selectedIDs = $0 }
         }
+    }
+
+    private func listSortColumn(_ title: String, key: SortKey, alignment: Alignment = .leading) -> some View {
+        let active = !model.isRecentsRoot && !model.isManualEntryOrder && model.sortKey == key
+        return Button { model.sortByColumn(key) } label: {
+            HStack(spacing: 4) {
+                Text(title)
+                Image(systemName: model.ascending ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 8, weight: .semibold)).frame(width: 8).opacity(active ? 1 : 0)
+            }.frame(maxWidth: .infinity, alignment: alignment).contentShape(Rectangle())
+        }.buttonStyle(.plain).disabled(model.isRecentsRoot)
+            .accessibilityLabel("按\(title)排序")
+            .accessibilityValue(active ? model.ascending ? "升序" : "降序" : "未排序")
+            .help(model.isRecentsRoot ? "最近使用按最近打开时间排列" : "按\(title)排序，再次点击切换升降序")
     }
 
     private var columns: some View {

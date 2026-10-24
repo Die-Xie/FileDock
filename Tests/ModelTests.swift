@@ -99,8 +99,17 @@ import Foundation
         precondition(!model.isManualEntryOrder, "Directory order must be scoped to each directory")
         model.goBack()
         precondition(model.visibleEntries.map(\.url) == previousOrder)
-        model.sortKey = .name
+        model.sortByColumn(.name)
         precondition(!model.isManualEntryOrder && model.visibleEntries.first?.url == child, "Choosing a sort mode must leave manual order")
+        precondition(model.ascending, "The first header click exits manual order in ascending direction")
+        model.sortByColumn(.name)
+        precondition(!model.ascending, "A repeated header click reverses the active direction")
+        model.sortByColumn(.size)
+        precondition(model.sortKey == .size && model.ascending, "A different header starts its own ascending sort")
+        model.sortByColumn(.size)
+        precondition(!model.ascending)
+        model.sortKey = .name
+        model.ascending = true
         model.reorderEntries([file], before: child)
         let contentAfterReorder = try String(contentsOf: file, encoding: .utf8)
         precondition(contentAfterReorder == "original", "Reordering must never change file data")

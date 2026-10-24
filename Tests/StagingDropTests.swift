@@ -13,7 +13,27 @@ struct StagingDropTests {
         try await localFilesRemainReferences(root)
         try await mixedProvidersAndTemporaryLifetime(root)
         try await serializedLoading(root)
+        try await svgDocuments(root)
         print("PASS: staging drop references, raw/web images, temporary file/folder representations, partial failure and serial loading")
+    }
+
+    @MainActor private static func svgDocuments(_ root: URL) async throws {
+        let bytes = Data("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"12\" height=\"12\"><circle cx=\"6\" cy=\"6\" r=\"5\"/></svg>".utf8)
+        let source = root.appendingPathComponent("original.svg")
+        try bytes.write(to: source)
+        let temporary = root.appendingPathComponent("promised.svg")
+        try bytes.write(to: temporary)
+        let promise = TemporaryFileProvider(url: temporary, type: UTType.svg.identifier, name: "vector.svg")
+        let dataOnly = DataOnlyDocumentProvider(data: bytes, type: UTType.svg.identifier, name: "data-vector")
+        let store = HubStagingImportStore(rootURL: root.appendingPathComponent("svg-imports"))
+        let output = try await receive([localProvider(source), promise, dataOnly], store: store)
+        precondition(output.failures.isEmpty && output.urls.count == 3 && output.urls[0] == source,
+                     "Local SVGs remain references; file and data-only SVG representations must both be accepted")
+        for url in output.urls {
+            let saved = try Data(contentsOf: url)
+            precondition(saved == bytes && url.pathExtension == "svg", "SVG must remain original vector bytes, not a failed PNG conversion")
+        }
+        precondition(!FileManager.default.fileExists(atPath: temporary.path) && FileManager.default.fileExists(atPath: source.path))
     }
 
     @MainActor private static func localFilesRemainReferences(_ root: URL) async throws {
@@ -159,6 +179,29 @@ struct StagingDropTests {
     }
 
     private enum FixtureError: Error { case expected, timeout }
+
+    private final class DataOnlyDocumentProvider: NSItemProvider, @unchecked Sendable {
+        let data: Data
+        let type: String
+        init(data: Data, type: String, name: String) {
+            self.data = data; self.type = type
+            super.init()
+            suggestedName = name
+        }
+        required init?(coder: NSCoder) { nil }
+        override var registeredTypeIdentifiers: [String] { [type] }
+        override func hasItemConformingToTypeIdentifier(_ identifier: String) -> Bool {
+            UTType(type).flatMap { actual in UTType(identifier).map { actual.conforms(to: $0) } } ?? false
+        }
+        override func loadFileRepresentation(forTypeIdentifier: String, completionHandler: @escaping (URL?, Error?) -> Void) -> Progress {
+            completionHandler(nil, FixtureError.expected)
+            return Progress(totalUnitCount: 1)
+        }
+        override func loadDataRepresentation(forTypeIdentifier: String, completionHandler: @escaping (Data?, Error?) -> Void) -> Progress {
+            completionHandler(data, nil)
+            return Progress(totalUnitCount: 1)
+        }
+    }
 
     /// Precisely models NSItemProvider's documented callback-only file lifetime.
     private final class TemporaryFileProvider: NSItemProvider, @unchecked Sendable {

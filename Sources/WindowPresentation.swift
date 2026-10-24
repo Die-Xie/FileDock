@@ -13,9 +13,15 @@ enum HubWindowPresentation {
     static var isPresentingDialog: Bool { !dialogStack.isEmpty }
 
     /// Embedded chrome needs to cover the menu bar, but must yield to its own
-    /// settings, preview and modal UI before they are ordered onscreen.
+    /// settings and modal UI before they are ordered onscreen. Quick Look uses
+    /// its own level above embedded chrome instead of exposing the menu bar.
     static func browserLevel(embedded: Bool, auxiliaryVisible: Bool) -> NSWindow.Level {
         embedded && !auxiliaryVisible ? .statusBar : .floating
+    }
+
+    static func previewLevel(browserLevel: NSWindow.Level) -> NSWindow.Level {
+        browserLevel.rawValue >= NSWindow.Level.statusBar.rawValue
+            ? NSWindow.Level(rawValue: browserLevel.rawValue + 1) : .floating
     }
 
     static func runModal(_ panel: NSSavePanel) -> NSApplication.ModalResponse {

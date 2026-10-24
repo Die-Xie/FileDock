@@ -33,6 +33,7 @@ enum HubStagingDropReceiver {
     private static func route(for provider: NSItemProvider) -> Route? {
         if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) { return .fileURL }
         let types = provider.registeredTypeIdentifiers
+        if let type = types.first(where: { UTType($0)?.conforms(to: .svg) == true }) { return .file(type) }
         if let type = types.first(where: { UTType($0)?.conforms(to: .image) == true }) { return .image(type) }
         if provider.hasItemConformingToTypeIdentifier(UTType.url.identifier) { return .webURL }
         if let type = types.first(where: { UTType($0)?.conforms(to: .item) == true }) ?? types.first {
@@ -77,6 +78,10 @@ enum HubStagingDropReceiver {
         @discardableResult
         func loadFileRepresentation(completionHandler: @escaping @Sendable (URL?, Error?) -> Void) -> Progress {
             provider.loadFileRepresentation(forTypeIdentifier: type, completionHandler: completionHandler)
+        }
+
+        func loadDataRepresentation(completionHandler: @escaping @Sendable (Data?, Error?) -> Void) {
+            provider.loadDataRepresentation(forTypeIdentifier: type, completionHandler: completionHandler)
         }
     }
 
@@ -143,10 +148,24 @@ enum HubStagingDropReceiver {
                 // Start on a worker, including providers that complete synchronously.
                 HubImageImport.workerQueue.async {
                     load.loadFileRepresentation { temporaryURL, error in
+                        guard let temporaryURL else {
+                            // Some Finder/SwiftUI bridges expose only an SVG's
+                            // bytes, or a document data representation. Try it
+                            // before declaring an otherwise valid file unreadable.
+                            load.loadDataRepresentation { data, dataError in
+                                HubImageImport.workerQueue.async {
+                                    let result: Result<URL, Error> = Result {
+                                        guard let data else { throw dataError ?? error ?? DropError.unavailable }
+                                        return try store.saveFileData(data, typeIdentifier: type, suggestedName: name)
+                                    }
+                                    DispatchQueue.main.async { self.finish(result, at: position) }
+                                }
+                            }
+                            return
+                        }
                         // NSItemProvider deletes its temporary representation after
                         // this callback returns. Copy here, never in a later task.
                         let result: Result<URL, Error> = Result {
-                            guard let temporaryURL else { throw error ?? DropError.unavailable }
                             return try store.copyFile(at: temporaryURL, suggestedName: name)
                         }
                         DispatchQueue.main.async { self.finish(result, at: position) }

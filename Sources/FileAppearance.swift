@@ -1,9 +1,16 @@
 import AppKit
+import UniformTypeIdentifiers
 
 /// Cache only the current icon revision for each path. Finder changes metadata
 /// without necessarily changing the file's contents or modification date.
 @MainActor
 enum HubFileIconCache {
+    static var prefersLightweight = false
+    private static let genericCache: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.countLimit = 64
+        return cache
+    }()
     private struct Revision: Equatable {
         let attributesModified: Date?
         let modified: Date?
@@ -28,6 +35,16 @@ enum HubFileIconCache {
         let revision = Revision(attributesModified: entry.attributesModified, modified: entry.modified,
                                 label: entry.labelNumber, tags: entry.tagNames, exists: entry.exists)
         if let cached = cache.object(forKey: key), cached.revision == revision { return cached.image }
+        // Drag tracking must not synchronously ask the file provider for every
+        // newly revealed file's custom icon. Restore detailed icons on release.
+        if prefersLightweight {
+            let type: UTType = entry.isDirectory && !entry.isPackage ? .folder : UTType(filenameExtension: entry.url.pathExtension) ?? .data
+            let genericKey = type.identifier as NSString
+            if let image = genericCache.object(forKey: genericKey) { return image }
+            let image = NSWorkspace.shared.icon(for: type)
+            genericCache.setObject(image, forKey: genericKey)
+            return image
+        }
         // Ask for the effective icon, including Finder's folder customization.
         // A fresh URL must not reuse a cached resource value from an old scan.
         var url = URL(fileURLWithPath: entry.url.path)

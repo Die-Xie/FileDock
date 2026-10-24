@@ -468,6 +468,14 @@ enum HubFileOperations {
         return search.isEmpty ? ordered : ordered.filter { $0.name.localizedStandardContains(search) }
     }
 
+    func sortByColumn(_ key: SortKey) {
+        guard !isRecentsRoot else { return }
+        beginPersistenceTransaction()
+        defer { endPersistenceTransaction() }
+        if sortKey == key && !isManualEntryOrder { ascending.toggle() }
+        else { sortKey = key; ascending = true }
+    }
+
     private var directoryOrderPath: String { canonicalDirectoryPath ?? currentURL?.standardizedFileURL.path ?? "" }
 
     var isManualEntryOrder: Bool {
