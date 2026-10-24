@@ -14,12 +14,6 @@ struct HubWorkspaceHeaderLayout {
     let controlsWidth: CGFloat
     let dragWidth: CGFloat
 
-    static func toolbarTopInset(embedded: Bool, split: Bool, safeTop: CGFloat,
-                                menuBarMayOverlap: Bool) -> CGFloat {
-        guard embedded, split, menuBarMayOverlap, safeTop.isFinite else { return 0 }
-        return max(0, safeTop)
-    }
-
     static func make(tabWidths: [CGFloat], sideWidth: CGFloat,
                      measuredControlsWidth: CGFloat = 0) -> HubWorkspaceHeaderLayout {
         let side = sideWidth.isFinite ? max(0, sideWidth) : 0

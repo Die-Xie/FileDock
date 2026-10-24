@@ -68,12 +68,43 @@ struct WindowPresentationTests {
                "Detached previews must retain ordinary floating ordering and yield to modal dialogs")
         expect(HubWindowPresentation.browserLevel(embedded: false, auxiliaryVisible: false) == .floating,
                "Connected and detached windows must retain their floating level")
+        for screen in [CGRect(x: 0, y: 0, width: 1512, height: 982),
+                       CGRect(x: -1920, y: 300, width: 1920, height: 1080)] {
+            let fullHeight = CGRect(x: screen.midX - 400, y: screen.maxY - 400, width: 800, height: 400)
+            let autohidden = HubWindowPresentation.embeddedFrame(fullHeight, screenFrame: screen,
+                visibleFrame: screen, safeTop: 0, menuBarHeight: 24, yielding: true)
+            expect(autohidden.maxY == screen.maxY - 28,
+                   "Auto-hidden menu bars still need clearance when auxiliary UI exposes them")
+            for inset in [CGFloat(0), 24, 38, 44] {
+                let visible = CGRect(x: screen.minX, y: screen.minY + 60, width: screen.width, height: screen.height - 60 - max(24, inset))
+                for requestedHeight in [CGFloat(400), screen.height - 12] {
+                    let attached = CGRect(x: screen.midX - 400, y: screen.maxY - requestedHeight, width: 800, height: requestedHeight)
+                    let safe = HubWindowPresentation.embeddedFrame(attached, screenFrame: screen,
+                        visibleFrame: visible, safeTop: inset, yielding: true)
+                    expect(safe.maxY <= min(visible.maxY, screen.maxY - inset) - 4,
+                           "The complete surface, including top border and music, must sit below both menu and hardware insets")
+                    expect(safe.minY >= visible.minY + 12 && safe.width == attached.width && safe.minX == attached.minX,
+                           "Large panels must fit vertically without shifting their horizontal attachment")
+                    if requestedHeight <= safe.maxY - visible.minY - 12 {
+                        expect(safe.height == requestedHeight, "Ordinary yields must translate without resizing or reflowing content")
+                    }
+                    for _ in 0..<5 {
+                        expect(HubWindowPresentation.embeddedFrame(attached, screenFrame: screen,
+                            visibleFrame: visible, safeTop: inset, yielding: true) == safe,
+                               "Repeated settings/modal transitions must not accumulate a downward offset")
+                        expect(HubWindowPresentation.embeddedFrame(attached, screenFrame: screen,
+                            visibleFrame: visible, safeTop: inset, yielding: false) == attached,
+                               "Restoration must recover the exact embedded frame, including a previously tall size")
+                    }
+                }
+            }
+        }
         expect([browser, bridge, settings, sheet, dialog, nestedDialog, unrelated].allSatisfy { !$0.isVisible },
                "Policy tests must not display UI")
         HubWindowPresentation.backgroundWindows = nil
         HubWindowPresentation.modalStateDidChange = nil
         browser.removeChildWindow(sheet)
-        print("PASS: modal ordering, registered child windows, nested restoration, error unwinding, auxiliary level and no visible test windows")
+        print("PASS: modal ordering, nested/error restoration, complete embedded surface yields below menu/hardware without reflow or drift, tall/multi-screen geometry and no visible test windows")
     }
 
     @MainActor private static func window(level: NSWindow.Level) -> NSWindow {

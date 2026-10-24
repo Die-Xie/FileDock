@@ -266,10 +266,9 @@ struct HubSettingsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 HStack(spacing: 16) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 16).fill(LinearGradient(colors: [Color(red: 0.24, green: 0.42, blue: 0.59), Color(red: 0.10, green: 0.17, blue: 0.25)], startPoint: .topLeading, endPoint: .bottomTrailing)).frame(width: 64, height: 64)
-                        Image(systemName: "chart.bar.fill").font(.system(size: 30, weight: .light)).foregroundStyle(.white.opacity(0.92))
-                    }
+                    Image(nsImage: NSApp.applicationIconImage)
+                        .resizable().scaledToFit().frame(width: 64, height: 64)
+                        .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 5) {
                         Text("FileDock").font(.title2.bold())
                         Text("版本 \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—")")

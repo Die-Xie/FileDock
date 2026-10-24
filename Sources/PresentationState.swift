@@ -9,7 +9,6 @@ final class HubPresentationState: ObservableObject {
         var exclusionWidth: CGFloat = 0
         var topInset: CGFloat = 0
         var split = false
-        var menuBarMayOverlap = false
     }
     @Published var header = Header()
     @Published var previewVisible = false { didSet { if oldValue != previewVisible { updateRenderingPolicy() } } }

@@ -64,18 +64,6 @@ struct WorkspaceHeaderLayoutTests {
         let invalid = HubWorkspaceHeaderLayout.make(tabWidths: [.nan, -.infinity, -10], sideWidth: .nan)
         near(invalid.leftViewportWidth + invalid.rightViewportWidth + invalid.controlsWidth + invalid.dragWidth, 0,
              "Transient invalid geometry cannot propagate non-finite view sizes")
-        for inset in [CGFloat(24), 38, 44] {
-            near(HubWorkspaceHeaderLayout.toolbarTopInset(embedded: true, split: true, safeTop: inset, menuBarMayOverlap: true),
-                 inset, "Quick Look/settings must reserve the complete menu depth above embedded side controls")
-            near(HubWorkspaceHeaderLayout.toolbarTopInset(embedded: true, split: true, safeTop: inset, menuBarMayOverlap: false),
-                 0, "Closing auxiliary UI restores the original split toolbar")
-            near(HubWorkspaceHeaderLayout.toolbarTopInset(embedded: true, split: false, safeTop: inset, menuBarMayOverlap: true),
-                 0, "The unsplit toolbar already reserves its hardware/menu inset")
-            near(HubWorkspaceHeaderLayout.toolbarTopInset(embedded: false, split: true, safeTop: inset, menuBarMayOverlap: true),
-                 0, "Detached and corner panels must not gain a top gap")
-        }
-        near(HubWorkspaceHeaderLayout.toolbarTopInset(embedded: true, split: true, safeTop: .nan, menuBarMayOverlap: true),
-             0, "Invalid geometry cannot create a non-finite header")
         print("PASS: Workspace header flows ordered tabs around the notch and reserves controls and window dragging")
     }
 }

@@ -19,6 +19,23 @@ enum HubWindowPresentation {
         embedded && !auxiliaryVisible ? .statusBar : .floating
     }
 
+    /// A lower window level cannot cover the system menu bar. Move the entire
+    /// embedded surface into the safe area instead of padding only its controls.
+    /// Always derive from the attachment frame so repeated yields cannot drift.
+    static func embeddedFrame(_ attachmentFrame: CGRect, screenFrame: CGRect,
+                              visibleFrame: CGRect, safeTop: CGFloat, menuBarHeight: CGFloat = 0,
+                              yielding: Bool) -> CGRect {
+        guard yielding else { return attachmentFrame }
+        let inset = safeTop.isFinite ? max(0, safeTop) : 0
+        let menu = menuBarHeight.isFinite ? max(0, menuBarHeight) : 0
+        // Auto-hidden menu bars can report the full screen as visibleFrame.
+        let top = min(visibleFrame.maxY, screenFrame.maxY - max(inset, menu)) - 4
+        let bottom = visibleFrame.minY + 12
+        let height = min(attachmentFrame.height, max(1, top - bottom))
+        return CGRect(x: attachmentFrame.minX, y: top - height,
+                      width: attachmentFrame.width, height: height)
+    }
+
     static func previewLevel(browserLevel: NSWindow.Level) -> NSWindow.Level {
         browserLevel.rawValue >= NSWindow.Level.statusBar.rawValue
             ? NSWindow.Level(rawValue: browserLevel.rawValue + 1) : .floating

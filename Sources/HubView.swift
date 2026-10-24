@@ -151,12 +151,6 @@ struct HubView: View {
                       onControlFocusChange: { musicControlsFocused = $0 })
     }
 
-    private var toolbarTopInset: CGFloat {
-        HubWorkspaceHeaderLayout.toolbarTopInset(embedded: presentation.header.embedded,
-            split: presentation.header.split, safeTop: presentation.header.topInset,
-            menuBarMayOverlap: presentation.header.menuBarMayOverlap)
-    }
-
     @ViewBuilder private var workspaceBar: some View {
         VStack(spacing: 0) {
             workspaceHeader
@@ -179,7 +173,6 @@ struct HubView: View {
                 let rightWorkspaces = Array(model.tabWorkspaces.dropFirst(layout.splitIndex))
                 HStack(spacing: 0) {
                     workspaceLeading(leftWorkspaces, availableWidth: sideWidth)
-                        .padding(.top, toolbarTopInset)
                         .frame(width: sideWidth, alignment: .leading).clipped()
                     VStack(spacing: 0) {
                         if embeddedMusicLayout.placement == .notch {
@@ -205,14 +198,14 @@ struct HubView: View {
                             })
                             .frame(width: layout.controlsWidth, alignment: .trailing)
                             .contentShape(Rectangle()).clipped()
-                    }.padding(.top, toolbarTopInset).frame(width: sideWidth).clipped()
+                    }.frame(width: sideWidth).clipped()
                 }.padding(.horizontal, 12).frame(height: geometry.size.height)
                     .onPreferenceChange(HubWorkspaceControlsWidthKey.self) { width in
                         if width.isFinite && width > 0 && abs(width - workspaceControlsWidth) > 0.5 {
                             workspaceControlsWidth = width
                         }
                     }
-            }.frame(height: embeddedMusicLayout.headerHeight + toolbarTopInset)
+            }.frame(height: embeddedMusicLayout.headerHeight)
         } else {
             HStack(spacing: 8) {
                 workspaceLeading(model.tabWorkspaces)

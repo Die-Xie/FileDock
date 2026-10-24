@@ -71,6 +71,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
     private var bridgePanel: NSPanel!
     private var bridgeView: HubNotchBridgeView!
     private var attachedToNotch = false
+    private var embeddedYielding = false
     private var desiredVisible = false
     private var transitionGeneration = 0
     private var attachedScreenNumber: NSNumber?
@@ -566,13 +567,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
             bridgeView.setPresented(false, animated: false) {}
         }
         if embeddedAtNotch {
+            attachedScreenNumber = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
+            updatePanelLevel()
             let placement = HubEmbeddedPlacement.make(screenFrame: screen.frame, visibleFrame: screen.visibleFrame,
                                                       safeTop: screen.safeAreaInsets.top,
                                                       leftAuxiliary: screen.auxiliaryTopLeftArea, rightAuxiliary: screen.auxiliaryTopRightArea,
                                                       requestedSize: NSSize(width: model.settings.width, height: model.settings.height))
-            attachedScreenNumber = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
             restoringSize = true
-            if panel.frame != placement.bodyFrame { panel.setFrame(placement.bodyFrame, display: true) }
+            let frame = HubWindowPresentation.embeddedFrame(placement.bodyFrame, screenFrame: screen.frame,
+                visibleFrame: screen.visibleFrame, safeTop: screen.safeAreaInsets.top,
+                menuBarHeight: NSStatusBar.system.thickness, yielding: embeddedYielding)
+            if panel.frame != frame { panel.setFrame(frame, display: true) }
             restoringSize = false
             presentation.header = .init(embedded: true, exclusionWidth: placement.headerExclusionWidth,
                                         topInset: placement.topInset, split: placement.usesSplitHeader)
@@ -622,10 +627,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
     private func updatePanelLevel() {
         guard panel != nil else { return }
         // The modal coordinator owns levels until its scoped restoration ends.
-        guard !HubWindowPresentation.isPresentingDialog else {
-            if presentation.header.menuBarMayOverlap != embeddedAtNotch { presentation.header.menuBarMayOverlap = embeddedAtNotch }
-            return
-        }
+        guard !HubWindowPresentation.isPresentingDialog else { return }
         if updater?.sessionInProgress == true { setPanelLevel(.normal); return }
         let level = HubWindowPresentation.browserLevel(embedded: embeddedAtNotch,
             auxiliaryVisible: settingsWindow?.isVisible == true || hasActiveDialog)
@@ -633,11 +635,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
     }
 
     private func setPanelLevel(_ level: NSWindow.Level) {
+        let yielding = embeddedAtNotch && level.rawValue < NSWindow.Level.statusBar.rawValue
+        // Move below the menu before lowering the level; restore the level
+        // before moving back into its space. Keep pin/size preferences intact.
+        if !yielding && panel.level != level { panel.level = level }
+        if embeddedYielding != yielding {
+            embeddedYielding = yielding
+            if embeddedAtNotch, let screen = attachmentScreen {
+                let placement = HubEmbeddedPlacement.make(screenFrame: screen.frame, visibleFrame: screen.visibleFrame,
+                    safeTop: screen.safeAreaInsets.top, leftAuxiliary: screen.auxiliaryTopLeftArea,
+                    rightAuxiliary: screen.auxiliaryTopRightArea,
+                    requestedSize: NSSize(width: model.settings.width, height: model.settings.height))
+                let frame = HubWindowPresentation.embeddedFrame(placement.bodyFrame, screenFrame: screen.frame,
+                    visibleFrame: screen.visibleFrame, safeTop: screen.safeAreaInsets.top,
+                    menuBarHeight: NSStatusBar.system.thickness, yielding: yielding)
+                let wasRestoring = restoringSize
+                restoringSize = true
+                if panel.frame != frame { panel.setFrame(frame, display: true) }
+                restoringSize = wasRestoring
+            }
+        }
         if panel.level != level { panel.level = level }
-        // Yielding to settings/modals also exposes the system menu bar.
-        // Keep the side controls below it until the embedded level is restored.
-        let overlap = embeddedAtNotch && level.rawValue < NSWindow.Level.statusBar.rawValue
-        if presentation.header.menuBarMayOverlap != overlap { presentation.header.menuBarMayOverlap = overlap }
         if QLPreviewPanel.sharedPreviewPanelExists(), let preview = QLPreviewPanel.shared(), preview.isVisible {
             let previewLevel = HubWindowPresentation.previewLevel(browserLevel: level)
             if preview.level != previewLevel { preview.level = previewLevel }
