@@ -209,7 +209,38 @@ import Foundation
         try testPathNavigation(in: base)
         try testParentChildNavigation(in: base)
         try testFavoriteShortcutAndIconOnly(in: base)
+        try testFolderGrouping(in: base)
         print("PASS: collisions, no overwrite, same-parent move, descendant and symlink validation, names, navigation, reference semantics/order, filtering, persistence, private config, workspace reorder, breadcrumb navigation, parent-child keyboard navigation, favorite shortcut migration and icon-only labels")
+    }
+
+    @MainActor private static func testFolderGrouping(in base: URL) throws {
+        let fm = FileManager.default
+        let root = base.appendingPathComponent("grouping", isDirectory: true)
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+        let folder = root.appendingPathComponent("z-folder", isDirectory: true)
+        let file = root.appendingPathComponent("a-file.txt")
+        try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+        try Data("bytes".utf8).write(to: file)
+        let storage = base.appendingPathComponent("grouping-config.json")
+        let model = makeTestModel(storageURL: storage, monitor: false)
+        let workspace = model.addWorkspace(name: "Sort", mode: .folder, urls: [root])
+        model.sortKey = .name; model.ascending = true
+        precondition(model.settings.resolvedFoldersFirst && model.visibleEntries.map(\.name) == ["z-folder", "a-file.txt"],
+                     "Existing settings retain folders-first sorting by default")
+        model.settings.foldersFirst = false
+        precondition(model.visibleEntries.map(\.name) == ["a-file.txt", "z-folder"], "Disabling grouping interleaves folders and files by the selected column")
+        model.sortByColumn(.name)
+        precondition(model.visibleEntries.map(\.name) == ["z-folder", "a-file.txt"], "Mixed descending order must also respect the column")
+        model.reorderEntries([file], before: folder)
+        let manual = model.visibleEntries.map(\.name)
+        model.settings.foldersFirst = true
+        precondition(model.visibleEntries.map(\.name) == manual && model.isManualEntryOrder,
+                     "The grouping preference cannot rewrite a manually arranged sequence")
+        model.settings.foldersFirst = false
+        model.save()
+        let restored = makeTestModel(storageURL: storage, monitor: false)
+        precondition(!restored.settings.resolvedFoldersFirst && restored.selectedWorkspaceID == workspace.id,
+                     "The grouping toggle survives restart without changing workspace identity")
     }
 
     @MainActor private static func testFavoriteShortcutAndIconOnly(in base: URL) throws {

@@ -79,6 +79,7 @@ struct HubSettings: Codable, Equatable {
     var suppressHoverInFullScreen: Bool? = nil
     var stagingWorkspaceID: UUID? = nil
     var stagingEnabled: Bool? = nil
+    var foldersFirst: Bool? = nil
     var switchDelay: Double = 0.2
     var triggerMode: String = "both"
     var hotCorner: String = "notch"
@@ -106,6 +107,7 @@ struct HubSettings: Codable, Equatable {
     }
     var resolvedSuppressHoverInFullScreen: Bool { suppressHoverInFullScreen ?? true }
     var resolvedStagingEnabled: Bool { stagingEnabled ?? true }
+    var resolvedFoldersFirst: Bool { foldersFirst ?? true }
     var resolvedNotchIntegrationStyle: String { notchIntegrationStyle == "embedded" ? "embedded" : "connected" }
     var resolvedAutoHideDelay: Double {
         let value = autoHideDelay ?? 0.55
@@ -496,7 +498,7 @@ enum HubFileOperations {
             }
         }
         return entries.sorted { left, right in
-            if left.canNavigate != right.canNavigate { return left.canNavigate }
+            if settings.resolvedFoldersFirst && left.canNavigate != right.canNavigate { return left.canNavigate }
             let result: ComparisonResult
             switch sortKey {
             case .name: result = left.name.localizedStandardCompare(right.name)

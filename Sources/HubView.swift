@@ -491,6 +491,8 @@ struct HubView: View {
                 }
                 Divider()
                 Toggle("升序", isOn: $model.ascending)
+                Toggle("文件夹优先", isOn: Binding(get: { model.settings.resolvedFoldersFirst },
+                    set: { model.settings.foldersFirst = $0 })).disabled(model.isManualEntryOrder)
                 Toggle("按手动顺序显示", isOn: Binding(get: { model.isManualEntryOrder }, set: { model.setManualEntryOrder($0) }))
             } label: { Image(systemName: "arrow.up.arrow.down").frame(width: 28, height: 27) }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()

@@ -153,6 +153,9 @@ struct HubSettingsView: View {
                     Text("拖入文件以临时收集，随后拖出或转移到目标文件夹。关闭入口会保留暂存项目。")
                         .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     Toggle("显示隐藏文件", isOn: $model.showHiddenFiles)
+                    Toggle("排序时文件夹优先", isOn: Binding(get: { model.settings.resolvedFoldersFirst }, set: { model.settings.foldersFirst = $0 }))
+                    Text("关闭后，文件和文件夹一起按所选列排序。手动顺序和最近使用不受影响。")
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     Text("文件夹工作区中的拖入会移动文件；按住 ⌥ 拖入则复制。合集仅添加引用。")
                         .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     HStack { Button("导出工作区配置…") { model.exportConfiguration() }; Button("导入工作区配置…") { model.importConfiguration() } }
