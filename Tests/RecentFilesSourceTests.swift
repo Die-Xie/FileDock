@@ -57,8 +57,14 @@ struct RecentFilesSourceTests {
          NSMetadataItemContentTypeTreeKey: ["public.content", "public.text"]]
     }
 
+    @MainActor static func wait(_ condition: () -> Bool) async throws {
+        let deadline = ProcessInfo.processInfo.systemUptime + 5
+        while !condition() && ProcessInfo.processInfo.systemUptime < deadline { try await Task.sleep(nanoseconds: 5_000_000) }
+        precondition(condition(), "Asynchronous recent query did not finish")
+    }
+
     @MainActor
-    static func main() throws {
+    static func main() async throws {
         let manager = FileManager.default
         let fixture = manager.temporaryDirectory.appendingPathComponent("FileDockRecentTests-\(UUID().uuidString)", isDirectory: true)
         let home = fixture.appendingPathComponent("user", isDirectory: true)
@@ -225,19 +231,27 @@ struct RecentFilesSourceTests {
                      metadataItem?.value(forAttribute: NSMetadataItemURLKey) == nil,
                      "A real metadata item exposes its filesystem path even without a URL attribute")
         query.enableUpdates()
+        let progressCount = snapshots.count
         center.post(name: NSNotification.Name.NSMetadataQueryGatheringProgress, object: query)
+        try await wait { snapshots.count > progressCount }
         precondition(snapshots.last?.gathering == true && snapshots.last?.files == [new, old])
         query.fixtureGathering = false
+        let finishCount = snapshots.count
         center.post(name: NSNotification.Name.NSMetadataQueryDidFinishGathering, object: query)
+        try await wait { snapshots.count > finishCount }
         precondition(snapshots.last?.gathering == false && snapshots.last?.message == nil)
         precondition(query.disabled == query.enabled)
 
         query.rows = [[NSMetadataItemURLKey: archive, "kMDItemLastUsedDate": date]]
+        let refreshCount = snapshots.count
         source?.refresh()
+        try await wait { snapshots.count > refreshCount }
         precondition(snapshots.last?.files.map(\.url) == [archive] && query.starts == 1 && made.count == 1,
                      "Refresh publishes live results without restarting a long-running query")
         query.rows = []
+        let emptyCount = snapshots.count
         center.post(name: NSNotification.Name.NSMetadataQueryDidUpdate, object: query)
+        try await wait { snapshots.count > emptyCount }
         precondition(snapshots.last?.files.isEmpty == true && snapshots.last?.message != nil && snapshots.last?.gathering == false)
         let beforeStop = snapshots.count
         source?.stop()
@@ -267,7 +281,9 @@ struct RecentFilesSourceTests {
                      "Refreshing after a failed start retries the query with its existing receiver")
         failedQuery.fixtureGathering = false
         failedQuery.rows = [row(report)]
+        let recoveryCount = failures.count
         center.post(name: NSNotification.Name.NSMetadataQueryDidFinishGathering, object: failedQuery)
+        try await wait { failures.count > recoveryCount }
         precondition(failures.last?.files == [old] && failures.last?.gathering == false,
                      "A recovered query delivers actual results to the original receiver")
         failed.stop()
@@ -279,6 +295,6 @@ struct RecentFilesSourceTests {
         var reentrant: HubRecentFilesSource? = HubRecentFilesSource(homeURL: home, notificationCenter: center, makeQuery: { RecentMetadataQueryFixture() })
         reentrant?.start { _ in reentrant?.stop() }
         reentrant = nil
-        print("PASS: Recent files use bounded metadata queries, safe home paths, cloud placeholders and restartable main-thread snapshots")
+        print("PASS: Recent files use bounded metadata queries, safe home paths, cloud placeholders and restartable asynchronous snapshots delivered on main")
     }
 }

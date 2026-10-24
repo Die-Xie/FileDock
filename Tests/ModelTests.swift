@@ -2,7 +2,12 @@ import AppKit
 import Foundation
 
 @main struct ModelTests {
-    @MainActor static func main() throws {
+    @MainActor static func waitForFileWork(_ model: HubModel) async throws {
+        let end = Date().addingTimeInterval(10)
+        while model.fileOperationsInProgress > 0 && Date() < end { try await Task.sleep(nanoseconds: 5_000_000) }
+        precondition(model.fileOperationsInProgress == 0)
+    }
+    @MainActor static func main() async throws {
         let fm = FileManager.default
         var wakeSettings = HubSettings()
         precondition(wakeSettings.appearance == "system" && wakeSettings.resolvedBackgroundTheme == "liquidGlass")
@@ -92,6 +97,7 @@ import Foundation
         model.goBack()
         precondition(model.currentURL == source)
         model.createFolder(named: "New Folder")
+        try await waitForFileWork(model)
         precondition(fm.fileExists(atPath: source.appendingPathComponent("New Folder").path))
         let newDirectory = source.appendingPathComponent("New Folder", isDirectory: true).standardizedFileURL
         model.selectedIDs = [file]
@@ -126,8 +132,10 @@ import Foundation
         let contentAfterReorder = try String(contentsOf: file, encoding: .utf8)
         precondition(contentAfterReorder == "original", "Reordering must never change file data")
         model.rename(FileEntry(url: file), to: "renamed.txt")
+        try await waitForFileWork(model)
         precondition(model.visibleEntries.first?.name == "renamed.txt", "Renaming must preserve a manually ordered file's position")
         model.rename(FileEntry(url: source.appendingPathComponent("renamed.txt")), to: "notes.txt")
+        try await waitForFileWork(model)
         model.navigate(to: child)
         model.setManualEntryOrder(true)
         model.goBack()
@@ -135,15 +143,17 @@ import Foundation
         let staleDirectoryKey = HubFileOperations.canonical(source).appendingPathComponent("renamed-child").path
         model.workspaces[sourceWorkspaceIndex].directoryOrders?[staleDirectoryKey] = ["stale-entry"]
         model.rename(FileEntry(url: child), to: "renamed-child")
+        try await waitForFileWork(model)
         let renamedChild = source.appendingPathComponent("renamed-child", isDirectory: true)
         model.navigate(to: renamedChild)
         precondition(model.isManualEntryOrder, "Renaming a directory must migrate its stored order key")
         precondition(model.selectedWorkspace?.directoryOrders?[staleDirectoryKey] == [], "Renamed source order must replace stale target metadata")
         model.goBack()
         model.rename(FileEntry(url: renamedChild), to: "child")
+        try await waitForFileWork(model)
         let favorites = model.addWorkspace(name: "Favorites", symbol: "star", mode: .references, urls: [file])
         let countBeforeDrop = try fm.contentsOfDirectory(atPath: source.path).count
-        try model.handleDrop(urls: [child, file], copy: false)
+        precondition(model.acceptFileDrop([child, file], workspaceID: model.selectedWorkspaceID, directory: model.currentURL, copy: false))
         precondition(model.selectedWorkspace?.referencePaths.count == 2, "References must deduplicate without moving files")
         let countAfterDrop = try fm.contentsOfDirectory(atPath: source.path).count
         precondition(countAfterDrop == countBeforeDrop)

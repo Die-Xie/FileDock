@@ -42,6 +42,7 @@ import Foundation
         precondition(!fm.fileExists(atPath: target.appendingPathComponent("child.txt").path), "A selected child is not moved twice")
         model.selectWorkspace(targetID)
         model.rename(FileEntry(url: target.appendingPathComponent("Folder")), to: "Renamed")
+        try await wait { model.fileOperationsInProgress == 0 }
         precondition(model.workspaces.first { $0.id == favoriteID }!.referencePaths.contains(target.appendingPathComponent("Renamed/child.txt").path))
         let alpha = source.appendingPathComponent("Alpha.txt"), beta = source.appendingPathComponent("Beta.txt")
         try Data("alpha".utf8).write(to: alpha); try Data("beta".utf8).write(to: beta)

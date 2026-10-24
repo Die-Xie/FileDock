@@ -123,7 +123,7 @@ import Foundation
         reloaded.setStagingEnabled(true)
         reloaded.openStagingWorkspace()
         precondition(reloaded.stagingWorkspace?.id == shelf.id && reloaded.isStagingRoot)
-        let accepted = try reloaded.handleDrop(urls: [file])
+        let accepted = reloaded.acceptFileDrop([file], workspaceID: reloaded.selectedWorkspaceID, directory: reloaded.currentURL, copy: false)
         precondition(accepted && reloaded.stagedURLs == [file])
         reloaded.selectedIDs = [file]
         reloaded.trashSelected()

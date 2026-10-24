@@ -6,7 +6,7 @@ struct HubRecentFile: Equatable, Sendable {
     var metadataOnly = false
 }
 
-struct HubRecentFilesSnapshot {
+struct HubRecentFilesSnapshot: Sendable {
     let files: [HubRecentFile]
     let gathering: Bool
     let message: String?
@@ -16,12 +16,17 @@ struct HubRecentFilesSnapshot {
 protocol HubRecentFilesProviding: AnyObject {
     func start(_ receive: @escaping (HubRecentFilesSnapshot) -> Void)
     func refresh()
+    func refreshIfNeeded()
     func stop()
+}
+
+extension HubRecentFilesProviding {
+    func refreshIfNeeded() { refresh() }
 }
 
 /// Only metadata is inspected here. In particular, a cloud-only document is not
 /// opened, coordinated, or requested for download just to appear in Recents.
-struct HubRecentFilesCandidate {
+struct HubRecentFilesCandidate: Sendable {
     let url: URL
     let lastUsed: Date
     var invisible = false
@@ -101,45 +106,84 @@ enum HubRecentFilesPolicy {
     }
 }
 
+/// Immutable query identity plus a lock-protected cancellation/idle clock.
+/// Query result reads run off-main, while start/stop and notifications stay on
+/// their owner. Cancelled reads retain a real worker slot until they return.
+private final class HubRecentQueryRead: @unchecked Sendable {
+    let query: NSMetadataQuery
+    private let lock = NSLock()
+    private var cancelled = false
+    private var finished = false
+    private var activity = ProcessInfo.processInfo.systemUptime
+    init(_ query: NSMetadataQuery) { self.query = query }
+    func cancel() { lock.lock(); cancelled = true; lock.unlock() }
+    func finish() { lock.lock(); finished = true; lock.unlock() }
+    func checkpoint() throws {
+        lock.lock(); defer { lock.unlock() }
+        if cancelled { throw CancellationError() }
+        activity = ProcessInfo.processInfo.systemUptime
+    }
+    func isIdle(for timeout: TimeInterval) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return !finished && !cancelled && ProcessInfo.processInfo.systemUptime - activity >= timeout
+    }
+}
+
 @MainActor
 final class HubRecentFilesSource: HubRecentFilesProviding {
-    // The base expression comes from Finder's shipped Recents saved search.
-    // Use a public, bounded home scope rather than Finder's private MyFiles scope.
-    // FSInvisible is not reliably indexed: a negative clause for that attribute
-    // can suppress every result. Hidden paths and flags are filtered after stat.
+    // Finder's public expression, scoped to the home directory. FSInvisible may
+    // be missing from the index, so filter hidden metadata after querying.
     static let rawQuery = #"(kMDItemLastUsedDate = "*") && ((kMDItemContentTypeTree = public.content) || (kMDItemContentTypeTree = "com.microsoft.*"cdw) || (kMDItemContentTypeTree = public.archive)) && !(kMDItemContentTypeTree = public.folder) && !(kMDItemContentTypeTree = com.apple.application-bundle)"#
 
     private let homeURL: URL
     private let notificationCenter: NotificationCenter
     private let makeQuery: () -> NSMetadataQuery
+    private let validate: @Sendable (HubRecentFilesCandidate, URL) -> HubRecentFile?
+    private let timeout: TimeInterval
+    private let workers: OperationQueue = {
+        let queue = OperationQueue(); queue.name = "FileDock.RecentsValidation"
+        queue.maxConcurrentOperationCount = 2; queue.qualityOfService = .userInitiated
+        return queue
+    }()
     private var query: NSMetadataQuery?
     private var observers: [NSObjectProtocol] = []
     private var receive: ((HubRecentFilesSnapshot) -> Void)?
     private var generation: UInt64 = 0
+    private struct Job {
+        let read: HubRecentQueryRead
+        var deadline: Task<Void, Never>?
+        var timedOut = false
+    }
+    private var jobs: [UUID: Job] = [:]
+    private var current: UUID?
+    private var refreshPending = false
+    private var needsRetry = false
+    private var lastFiles: [HubRecentFile] = []
+    var activeReadCount: Int { jobs.count }
 
     init(homeURL: URL = FileManager.default.homeDirectoryForCurrentUser,
          notificationCenter: NotificationCenter = .default,
-         makeQuery: @escaping () -> NSMetadataQuery = { NSMetadataQuery() }) {
+         makeQuery: @escaping () -> NSMetadataQuery = { NSMetadataQuery() },
+         timeout: TimeInterval = 5,
+         validate: @escaping @Sendable (HubRecentFilesCandidate, URL) -> HubRecentFile? = { HubRecentFilesPolicy.file(for: $0, homeURL: $1) }) {
         self.homeURL = homeURL.standardizedFileURL
         self.notificationCenter = notificationCenter
         self.makeQuery = makeQuery
+        self.validate = validate
+        self.timeout = timeout.isFinite ? min(60, max(0.01, timeout)) : 5
     }
 
     deinit {
+        for job in jobs.values { job.read.cancel(); job.deadline?.cancel() }
         for observer in observers { notificationCenter.removeObserver(observer) }
         query?.stop()
     }
 
     func start(_ receive: @escaping (HubRecentFilesSnapshot) -> Void) {
         self.receive = receive
-        if query != nil {
-            publishSnapshot()
-            return
-        }
+        if query != nil { refresh(); return }
         guard let predicate = NSPredicate(fromMetadataQueryString: Self.rawQuery) else {
-            receive(HubRecentFilesSnapshot(files: [], gathering: false,
-                                           message: "无法建立最近使用的文件查询。"))
-            return
+            receive(.init(files: [], gathering: false, message: "无法建立最近使用的文件查询。")); return
         }
         let query = makeQuery()
         query.predicate = predicate
@@ -155,83 +199,121 @@ final class HubRecentFilesSource: HubRecentFilesProviding {
                      NSNotification.Name.NSMetadataQueryGatheringProgress] {
             observers.append(notificationCenter.addObserver(forName: name, object: query, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated {
-                    guard let self, self.generation == startedGeneration else { return }
+                    guard let self, self.generation == startedGeneration, !self.needsRetry else { return }
                     self.publishSnapshot()
                 }
             })
         }
-        receive(HubRecentFilesSnapshot(files: [], gathering: true, message: "正在读取最近使用的文件…"))
-        // A receiver may synchronously leave this workspace from its callback.
+        receive(.init(files: lastFiles, gathering: true, message: "正在读取最近使用的文件…"))
         guard self.query === query, generation == startedGeneration else { return }
         if !query.start() {
             stopQuery()
-            self.receive?(HubRecentFilesSnapshot(files: [], gathering: false,
-                                                message: "无法读取最近使用的文件，请检查 Spotlight 索引后重试。"))
+            self.receive?(.init(files: lastFiles, gathering: false, message: "无法读取最近使用的文件，请检查 Spotlight 索引后重试。"))
         }
     }
 
-    /// Republish the live query; repeatedly rebuilding Spotlight queries makes
-    /// a timer-driven refresh look permanently empty on a large home directory.
+    /// Explicit refresh may retry a failed provider with a new query identity.
+    /// Never read concurrently from the old paused query after its timeout.
     func refresh() {
+        if needsRetry, let receive {
+            stopQuery(); start(receive); return
+        }
         guard query != nil else {
-            // A failed start keeps the receiver so an explicit refresh can
-            // retry. stop() clears it, so inactive workspaces remain stopped.
             if let receive { start(receive) }
             return
         }
         publishSnapshot()
     }
-
-    func stop() {
-        stopQuery()
-        receive = nil
+    func refreshIfNeeded() {
+        guard !needsRetry else { return }
+        refresh()
     }
+    func stop() { stopQuery(); receive = nil; lastFiles = [] }
 
     private func stopQuery() {
         generation &+= 1
+        for job in jobs.values { job.read.cancel(); job.deadline?.cancel() }
+        current = nil; refreshPending = false; needsRetry = false
         for observer in observers { notificationCenter.removeObserver(observer) }
         observers.removeAll()
-        query?.stop()
-        query = nil
+        query?.stop(); query = nil
     }
 
-    private func snapshot(from query: NSMetadataQuery) -> HubRecentFilesSnapshot {
+    nonisolated private static func snapshot(read: HubRecentQueryRead, homeURL: URL,
+        validate: @Sendable (HubRecentFilesCandidate, URL) -> HubRecentFile?) throws -> HubRecentFilesSnapshot {
+        try read.checkpoint()
+        let query = read.query
         query.disableUpdates()
         defer { query.enableUpdates() }
-        var files: [HubRecentFile] = []
-        var seen: Set<URL> = []
+        var files: [HubRecentFile] = [], seen = Set<URL>()
         for index in 0..<query.resultCount {
-            // Query-level attribute access is limited to sort/group/value-list fields.
-            // Read each metadata item directly for its path and other fields;
-            // query.results is intentionally avoided because it is for bindings.
-            guard let item = query.result(at: index) as? NSMetadataItem else { continue }
-            let url: URL
-            if let value = item.value(forAttribute: NSMetadataItemURLKey) as? URL {
-                url = value
-            } else if let path = item.value(forAttribute: NSMetadataItemPathKey) as? String {
-                url = URL(fileURLWithPath: path)
-            } else { continue }
-            guard let lastUsed = item.value(forAttribute: "kMDItemLastUsedDate") as? Date else { continue }
-            let candidate = HubRecentFilesCandidate(
-                url: url, lastUsed: lastUsed,
-                invisible: (item.value(forAttribute: "kMDItemFSInvisible") as? NSNumber)?.boolValue == true,
-                contentTypeTree: item.value(forAttribute: NSMetadataItemContentTypeTreeKey) as? [String] ?? [],
-                ubiquitous: (item.value(forAttribute: NSMetadataItemIsUbiquitousKey) as? NSNumber)?.boolValue == true,
-                downloadingStatus: item.value(forAttribute: NSMetadataUbiquitousItemDownloadingStatusKey) as? String)
-            guard let file = HubRecentFilesPolicy.file(for: candidate, homeURL: homeURL), seen.insert(file.url).inserted else { continue }
+            try read.checkpoint()
+            // Item attributes, not the binding-oriented query.results proxy.
+            let candidate: HubRecentFilesCandidate? = autoreleasepool {
+                guard let item = query.result(at: index) as? NSMetadataItem else { return nil }
+                let url: URL
+                if let value = item.value(forAttribute: NSMetadataItemURLKey) as? URL { url = value }
+                else if let path = item.value(forAttribute: NSMetadataItemPathKey) as? String { url = URL(fileURLWithPath: path) }
+                else { return nil }
+                guard let date = item.value(forAttribute: "kMDItemLastUsedDate") as? Date else { return nil }
+                return HubRecentFilesCandidate(url: url, lastUsed: date,
+                    invisible: (item.value(forAttribute: "kMDItemFSInvisible") as? NSNumber)?.boolValue == true,
+                    contentTypeTree: item.value(forAttribute: NSMetadataItemContentTypeTreeKey) as? [String] ?? [],
+                    ubiquitous: (item.value(forAttribute: NSMetadataItemIsUbiquitousKey) as? NSNumber)?.boolValue == true,
+                    downloadingStatus: item.value(forAttribute: NSMetadataUbiquitousItemDownloadingStatusKey) as? String)
+            }
+            guard let candidate else { continue }
+            guard let file = autoreleasepool(invoking: { validate(candidate, homeURL) }), seen.insert(file.url).inserted else { continue }
             files.append(file)
-            // The query is sorted newest first, so no lower-ranked result can
-            // displace these first 500 distinct eligible documents.
             if files.count == HubRecentFilesPolicy.maximumResults { break }
         }
+        try read.checkpoint()
         let gathering = query.isGathering
-        let message = gathering ? "正在读取最近使用的文件…" : (files.isEmpty ? "暂无最近使用的文件。结果取决于 Spotlight 索引。" : nil)
-        return HubRecentFilesSnapshot(files: HubRecentFilesPolicy.sorted(files), gathering: gathering, message: message)
+        let message = gathering ? "正在读取最近使用的文件…" : files.isEmpty ? "暂无最近使用的文件。结果取决于 Spotlight 索引。" : nil
+        return .init(files: HubRecentFilesPolicy.sorted(files), gathering: gathering, message: message)
     }
 
     private func publishSnapshot() {
-        guard let query else { return }
-        let value = snapshot(from: query)
-        receive?(value)
+        guard let query, !needsRetry else { return }
+        if current != nil { refreshPending = true; return }
+        guard jobs.count < 2 else {
+            needsRetry = true
+            receive?(.init(files: lastFiles, gathering: false, message: "仍有最近使用查询等待系统响应。请稍后重试。")); return
+        }
+        let id = UUID(), epoch = generation
+        let read = HubRecentQueryRead(query), timeout = timeout
+        current = id
+        let deadline = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                do { try await Task.sleep(nanoseconds: UInt64(min(0.25, timeout / 4) * 1_000_000_000)) } catch { return }
+                guard let self, self.current == id, var job = self.jobs[id] else { return }
+                guard job.read.isIdle(for: timeout) else { continue }
+                job.read.cancel(); job.timedOut = true; job.deadline = nil
+                self.jobs[id] = job; self.needsRetry = true; self.refreshPending = false
+                self.receive?(.init(files: self.lastFiles, gathering: false,
+                                   message: "最近使用读取暂时无响应。可以切换工作区，或点击刷新重试。"))
+                return
+            }
+        }
+        jobs[id] = Job(read: read, deadline: deadline)
+        let home = homeURL, validate = validate
+        workers.addOperation { [weak self] in
+            let result = Result { try Self.snapshot(read: read, homeURL: home, validate: validate) }
+            read.finish()
+            Task { @MainActor [weak self] in
+                guard let self, let job = self.jobs.removeValue(forKey: id) else { return }
+                job.deadline?.cancel()
+                guard self.current == id, self.generation == epoch else { return }
+                self.current = nil
+                guard !job.timedOut else { return }
+                let again = self.refreshPending; self.refreshPending = false
+                if case .success(let snapshot) = result {
+                    self.lastFiles = snapshot.files
+                    self.receive?(snapshot)
+                }
+                // Receiver callbacks can synchronously leave or restart Recents.
+                if again && self.generation == epoch && self.query === read.query && !self.needsRetry { self.publishSnapshot() }
+            }
+        }
     }
 }

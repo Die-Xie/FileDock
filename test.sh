@@ -14,6 +14,9 @@ swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache
     Sources/RecentFiles.swift Tests/RecentFilesSourceTests.swift -o .build/recent-source-tests
 .build/recent-source-tests
 swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
+    Sources/RecentFiles.swift Tests/BackgroundRecentsTests.swift -o .build/background-recents-tests
+.build/background-recents-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
     Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/HubModel.swift Sources/DirectoryLoader.swift Tests/ModelTestSupport.swift Tests/RecentWorkspaceTests.swift -o .build/recent-workspace-tests \
     -framework AppKit -framework Carbon -framework Combine -framework UniformTypeIdentifiers
 .build/recent-workspace-tests
@@ -111,6 +114,10 @@ swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache
     Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/HubModel.swift Sources/DirectoryLoader.swift Tests/ModelTestSupport.swift Tests/CrossWorkspaceDropTests.swift -o .build/cross-workspace-drop-tests \
     -framework AppKit -framework Carbon -framework Combine -framework UniformTypeIdentifiers
 .build/cross-workspace-drop-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
+    Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/HubModel.swift Sources/DirectoryLoader.swift Tests/ModelTestSupport.swift Tests/BackgroundFileWorkTests.swift -o .build/background-file-work-tests \
+    -framework AppKit -framework Carbon -framework Combine -framework UniformTypeIdentifiers
+.build/background-file-work-tests
 swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
     Sources/NativeFileDrag.swift Sources/NativeWorkspaceDrag.swift Sources/NativeFileDrop.swift Sources/FileDropFeedback.swift Tests/NativeFileDropTests.swift -o .build/native-drop-tests \
     -framework AppKit -framework SwiftUI -framework UniformTypeIdentifiers

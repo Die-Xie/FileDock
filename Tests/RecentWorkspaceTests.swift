@@ -119,8 +119,8 @@ import Foundation
         model.setManualEntryOrder(true)
         model.appendReferences([child])
         model.removeReferences([alpha])
-        let accepted = try? model.handleDrop(urls: [child, alpha], copy: false)
-        precondition(accepted != true, "A recent virtual root must not accept filesystem transfers")
+        let accepted = model.acceptFileDrop([child, alpha], workspaceID: model.selectedWorkspaceID, directory: model.currentURL, copy: false)
+        precondition(!accepted, "A recent virtual root must not accept filesystem transfers")
         precondition(model.visibleEntries.map(\.url) == [alpha, zulu] && model.referenceManualOrder == previousReferenceManualOrder)
         precondition(model.selectedWorkspace?.id == recent.id && model.selectedWorkspace?.rootPath == nil && model.selectedWorkspace?.referencePaths.isEmpty == true)
         precondition(model.selectedWorkspace?.directoryOrders?.isEmpty ?? true,

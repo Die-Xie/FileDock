@@ -21,9 +21,13 @@ private final class DirectoryReadState: @unchecked Sendable {
         if let snapshot { pending = snapshot }
     }
     func finish() { lock.lock(); finished = true; lock.unlock() }
-    func poll() -> (activity: TimeInterval, snapshot: HubDirectorySnapshot?, finished: Bool) {
+    func isIdle(for timeout: TimeInterval) -> Bool {
         lock.lock(); defer { lock.unlock() }
-        let value = (lastActivity, pending, finished); pending = nil
+        return !finished && !cancelled && ProcessInfo.processInfo.systemUptime - lastActivity >= timeout
+    }
+    func poll() -> (snapshot: HubDirectorySnapshot?, finished: Bool) {
+        lock.lock(); defer { lock.unlock() }
+        let value = (pending, finished); pending = nil
         return value
     }
 }
@@ -153,7 +157,7 @@ extension HubDirectoryLoading {
                 if update.finished { return }
                 // Progress callbacks can synchronously navigate or cancel.
                 guard let current = self.jobs[id], let complete = current.completion else { return }
-                guard ProcessInfo.processInfo.systemUptime - update.activity >= self.timeout else { continue }
+                guard current.state.isIdle(for: self.timeout) else { continue }
                 current.state.cancel()
                 job.completion = nil; job.progress = nil; job.deadline = nil
                 self.jobs[id] = job
@@ -253,12 +257,20 @@ extension HubDirectoryLoading {
     func load(_ directory: URL) {
         clear()
         let id = UUID(); current = id
-        loader.load(id: id, request: HubDirectoryRequest(directory: directory)) { [weak self] result in
+        var request = HubDirectoryRequest(directory: directory)
+        request.order = HubDirectoryOrder(key: .name, ascending: true, foldersFirst: false, preservesInputOrder: false, directoryOrders: [:])
+        func apply(_ parent: HubParentDirectory, _ snapshot: HubDirectorySnapshot) {
+            let next = (snapshot.orderedEntries ?? snapshot.entries).filter(\.canNavigate)
+            if next != parent.entries { parent.entries = next }
+        }
+        loader.load(id: id, request: request, progress: { [weak self] snapshot in
+            guard let self, self.current == id else { return }
+            apply(self, snapshot)
+        }) { [weak self] result in
             guard let self, self.current == id else { return }
             self.current = nil
             switch result {
-            case .success(let snapshot):
-                self.entries = snapshot.entries.filter(\.canNavigate).sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            case .success(let snapshot): apply(self, snapshot)
             case .failure(let error): self.message = error.localizedDescription
             }
         }

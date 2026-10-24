@@ -123,6 +123,25 @@ private final class ScanMetrics: @unchecked Sendable {
         try await wait { failedDone }
         require(partialBatches == 1)
 
+        // UI publication may take longer than a tiny timeout budget while the
+        // worker continues advancing. Recheck its current clock after callbacks.
+        let publishing = HubDirectoryLoader(timeout: 0.06) { request in
+            for index in 0..<60 {
+                Thread.sleep(forTimeInterval: 0.01)
+                try request.recordProgress(.init(entries: Array(all.prefix(index % 10 + 1)), canonicalDirectoryPath: directory.path))
+            }
+            return .init(entries: all, canonicalDirectoryPath: directory.path)
+        }
+        var publishingDone = false, publicationFailure = false, delayed = false
+        publishing.load(id: UUID(), request: .init(directory: directory), progress: { _ in
+            if !delayed { delayed = true; Thread.sleep(forTimeInterval: 0.12) }
+        }) { result in
+            publishingDone = true
+            if case .failure = result { publicationFailure = true }
+        }
+        try await wait { publishingDone }
+        require(delayed && !publicationFailure, "A stale pre-publication clock must not time out a progressing worker")
+
         // Publish partial navigation, retain selection during later batches,
         // retain partial contents on a genuine stalled provider, and retry.
         let stalled = root.appendingPathComponent("stalled", isDirectory: true)

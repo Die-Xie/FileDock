@@ -64,7 +64,7 @@ struct HubView: View {
                     if showsLoading || model.fileOperationsInProgress > 0 {
                         HStack(spacing: 7) {
                             ProgressView().controlSize(.small)
-                            Text(model.fileOperationsInProgress > 0 ? "正在转移文件…" : model.entries.isEmpty ? "正在读取…" : "已读取 \(model.entries.count) 项…").font(.caption)
+                            Text(model.fileOperationsInProgress > 0 ? "正在处理文件…" : model.entries.isEmpty ? "正在读取…" : "已读取 \(model.entries.count) 项…").font(.caption)
                         }.padding(.horizontal, 10).padding(.vertical, 6)
                             .background(.regularMaterial, in: Capsule()).padding(10).allowsHitTesting(false)
                     }

@@ -233,6 +233,27 @@ enum HubFileOperations {
         }
     }
 
+    /// Resolve parent/child selections only on a file worker, preserving the
+    /// caller's order and never traversing symlinked directories as parents.
+    static func topLevelURLs(_ urls: [URL]) -> [URL] {
+        var seen = Set<String>()
+        let unique = urls.filter(\.isFileURL).map(\.standardizedFileURL).filter { seen.insert($0.path).inserted }
+        var roots = Set<String>(), accepted = Set<String>()
+        for source in unique.sorted(by: { $0.path.count < $1.path.count }) {
+            var parent = source.deletingLastPathComponent(), nested = false
+            while parent.path != source.path {
+                if roots.contains(parent.path) { nested = true; break }
+                if parent.path == "/" { break }
+                parent.deleteLastPathComponent()
+            }
+            if nested { continue }
+            let values = try? source.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+            if values?.isDirectory == true && values?.isSymbolicLink != true { roots.insert(source.path) }
+            accepted.insert(source.path)
+        }
+        return unique.filter { accepted.contains($0.path) }
+    }
+
     static func uniqueDestination(for source: URL, in directory: URL) -> URL {
         let fm = FileManager.default
         let base = directory.appendingPathComponent(source.lastPathComponent)
@@ -276,7 +297,7 @@ enum HubFileOperations {
 
 @MainActor final class HubModel: ObservableObject {
     @Published var shortcutRegistrationErrors: [String: String] = [:]
-    @Published var workspaces: [Workspace] = [] { didSet { invalidateEntryOrder(); persistIfReady() } }
+    @Published var workspaces: [Workspace] = [] { didSet { invalidateEntryOrder(); cachedStagedURLs = nil; persistIfReady() } }
     @Published var selectedWorkspaceID: UUID? { didSet { persistIfReady() } }
     @Published var entries: [FileEntry] = [] { didSet { invalidateEntryOrder() } }
     @Published var selectedIDs = Set<URL>()
@@ -295,6 +316,7 @@ enum HubFileOperations {
     @Published var viewMode: HubViewMode = .grid { didSet { persistIfReady() } }
     @Published var settings = HubSettings() { didSet {
         if settings.resolvedFoldersFirst != oldValue.resolvedFoldersFirst { invalidateEntryOrder() }
+        if settings.stagingWorkspaceID != oldValue.stagingWorkspaceID || settings.favoriteWorkspaceID != oldValue.favoriteWorkspaceID { cachedStagedURLs = nil }
         persistIfReady()
     } }
     @Published var pinned = false
@@ -338,6 +360,7 @@ enum HubFileOperations {
         return DirectorySnapshotKey(workspaceID: context.workspaceID, directory: context.directory, references: context.references, hidden: context.showHiddenFiles)
     }
     private var canonicalDirectoryPath: String? { didSet { if oldValue != canonicalDirectoryPath { invalidateEntryOrder() } } }
+    private var cachedStagedURLs: [URL]?
     private var cachedOrderedEntries: [FileEntry]?
     private var cachedVisibleEntries: (search: String, entries: [FileEntry])?
     private(set) var entryOrderCalculationCount = 0
@@ -436,8 +459,11 @@ enum HubFileOperations {
         return workspaces.first { $0.id == id && $0.mode == .references }
     }
     var stagedURLs: [URL] {
+        if let cachedStagedURLs { return cachedStagedURLs }
         let paths = stagingWorkspace?.referencePaths.map { URL(fileURLWithPath: $0).standardizedFileURL.path } ?? []
-        return uniquePaths(paths).map { URL(fileURLWithPath: $0) }
+        let result = uniquePaths(paths).map { URL(fileURLWithPath: $0) }
+        cachedStagedURLs = result
+        return result
     }
     var isStagingWorkspace: Bool { stagingWorkspace?.id == selectedWorkspaceID && selectedWorkspaceID != nil }
     var isStagingRoot: Bool { isStagingWorkspace && currentURL == nil }
@@ -672,17 +698,16 @@ enum HubFileOperations {
         guard !stagingTransferInProgress else { return [] }
         let stagedPaths = Set(stagedURLs.map(\.path))
         let requested = urls.filter(\.isFileURL).map(\.standardizedFileURL).filter { stagedPaths.contains($0.path) }
-        let files = normalizedTopLevelURLs(requested)
-        guard !files.isEmpty else { return [] }
+        guard !requested.isEmpty else { return [] }
         let shelfID = stagingWorkspace?.id
         stagingTransferInProgress = true
-        transferScopeURLs = files + [directory.standardizedFileURL]
+        transferScopeURLs = requested + [directory.standardizedFileURL]
         remember(directory)
         defer { stagingTransferInProgress = false }
         let result = await Task.detached(priority: .userInitiated) {
             var completed: [(source: URL, destination: URL, directory: Bool)] = []
             var failures: [String] = []
-            for source in files {
+            for source in HubFileOperations.topLevelURLs(requested) {
                 let values = try? source.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
                 let isDirectory = values?.isDirectory == true && values?.isSymbolicLink != true
                 do {
@@ -735,12 +760,12 @@ enum HubFileOperations {
             return path
         }
         var updated = workspaces
+        let oldPath = HubFileOperations.canonical(source).path
+        let newPath = HubFileOperations.canonical(destination).path
         for index in updated.indices {
             updated[index].referencePaths = uniquePaths(updated[index].referencePaths.map(relocated))
             if let root = updated[index].rootPath { updated[index].rootPath = relocated(root) }
             if let orders = updated[index].directoryOrders {
-                let oldPath = HubFileOperations.canonical(source).path
-                let newPath = HubFileOperations.canonical(destination).path
                 let moves: (String) -> Bool = { $0 == oldPath || (includingChildren && $0.hasPrefix(oldPath + "/")) }
                 var migrated = orders.filter { !moves($0.key) }
                 // Source order wins over stale metadata at the new path,
@@ -751,9 +776,14 @@ enum HubFileOperations {
                 updated[index].directoryOrders = migrated
             }
         }
-        workspaces = updated
-        if let location = currentURL { currentURL = URL(fileURLWithPath: relocated(location.path)) }
-        history = history.map { URL(fileURLWithPath: relocated($0.path)) }
+        if workspaces != updated { workspaces = updated }
+        if let location = currentURL, relocated(location.path) != location.path {
+            currentURL = URL(fileURLWithPath: relocated(location.path), isDirectory: true)
+        }
+        let movedHistory = history.map { url in
+            relocated(url.path) == url.path ? url : URL(fileURLWithPath: relocated(url.path), isDirectory: true)
+        }
+        if movedHistory != history { history = movedHistory }
         for oldPath in Array(bookmarkData.keys) where relocated(oldPath) != oldPath {
             bookmarkData.removeValue(forKey: oldPath)
             remember(URL(fileURLWithPath: relocated(oldPath)))
@@ -1037,7 +1067,10 @@ enum HubFileOperations {
     }
 
     func refreshInBackground(ifDue: Bool = false) {
-        if isRecentsRoot { recentFiles.refresh(); return }
+        if isRecentsRoot {
+            if ifDue { recentFiles.refreshIfNeeded() } else { recentFiles.refresh() }
+            return
+        }
         guard directoryLoadMessage == nil else { return }
         if activeDirectoryLoad != nil {
             if !ifDue { backgroundRefreshRequested = true }
@@ -1174,8 +1207,14 @@ enum HubFileOperations {
                 if left.lastUsed == right.lastUsed { return left.url.path < right.url.path }
                 return left.lastUsed > right.lastUsed
             }
-            self.invalidateBackgroundRefresh()
-            self.recentRecords = records
+            // A timer or Spotlight notification can repeat the same records
+            // while metadata is still loading. Do not cancel healthy progress.
+            if records == self.recentRecords {
+                guard self.activeDirectoryLoad == nil, self.directoryLoadMessage == nil else { return }
+            } else {
+                self.invalidateBackgroundRefresh()
+                self.recentRecords = records
+            }
             self.beginDirectoryLoad(self.currentDirectoryRequest, context: self.refreshContext, reportErrors: false)
         }
     }
@@ -1215,73 +1254,96 @@ enum HubFileOperations {
     func copySelectedFiles() { copyFiles(selectedURLs) }
     func trashSelected() { trash(selectedURLs) }
 
+    /// UI file commands share admission/lifetime accounting with drag/drop.
+    /// No persistence transaction spans await, and pending writes retain scopes.
+    private func performFileWork<Value: Sendable>(scopes: [URL],
+        work: @escaping @Sendable () throws -> Value,
+        complete: @escaping @MainActor (Result<Value, Error>) -> Void) {
+        guard fileOperationsInProgress < 3 else { errorMessage = "已有文件操作正在进行，请稍后重试。"; return }
+        let id = UUID()
+        dropScopeURLs[id] = scopes
+        beginPersistenceTransaction()
+        scopes.forEach(remember)
+        endPersistenceTransaction()
+        fileOperationsInProgress += 1
+        Task { @MainActor in
+            let result = await Task.detached(priority: .userInitiated) { Result { try work() } }.value
+            beginPersistenceTransaction()
+            defer {
+                fileOperationsInProgress -= 1; dropScopeURLs.removeValue(forKey: id)
+                persistIfReady(); endPersistenceTransaction()
+            }
+            complete(result)
+        }
+    }
+
     func createFolder(named name: String = "未命名文件夹") {
-        guard let currentURL else { errorMessage = HubFileError.invalidDestination.localizedDescription; return }
-        do {
-            try HubFileOperations.validateName(name)
-            let proposed = currentURL.appendingPathComponent(name, isDirectory: true)
-            let target = HubFileOperations.uniqueDestination(for: proposed, in: currentURL)
-            try fm.createDirectory(at: target, withIntermediateDirectories: false)
-            refresh(); selectedIDs = [target]
-        } catch { errorMessage = error.localizedDescription }
+        guard let directory = currentURL else { errorMessage = HubFileError.invalidDestination.localizedDescription; return }
+        do { try HubFileOperations.validateName(name) } catch { errorMessage = error.localizedDescription; return }
+        let workspaceID = selectedWorkspaceID, selection = selectedIDs
+        performFileWork(scopes: [directory], work: {
+            let proposed = directory.appendingPathComponent(name, isDirectory: true)
+            let target = HubFileOperations.uniqueDestination(for: proposed, in: directory)
+            try FileManager.default.createDirectory(at: target, withIntermediateDirectories: false)
+            return target
+        }) { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .success(let target):
+                self.refresh()
+                if self.selectedWorkspaceID == workspaceID && self.currentURL == directory && self.selectedIDs == selection { self.selectedIDs = [target] }
+            case .failure(let error): self.errorMessage = error.localizedDescription
+            }
+        }
     }
 
     func rename(_ entry: FileEntry, to name: String) {
-        beginPersistenceTransaction()
-        defer { endPersistenceTransaction() }
-        do {
-            try HubFileOperations.validateName(name)
-            let target = entry.url.deletingLastPathComponent().appendingPathComponent(name)
-            if entry.url == target { return }
-            let parentPath = HubFileOperations.canonical(entry.url.deletingLastPathComponent()).path
-            let symbolicLink = (try? entry.url.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true
-            try fm.moveItem(at: entry.url, to: target)
-            relocateReferences(from: entry.url, to: target, includingChildren: entry.canNavigate && !symbolicLink)
-            for index in workspaces.indices {
-                if var orders = workspaces[index].directoryOrders {
-                    if let names = orders[parentPath] {
-                        orders[parentPath] = names.filter { $0 != name }.map { $0 == entry.url.lastPathComponent ? name : $0 }
+        do { try HubFileOperations.validateName(name) } catch { errorMessage = error.localizedDescription; return }
+        let target = entry.url.deletingLastPathComponent().appendingPathComponent(name)
+        guard entry.url != target else { return }
+        let workspaceID = selectedWorkspaceID, location = currentURL, selection = selectedIDs
+        let wasDisplayed = entries.contains { $0.url == entry.url }
+        performFileWork(scopes: [entry.url, entry.url.deletingLastPathComponent()], work: {
+            let parent = HubFileOperations.canonical(entry.url.deletingLastPathComponent()).path
+            let link = (try? entry.url.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true
+            try FileManager.default.moveItem(at: entry.url, to: target)
+            return (parent, entry.canNavigate && !link)
+        }) { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .success(let (parent, children)):
+                let selectResult = wasDisplayed && self.selectedWorkspaceID == workspaceID && self.currentURL == location && self.selectedIDs == selection
+                self.relocateReferences(from: entry.url, to: target, includingChildren: children)
+                for index in self.workspaces.indices {
+                    if var orders = self.workspaces[index].directoryOrders, let names = orders[parent] {
+                        orders[parent] = names.filter { $0 != name }.map { $0 == entry.url.lastPathComponent ? name : $0 }
+                        self.workspaces[index].directoryOrders = orders
                     }
-                    workspaces[index].directoryOrders = orders
                 }
+                self.refresh()
+                if selectResult && self.currentURL == location { self.selectedIDs = [target] }
+            case .failure(let error): self.errorMessage = error.localizedDescription
             }
-            remember(target)
-            refresh(); selectedIDs = [target]
-        } catch { errorMessage = error.localizedDescription }
+        }
     }
 
     func trash(_ urls: [URL]) {
         if isStagingRoot { removeStagedFiles(urls); return }
-        var failures: [String] = []
-        for url in normalizedTopLevelURLs(urls) {
-            do { try fm.trashItem(at: url, resultingItemURL: nil) }
-            catch { failures.append("\(url.lastPathComponent)：\(error.localizedDescription)") }
+        let files = urls.filter(\.isFileURL)
+        guard !files.isEmpty else { return }
+        performFileWork(scopes: files, work: {
+            var failures: [String] = []
+            for url in HubFileOperations.topLevelURLs(files) {
+                do { try FileManager.default.trashItem(at: url, resultingItemURL: nil) }
+                catch { failures.append("\(url.lastPathComponent)：\(error.localizedDescription)") }
+            }
+            return failures
+        }) { [weak self] result in
+            guard let self else { return }
+            self.refresh()
+            if case .success(let failures) = result, !failures.isEmpty { self.errorMessage = HubFileError.partial(failures).localizedDescription }
+            if case .failure(let error) = result { self.errorMessage = error.localizedDescription }
         }
-        refresh()
-        if !failures.isEmpty { errorMessage = HubFileError.partial(failures).localizedDescription }
-    }
-
-    /// Drops at a curated root add references. Drops into a real folder transfer filesystem items.
-    @discardableResult
-    func handleDrop(urls: [URL], to directory: URL? = nil, copy: Bool = false) throws -> Bool {
-        if isRecentsRoot { throw HubFileError.invalidDestination }
-        if directory == nil && isStagingRoot { return stageFiles(urls) }
-        if directory == nil && isReferenceRoot {
-            let references = urls.filter(\.isFileURL)
-            guard !references.isEmpty else { return false }
-            appendReferences(references); return true
-        }
-        let files = normalizedTopLevelURLs(urls)
-        guard !files.isEmpty else { return false }
-        guard let destination = directory ?? currentURL else { throw HubFileError.invalidDestination }
-        var failures: [String] = []
-        for url in files {
-            do { try HubFileOperations.transfer(url, to: destination, copy: copy) }
-            catch { failures.append("\(url.lastPathComponent)：\(error.localizedDescription)") }
-        }
-        refresh()
-        if !failures.isEmpty { throw HubFileError.partial(failures) }
-        return true
     }
 
     /// A drop captures its destination at release. Subsequent spring navigation
@@ -1293,6 +1355,9 @@ enum HubFileOperations {
               !urls.isEmpty, urls.count <= 20000, fileOperationsInProgress < 3 else { return false }
         let files = urls.filter(\.isFileURL).map(\.standardizedFileURL)
         guard !files.isEmpty else { return false }
+        // Remembering every source must not write the entire configuration once
+        // per item when a real folder receives a batch.
+        beginPersistenceTransaction(); defer { endPersistenceTransaction() }
         if directory == nil && workspaceID == settings.stagingWorkspaceID {
             let accepted = stageFiles(files)
             if accepted, let insertionOrder {
@@ -1322,22 +1387,9 @@ enum HubFileOperations {
             defer { fileOperationsInProgress -= 1; dropScopeURLs.removeValue(forKey: operationID); persistIfReady() }
             let result = await Task.detached(priority: .userInitiated) {
                 var completed: [(URL, URL, Bool)] = [], failures: [String] = []
-                // Collapse selected children only on the worker; resolving a
-                // provider-backed folder must never block the drag event loop.
-                let unique = Array(Set(files)).sorted { $0.path.count < $1.path.count }
-                var roots = Set<String>()
-                for source in unique {
-                    var parent = source.deletingLastPathComponent()
-                    var nested = false
-                    while parent.path != source.path {
-                        if roots.contains(parent.path) { nested = true; break }
-                        if parent.path == "/" { break }
-                        parent.deleteLastPathComponent()
-                    }
-                    if nested { continue }
+                for source in HubFileOperations.topLevelURLs(files) {
                     let values = try? source.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
                     let directorySource = values?.isDirectory == true && values?.isSymbolicLink != true
-                    if directorySource { roots.insert(source.path) }
                     do { completed.append((source, try HubFileOperations.transfer(source, to: directory, copy: copy), directorySource)) }
                     catch { failures.append("\(source.lastPathComponent)：\(error.localizedDescription)") }
                 }
@@ -1379,27 +1431,11 @@ enum HubFileOperations {
         }
     }
 
-    func pasteFiles(copy: Bool = true) {
-        let urls = (NSPasteboard.general.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []
-        do { _ = try handleDrop(urls: urls, copy: copy) }
-        catch { errorMessage = error.localizedDescription }
-    }
-
-    private func normalizedTopLevelURLs(_ urls: [URL]) -> [URL] {
-        var seen = Set<String>()
-        let unique = urls.filter(\.isFileURL).map(\.standardizedFileURL).filter { seen.insert($0.path).inserted }
-        let directories = Set(unique.compactMap { url -> String? in
-            let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
-            return values?.isDirectory == true && values?.isSymbolicLink != true ? url.path : nil
-        })
-        return unique.filter { candidate in
-            var parent = candidate.deletingLastPathComponent()
-            while parent.path != candidate.path {
-                if directories.contains(parent.path) { return false }
-                if parent.path == "/" { break }
-                parent.deleteLastPathComponent()
-            }
-            return true
+    func pasteFiles(copy: Bool = true, from pasteboard: NSPasteboard = .general) {
+        let urls = (pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []
+        guard !urls.isEmpty else { return }
+        if !acceptFileDrop(urls, workspaceID: selectedWorkspaceID, directory: currentURL, copy: copy) {
+            errorMessage = fileOperationsInProgress >= 3 ? "已有文件操作正在进行，请稍后重试。" : HubFileError.invalidDestination.localizedDescription
         }
     }
 
