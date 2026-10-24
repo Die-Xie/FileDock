@@ -1,39 +1,29 @@
 import AppKit
 
-/// Keeps the app's floating browser chrome behind its own modal UI. Using the
-/// same floating level for the browser and settings also lets system color
-/// panels become frontmost through ordinary key-window ordering.
+/// Keep embedded chrome above the menu bar, and raise its own auxiliary UI
+/// above it. Lowering the browser would expose the menu over its top edge.
 @MainActor
 enum HubWindowPresentation {
-    static let auxiliaryLevel = NSWindow.Level.floating
     static var backgroundWindows: (() -> [NSWindow])?
     static var modalStateDidChange: ((Bool) -> Void)?
     private static var dialogStack: [NSWindow] = []
 
     static var isPresentingDialog: Bool { !dialogStack.isEmpty }
 
-    /// Embedded chrome needs to cover the menu bar, but must yield to its own
-    /// settings and modal UI before they are ordered onscreen. Quick Look uses
-    /// its own level above embedded chrome instead of exposing the menu bar.
-    static func browserLevel(embedded: Bool, auxiliaryVisible: Bool) -> NSWindow.Level {
-        embedded && !auxiliaryVisible ? .statusBar : .floating
+    /// Embedded chrome stays in place above the menu bar. Its own settings,
+    /// preview and modal windows receive higher levels instead of exposing it.
+    static func browserLevel(embedded: Bool) -> NSWindow.Level {
+        embedded ? .statusBar : .floating
     }
 
-    /// A lower window level cannot cover the system menu bar. Move the entire
-    /// embedded surface into the safe area instead of padding only its controls.
-    /// Always derive from the attachment frame so repeated yields cannot drift.
-    static func embeddedFrame(_ attachmentFrame: CGRect, screenFrame: CGRect,
-                              visibleFrame: CGRect, safeTop: CGFloat, menuBarHeight: CGFloat = 0,
-                              yielding: Bool) -> CGRect {
-        guard yielding else { return attachmentFrame }
-        let inset = safeTop.isFinite ? max(0, safeTop) : 0
-        let menu = menuBarHeight.isFinite ? max(0, menuBarHeight) : 0
-        // Auto-hidden menu bars can report the full screen as visibleFrame.
-        let top = min(visibleFrame.maxY, screenFrame.maxY - max(inset, menu)) - 4
-        let bottom = visibleFrame.minY + 12
-        let height = min(attachmentFrame.height, max(1, top - bottom))
-        return CGRect(x: attachmentFrame.minX, y: top - height,
-                      width: attachmentFrame.width, height: height)
+    static func auxiliaryLevel(above browserLevel: NSWindow.Level) -> NSWindow.Level {
+        browserLevel.rawValue >= NSWindow.Level.statusBar.rawValue
+            ? NSWindow.Level(rawValue: browserLevel.rawValue + 1) : .floating
+    }
+
+    static func modalLevel(above levels: [NSWindow.Level]) -> NSWindow.Level {
+        NSWindow.Level(rawValue: max(NSWindow.Level.modalPanel.rawValue,
+            (levels.map(\.rawValue).max() ?? NSWindow.Level.normal.rawValue) + 1))
     }
 
     static func previewLevel(browserLevel: NSWindow.Level) -> NSWindow.Level {
@@ -65,8 +55,7 @@ enum HubWindowPresentation {
         let previousDialogLevel = dialog.level
         dialogStack.append(dialog)
         if dialogStack.count == 1 { modalStateDidChange?(true) }
-        for window in windows { window.level = .normal }
-        dialog.level = .modalPanel
+        dialog.level = modalLevel(above: windows.map(\.level))
         defer {
             dialog.level = previousDialogLevel
             // Parents precede children: restoring a parent can change a child's
@@ -96,5 +85,34 @@ enum HubWindowPresentation {
     private struct WindowLevel {
         weak var window: NSWindow?
         let level: NSWindow.Level
+    }
+}
+
+/// Temporary elevations for settings, color panels and Sparkle windows. A
+/// weak snapshot restores only levels still owned by this coordinator.
+@MainActor final class HubAuxiliaryWindowLevels {
+    private struct Snapshot {
+        weak var window: NSWindow?
+        var original: NSWindow.Level
+        var elevated: NSWindow.Level
+    }
+    private var snapshots: [ObjectIdentifier: Snapshot] = [:]
+
+    func synchronize(_ windows: [NSWindow], above browserLevel: NSWindow.Level) {
+        guard !HubWindowPresentation.isPresentingDialog else { return }
+        let target = HubWindowPresentation.auxiliaryLevel(above: browserLevel)
+        let ids = Set(windows.map(ObjectIdentifier.init))
+        for (id, snapshot) in snapshots {
+            guard let window = snapshot.window else { snapshots.removeValue(forKey: id); continue }
+            if !ids.contains(id) || snapshot.elevated != target || window.level != snapshot.elevated {
+                if window.level == snapshot.elevated { window.level = snapshot.original }
+                snapshots.removeValue(forKey: id)
+            }
+        }
+        for window in windows where window.level.rawValue < target.rawValue {
+            let id = ObjectIdentifier(window)
+            snapshots[id] = Snapshot(window: window, original: window.level, elevated: target)
+            window.level = target
+        }
     }
 }

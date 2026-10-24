@@ -71,7 +71,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
     private var bridgePanel: NSPanel!
     private var bridgeView: HubNotchBridgeView!
     private var attachedToNotch = false
-    private var embeddedYielding = false
+    private let auxiliaryWindowLevels = HubAuxiliaryWindowLevels()
     private var desiredVisible = false
     private var transitionGeneration = 0
     private var attachedScreenNumber: NSNumber?
@@ -182,13 +182,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         HubWindowPresentation.backgroundWindows = { [weak self] in
             guard let self else { return [] }
             let preview = QLPreviewPanel.sharedPreviewPanelExists() ? QLPreviewPanel.shared() : nil
-            return [self.panel, self.bridgePanel, self.settingsWindow, self.funBadge, preview].compactMap { $0 }
+            let color = NSColorPanel.sharedColorPanelExists ? NSColorPanel.shared : nil
+            return [self.panel, self.bridgePanel, self.settingsWindow, self.funBadge, preview, color]
+                .compactMap { $0 }.filter(\.isVisible)
         }
         HubWindowPresentation.modalStateDidChange = { [weak self] active in
             guard let self else { return }
             if active {
                 self.suspendHotKeys()
-                self.setPanelLevel(.floating)
             } else {
                 self.configureHotKeys()
                 self.updatePanelLevel()
@@ -342,6 +343,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
     }
 
     private func configureNotifications() {
+        notificationTokens.append(NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.synchronizeAuxiliaryWindows() }
+        })
         notificationTokens.append(NotificationCenter.default.addObserver(forName: hubWindowDragWillBegin, object: nil, queue: .main) { [weak self] note in
             MainActor.assumeIsolated {
                 guard let self, let window = note.object as? NSWindow, window === self.panel,
@@ -574,10 +578,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
                                                       leftAuxiliary: screen.auxiliaryTopLeftArea, rightAuxiliary: screen.auxiliaryTopRightArea,
                                                       requestedSize: NSSize(width: model.settings.width, height: model.settings.height))
             restoringSize = true
-            let frame = HubWindowPresentation.embeddedFrame(placement.bodyFrame, screenFrame: screen.frame,
-                visibleFrame: screen.visibleFrame, safeTop: screen.safeAreaInsets.top,
-                menuBarHeight: NSStatusBar.system.thickness, yielding: embeddedYielding)
-            if panel.frame != frame { panel.setFrame(frame, display: true) }
+            if panel.frame != placement.bodyFrame { panel.setFrame(placement.bodyFrame, display: true) }
             restoringSize = false
             presentation.header = .init(embedded: true, exclusionWidth: placement.headerExclusionWidth,
                                         topInset: placement.topInset, split: placement.usesSplitHeader)
@@ -629,37 +630,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         // The modal coordinator owns levels until its scoped restoration ends.
         guard !HubWindowPresentation.isPresentingDialog else { return }
         if updater?.sessionInProgress == true { setPanelLevel(.normal); return }
-        let level = HubWindowPresentation.browserLevel(embedded: embeddedAtNotch,
-            auxiliaryVisible: settingsWindow?.isVisible == true || hasActiveDialog)
+        let level = HubWindowPresentation.browserLevel(embedded: embeddedAtNotch)
         setPanelLevel(level)
     }
 
     private func setPanelLevel(_ level: NSWindow.Level) {
-        let yielding = embeddedAtNotch && level.rawValue < NSWindow.Level.statusBar.rawValue
-        // Move below the menu before lowering the level; restore the level
-        // before moving back into its space. Keep pin/size preferences intact.
-        if !yielding && panel.level != level { panel.level = level }
-        if embeddedYielding != yielding {
-            embeddedYielding = yielding
-            if embeddedAtNotch, let screen = attachmentScreen {
-                let placement = HubEmbeddedPlacement.make(screenFrame: screen.frame, visibleFrame: screen.visibleFrame,
-                    safeTop: screen.safeAreaInsets.top, leftAuxiliary: screen.auxiliaryTopLeftArea,
-                    rightAuxiliary: screen.auxiliaryTopRightArea,
-                    requestedSize: NSSize(width: model.settings.width, height: model.settings.height))
-                let frame = HubWindowPresentation.embeddedFrame(placement.bodyFrame, screenFrame: screen.frame,
-                    visibleFrame: screen.visibleFrame, safeTop: screen.safeAreaInsets.top,
-                    menuBarHeight: NSStatusBar.system.thickness, yielding: yielding)
-                let wasRestoring = restoringSize
-                restoringSize = true
-                if panel.frame != frame { panel.setFrame(frame, display: true) }
-                restoringSize = wasRestoring
-            }
-        }
-        if panel.level != level { panel.level = level }
+        let effective = embeddedAtNotch ? HubWindowPresentation.browserLevel(embedded: true) : level
+        if panel.level != effective { panel.level = effective }
+        synchronizeAuxiliaryWindows()
         if QLPreviewPanel.sharedPreviewPanelExists(), let preview = QLPreviewPanel.shared(), preview.isVisible {
-            let previewLevel = HubWindowPresentation.previewLevel(browserLevel: level)
+            let previewLevel = HubWindowPresentation.previewLevel(browserLevel: effective)
             if preview.level != previewLevel { preview.level = previewLevel }
         }
+    }
+
+    private func synchronizeAuxiliaryWindows() {
+        guard panel != nil, !HubWindowPresentation.isPresentingDialog else { return }
+        var windows = [settingsWindow].compactMap { $0 }
+        if NSColorPanel.sharedColorPanelExists { windows.append(NSColorPanel.shared) }
+        windows.append(contentsOf: [NSApp.modalWindow, panel.attachedSheet, settingsWindow?.attachedSheet].compactMap { $0 })
+        if updater?.sessionInProgress == true {
+            windows.append(contentsOf: NSApp.windows.filter {
+                $0.isVisible && $0 !== panel && $0 !== bridgePanel && $0 !== funBadge &&
+                    !($0 is QLPreviewPanel)
+            })
+        }
+        auxiliaryWindowLevels.synchronize(windows, above: panel.level)
     }
 
     func windowWillMove(_ notification: Notification) {
@@ -942,7 +938,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 660, height: 550),
                                   styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
             window.title = "FileDock 设置"
-            window.level = HubWindowPresentation.auxiliaryLevel
+            window.level = .floating
             window.collectionBehavior = [.fullScreenAuxiliary]
             window.isReleasedWhenClosed = false
             window.delegate = self
