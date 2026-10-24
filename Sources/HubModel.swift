@@ -181,14 +181,16 @@ struct FileEntry: Identifiable, Hashable, Sendable {
     var canNavigate: Bool { isDirectory && !isPackage }
     var sizeText: String { isDirectory ? "—" : ByteCountFormatter.string(fromByteCount: size, countStyle: .file) }
 
-    init(url: URL) {
-        // Directory enumerators and callers can retain URL resource caches across refreshes.
+    static let resourceKeys: Set<URLResourceKey> = [.nameKey, .localizedNameKey, .isDirectoryKey, .isPackageKey, .fileSizeKey, .localizedTypeDescriptionKey, .creationDateKey, .contentModificationDateKey, .addedToDirectoryDateKey, .attributeModificationDateKey, .labelNumberKey, .tagNamesKey]
+
+    init(url: URL, preservingResourceCache: Bool = false) {
+        // Ordinary callers need a fresh revision; new directory enumerators
+        // already provide fresh, prefetched metadata for their current scan.
         var freshURL = URL(fileURLWithPath: url.path).standardizedFileURL
         freshURL.removeAllCachedResourceValues()
         self.url = freshURL
-        let keys: Set<URLResourceKey> = [.nameKey, .localizedNameKey, .isDirectoryKey, .isPackageKey, .fileSizeKey, .localizedTypeDescriptionKey, .creationDateKey, .contentModificationDateKey, .addedToDirectoryDateKey, .attributeModificationDateKey, .labelNumberKey, .tagNamesKey]
-        let values = try? freshURL.resourceValues(forKeys: keys)
-        exists = FileManager.default.fileExists(atPath: freshURL.path)
+        let values = try? (preservingResourceCache ? url : freshURL).resourceValues(forKeys: Self.resourceKeys)
+        exists = values?.isDirectory != nil || FileManager.default.fileExists(atPath: freshURL.path)
         name = values?.localizedName ?? values?.name ?? url.lastPathComponent
         isDirectory = values?.isDirectory ?? false
         isPackage = values?.isPackage ?? false
@@ -274,25 +276,30 @@ enum HubFileOperations {
 
 @MainActor final class HubModel: ObservableObject {
     @Published var shortcutRegistrationErrors: [String: String] = [:]
-    @Published var workspaces: [Workspace] = [] { didSet { persistIfReady() } }
+    @Published var workspaces: [Workspace] = [] { didSet { invalidateEntryOrder(); persistIfReady() } }
     @Published var selectedWorkspaceID: UUID? { didSet { persistIfReady() } }
-    @Published var entries: [FileEntry] = []
+    @Published var entries: [FileEntry] = [] { didSet { invalidateEntryOrder() } }
     @Published var selectedIDs = Set<URL>()
     @Published var search = ""
     @Published var sortKey: SortKey = .modified { didSet {
+        invalidateEntryOrder()
         beginPersistenceTransaction(); defer { endPersistenceTransaction() }
         referenceManualOrder = false; if readyToSave { clearDirectoryOrder() }; persistIfReady()
     } }
     @Published var ascending = false { didSet {
+        invalidateEntryOrder()
         beginPersistenceTransaction(); defer { endPersistenceTransaction() }
         referenceManualOrder = false; if readyToSave { clearDirectoryOrder() }; persistIfReady()
     } }
-    @Published var referenceManualOrder = true { didSet { persistIfReady() } }
+    @Published var referenceManualOrder = true { didSet { invalidateEntryOrder(); persistIfReady() } }
     @Published var viewMode: HubViewMode = .grid { didSet { persistIfReady() } }
-    @Published var settings = HubSettings() { didSet { persistIfReady() } }
+    @Published var settings = HubSettings() { didSet {
+        if settings.resolvedFoldersFirst != oldValue.resolvedFoldersFirst { invalidateEntryOrder() }
+        persistIfReady()
+    } }
     @Published var pinned = false
     @Published var errorMessage: String?
-    @Published private(set) var currentURL: URL?
+    @Published private(set) var currentURL: URL? { didSet { invalidateEntryOrder() } }
     @Published private(set) var history: [URL] = []
     @Published private(set) var historyIndex = -1
     @Published var showHiddenFiles = false { didSet { refresh() } }
@@ -330,14 +337,17 @@ enum HubFileOperations {
         guard context.directory != nil || workspaces.first(where: { $0.id == context.workspaceID })?.mode == .references else { return nil }
         return DirectorySnapshotKey(workspaceID: context.workspaceID, directory: context.directory, references: context.references, hidden: context.showHiddenFiles)
     }
-    private var canonicalDirectoryPath: String?
+    private var canonicalDirectoryPath: String? { didSet { if oldValue != canonicalDirectoryPath { invalidateEntryOrder() } } }
+    private var cachedOrderedEntries: [FileEntry]?
+    private var cachedVisibleEntries: (search: String, entries: [FileEntry])?
+    private(set) var entryOrderCalculationCount = 0
+    private var nextPeriodicRefresh: TimeInterval = 0
     private var retryDirectoryNavigation: (url: URL, selecting: URL?)?
     @Published private(set) var directoryLoading = false
     @Published private(set) var directoryLoadMessage: String?
     private var backgroundRefreshRequested = false
     private(set) var backgroundRefreshCount = 0
     var isRefreshingInBackground: Bool { activeDirectoryLoad != nil }
-    private var lastSnapshot: [String] = []
     private let recentFiles: HubRecentFilesProviding
     private var recentRecords: [HubRecentFile] = []
     private var observingRecents = false
@@ -403,7 +413,7 @@ enum HubFileOperations {
         persistIfReady()
         if monitor {
             refreshTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
-                Task { @MainActor [weak self] in self?.refreshInBackground() }
+                Task { @MainActor [weak self] in self?.refreshInBackground(ifDue: true) }
             }
         }
     }
@@ -483,8 +493,11 @@ enum HubFileOperations {
         return components
     }
     var visibleEntries: [FileEntry] {
+        if let cached = cachedVisibleEntries, cached.search == search { return cached.entries }
         let ordered = orderedEntries
-        return search.isEmpty ? ordered : ordered.filter { $0.name.localizedStandardContains(search) }
+        let result = search.isEmpty ? ordered : ordered.filter { $0.name.localizedStandardContains(search) }
+        cachedVisibleEntries = (search, result)
+        return result
     }
 
     func sortByColumn(_ key: SortKey) {
@@ -506,35 +519,26 @@ enum HubFileOperations {
         return selectedWorkspace?.directoryOrders?[path] != nil
     }
 
+    private func invalidateEntryOrder() { cachedOrderedEntries = nil; cachedVisibleEntries = nil }
+
     private var orderedEntries: [FileEntry] {
-        if isRecentsRoot { return entries }
-        if isReferenceRoot && referenceManualOrder { return entries }
-        if currentURL != nil, let order = selectedWorkspace?.directoryOrders?[directoryOrderPath] {
-            let positions = Dictionary(order.enumerated().map { ($0.element, $0.offset) }, uniquingKeysWith: min)
-            return entries.sorted {
-                let left = positions[$0.url.lastPathComponent] ?? Int.max, right = positions[$1.url.lastPathComponent] ?? Int.max
-                return left == right ? $0.name.localizedStandardCompare($1.name) == .orderedAscending : left < right
-            }
-        }
-        return entries.sorted { left, right in
-            if settings.resolvedFoldersFirst && left.canNavigate != right.canNavigate { return left.canNavigate }
-            let result: ComparisonResult
-            switch sortKey {
-            case .name: result = left.name.localizedStandardCompare(right.name)
-            case .kind: result = left.kind.localizedStandardCompare(right.kind)
-            case .size: result = left.size == right.size ? .orderedSame : left.size < right.size ? .orderedAscending : .orderedDescending
-            case .created: result = compareDates(left.created, right.created)
-            case .modified: result = compareDates(left.modified, right.modified)
-            case .added: result = compareDates(left.added, right.added)
-            }
-            if result == .orderedSame { return left.name.localizedStandardCompare(right.name) == .orderedAscending }
-            return ascending ? result == .orderedAscending : result == .orderedDescending
-        }
+        if let cachedOrderedEntries { return cachedOrderedEntries }
+        entryOrderCalculationCount += 1
+        let result = calculateEntryOrder()
+        cachedOrderedEntries = result
+        return result
     }
 
-    private func compareDates(_ lhs: Date?, _ rhs: Date?) -> ComparisonResult {
-        let left = lhs ?? .distantPast, right = rhs ?? .distantPast
-        return left == right ? .orderedSame : left < right ? .orderedAscending : .orderedDescending
+    private func entryOrder(directory: URL?) -> HubDirectoryOrder {
+        HubDirectoryOrder(key: sortKey, ascending: ascending, foldersFirst: settings.resolvedFoldersFirst,
+                          preservesInputOrder: directory == nil && (isRecentsRoot || referenceManualOrder),
+                          directoryOrders: directory == nil ? [:] : selectedWorkspace?.directoryOrders ?? [:])
+    }
+
+    private func calculateEntryOrder() -> [FileEntry] {
+        // Explicit user sort changes can use this cached fallback. Directory
+        // loading prepares the same order on the worker, before publishing.
+        (try? entryOrder(directory: currentURL).sorted(entries, canonicalPath: directoryOrderPath)) ?? entries
     }
 
     func selectWorkspace(_ id: UUID) {
@@ -548,7 +552,6 @@ enum HubFileOperations {
         historyIndex = history.isEmpty ? -1 : 0
         selectedIDs = []
         search = ""
-        lastSnapshot = []
         refresh()
     }
 
@@ -1027,15 +1030,20 @@ enum HubFileOperations {
     private func invalidateBackgroundRefresh() {
         refreshGeneration += 1
         backgroundRefreshRequested = false
+        nextPeriodicRefresh = 0
         if let activeDirectoryLoad { directoryLoader.cancel(id: activeDirectoryLoad) }
         activeDirectoryLoad = nil
         directoryLoading = false
     }
 
-    func refreshInBackground() {
+    func refreshInBackground(ifDue: Bool = false) {
         if isRecentsRoot { recentFiles.refresh(); return }
         guard directoryLoadMessage == nil else { return }
-        if activeDirectoryLoad != nil { backgroundRefreshRequested = true; return }
+        if activeDirectoryLoad != nil {
+            if !ifDue { backgroundRefreshRequested = true }
+            return
+        }
+        if ifDue && ProcessInfo.processInfo.systemUptime < nextPeriodicRefresh { return }
         backgroundRefreshCount += 1
         beginDirectoryLoad(currentDirectoryRequest, context: refreshContext, reportErrors: false)
     }
@@ -1050,19 +1058,47 @@ enum HubFileOperations {
     private func beginDirectoryLoad(_ request: HubDirectoryRequest, context: RefreshContext,
                                     reportErrors: Bool, commitNavigation: (() -> Void)? = nil) {
         let id = UUID(), generation = refreshGeneration
+        let started = ProcessInfo.processInfo.systemUptime
+        var orderedRequest = request
+        orderedRequest.order = entryOrder(directory: request.directory)
+        var expectedContext = context
+        var navigationCommitted = false
+        // Background/warm refreshes keep the complete old snapshot until done.
+        let showPartial = entries.isEmpty || commitNavigation != nil
         activeDirectoryLoad = id
-        directoryLoading = reportErrors || entries.isEmpty; directoryLoadMessage = nil
-        directoryLoader.load(id: id, request: request) { [weak self] result in
-            guard let self, self.activeDirectoryLoad == id,
-                  self.refreshGeneration == generation, self.refreshContext == context else { return }
-            self.activeDirectoryLoad = nil; self.directoryLoading = false
+        let loading = reportErrors || entries.isEmpty
+        if directoryLoading != loading { directoryLoading = loading }
+        if directoryLoadMessage != nil { directoryLoadMessage = nil }
+        func acceptsResult(_ model: HubModel) -> Bool {
+            model.activeDirectoryLoad == id && model.refreshGeneration == generation && model.refreshContext == expectedContext
+        }
+        func apply(_ model: HubModel, snapshot: HubDirectorySnapshot, complete: Bool) {
+            if !navigationCommitted {
+                commitNavigation?()
+                navigationCommitted = true
+                expectedContext = model.refreshContext
+            }
+            model.canonicalDirectoryPath = snapshot.canonicalDirectoryPath
+            model.displayedDirectoryContext = model.refreshContext
+            model.publishEntries(snapshot.entries, complete: complete)
+            if let order = snapshot.order, order == model.entryOrder(directory: model.currentURL), let ordered = snapshot.orderedEntries {
+                model.cachedOrderedEntries = ordered
+                model.cachedVisibleEntries = nil
+            }
+        }
+        directoryLoader.load(id: id, request: orderedRequest, progress: { [weak self] snapshot in
+            guard let self, acceptsResult(self), showPartial else { return }
+            apply(self, snapshot: snapshot, complete: false)
+        }) { [weak self] result in
+            guard let self, acceptsResult(self) else { return }
+            self.activeDirectoryLoad = nil
+            if self.directoryLoading { self.directoryLoading = false }
+            let elapsed = ProcessInfo.processInfo.systemUptime - started
+            self.nextPeriodicRefresh = ProcessInfo.processInfo.systemUptime + min(30, max(2, elapsed * 3))
             switch result {
             case .success(let snapshot):
-                commitNavigation?()
-                self.canonicalDirectoryPath = snapshot.canonicalDirectoryPath
-                self.displayedDirectoryContext = self.refreshContext
+                apply(self, snapshot: snapshot, complete: true)
                 if let key = self.snapshotKey(self.refreshContext) { self.directorySnapshots.insert(snapshot, for: key) }
-                self.publishEntries(snapshot.entries)
             case .failure(let error):
                 self.directoryLoadMessage = error.localizedDescription
             }
@@ -1072,12 +1108,13 @@ enum HubFileOperations {
         }
     }
 
-    private func publishEntries(_ next: [FileEntry]) {
-        let snapshot = next.map(\.snapshotSignature)
-        if snapshot != lastSnapshot || entries.count != next.count {
-            entries = next
-            lastSnapshot = snapshot
-            selectedIDs.formIntersection(Set(next.map(\.url)))
+    private func publishEntries(_ next: [FileEntry], complete: Bool = true) {
+        // FileEntry equality compares metadata directly; avoid allocating a long
+        // string signature for every file on every refresh/batch.
+        if entries != next { entries = next }
+        if complete && !selectedIDs.isEmpty {
+            let remaining = selectedIDs.intersection(Set(next.map(\.url)))
+            if remaining != selectedIDs { selectedIDs = remaining }
         }
     }
 
@@ -1104,7 +1141,7 @@ enum HubFileOperations {
                 displayedDirectoryContext = context
                 publishEntries(cached.entries)
             } else {
-                entries = []; lastSnapshot = []; canonicalDirectoryPath = nil; displayedDirectoryContext = nil
+                entries = []; canonicalDirectoryPath = nil; displayedDirectoryContext = nil
             }
         }
         beginDirectoryLoad(currentDirectoryRequest, context: context, reportErrors: reportErrors)
@@ -1118,7 +1155,7 @@ enum HubFileOperations {
         recentFilesLoading = true
         recentFilesMessage = nil
         recentRecords = []
-        entries = []; lastSnapshot = []; selectedIDs = []
+        entries = []; selectedIDs = []
         recentFiles.start { [weak self] snapshot in
             guard let self, self.observingRecents, self.recentGeneration == generation,
                   self.selectedWorkspaceID == workspaceID, self.isRecentsRoot,

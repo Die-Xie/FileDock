@@ -103,6 +103,10 @@ swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache
     Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/HubModel.swift Sources/DirectoryLoader.swift Tests/ModelTestSupport.swift Tests/DirectoryLoadingTests.swift -o .build/directory-loading-tests \
     -framework AppKit -framework Carbon -framework Combine -framework UniformTypeIdentifiers
 .build/directory-loading-tests
+swiftc -swift-version 5 -O -parse-as-library -module-cache-path .build/module-cache \
+    Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/HubModel.swift Sources/DirectoryLoader.swift Tests/ModelTestSupport.swift Tests/LargeDirectoryTests.swift -o .build/large-directory-tests \
+    -framework AppKit -framework Carbon -framework Combine -framework UniformTypeIdentifiers
+.build/large-directory-tests
 swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
     Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/HubModel.swift Sources/DirectoryLoader.swift Tests/ModelTestSupport.swift Tests/CrossWorkspaceDropTests.swift -o .build/cross-workspace-drop-tests \
     -framework AppKit -framework Carbon -framework Combine -framework UniformTypeIdentifiers

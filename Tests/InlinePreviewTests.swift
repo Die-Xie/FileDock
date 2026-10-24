@@ -45,8 +45,20 @@ struct InlinePreviewTests {
         precondition(HubInlinePreviewPolicy.disposition(for: candidate()) == .file(first))
         let packageURL = URL(fileURLWithPath: "/Applications/Example.app", isDirectory: true)
         precondition(HubInlinePreviewPolicy.disposition(for: candidate(url: packageURL, directory: true, package: true)) ==
-                     .file(HubInlinePreviewIdentity(url: packageURL, size: 512, modified: originalDate)),
-                     "Packages remain document-like items that Quick Look may preview")
+                     .application,
+                     "Applications must never reach Quick Look or start a bundle preview provider")
+        for ext in ["APP", "app", "appex", "xpc", "bundle", "plugin", "prefPane"] {
+            let url = URL(fileURLWithPath: "/tmp/Example." + ext)
+            precondition(HubInlinePreviewPolicy.disposition(for: candidate(url: url, directory: true, package: true)) == .application)
+        }
+        for ext in ["pages", "key", "rtfd"] {
+            let url = URL(fileURLWithPath: "/tmp/Example." + ext)
+            precondition(HubInlinePreviewPolicy.disposition(for: candidate(url: url, directory: true, package: true)) ==
+                         .file(.init(url: url, size: 512, modified: originalDate)))
+        }
+        precondition(HubInlinePreviewPolicy.quickLookURLs([packageURL, report, URL(string: "https://example.com/")!]) == [report],
+                     "Space/multi-selection Quick Look must filter executable bundles and remote URLs")
+        precondition(HubInlinePreviewPolicy.quickLookURLs([packageURL]).isEmpty)
         let emptyFile = HubInlinePreviewIdentity(url: report, size: 0, modified: nil)
         precondition(HubInlinePreviewPolicy.disposition(for: candidate(size: 0, modified: nil)) == .file(emptyFile),
                      "An existing empty file is still a valid preview candidate")

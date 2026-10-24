@@ -495,7 +495,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
             // postpone the first animation frame after the hover deadline.
             guard !self.hasActiveDialog else { return }
             self.lastRefresh = Date()
-            self.model.refreshInBackground()
+            self.model.refreshInBackground(ifDue: true)
         }
         NSApp.activate(ignoringOtherApps: true)
         hoverDismissal.reset()
@@ -758,7 +758,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
             if insideSurface { panelPointerEntered = true }
             if !HubFileDragState.isDragging, !HubWorkspaceDragState.isDragging, !HubMarqueeSelectionState.isSelecting, !panel.inLiveResize,
                windowDragSession == nil, now.timeIntervalSince(lastRefresh) > 2 {
-                model.refreshInBackground(); lastRefresh = now
+                model.refreshInBackground(ifDue: true); lastRefresh = now
             }
             let sheetOpen = hasActiveDialog || NSMenuHasTrackingMenu()
             let previewVisible = QLPreviewPanel.sharedPreviewPanelExists() && QLPreviewPanel.shared()?.isVisible == true
@@ -982,7 +982,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
 
     func showPreview(_ urls: [URL]) {
         guard !hasActiveDialog else { return }
-        previewURLs = Array(urls.filter(\.isFileURL).prefix(20000))
+        previewURLs = HubInlinePreviewPolicy.quickLookURLs(urls)
+        if previewURLs.isEmpty {
+            if QLPreviewPanel.sharedPreviewPanelExists() { QLPreviewPanel.shared()?.orderOut(nil) }
+            return
+        }
         guard !previewURLs.isEmpty, let preview = QLPreviewPanel.shared() else { return }
         preview.dataSource = self
         preview.delegate = self

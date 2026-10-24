@@ -60,8 +60,9 @@ final class HubInlinePreviewHostView: NSView {
     override var isOpaque: Bool { false }
     override var mouseDownCanMoveWindow: Bool { false }
 
-    func update(_ next: HubInlinePreviewIdentity?) {
+    func update(_ requested: HubInlinePreviewIdentity?) {
         guard !closed else { return }
+        let next = requested.flatMap { HubInlinePreviewPolicy.isExecutableBundle($0.url) ? nil : $0 }
         switch HubInlinePreviewUpdate.action(previous: identity, next: next) {
         case .unchanged: return
         case .clear:

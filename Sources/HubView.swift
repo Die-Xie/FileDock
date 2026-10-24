@@ -64,7 +64,7 @@ struct HubView: View {
                     if showsLoading || model.fileOperationsInProgress > 0 {
                         HStack(spacing: 7) {
                             ProgressView().controlSize(.small)
-                            Text(model.fileOperationsInProgress > 0 ? "正在转移文件…" : "正在读取…").font(.caption)
+                            Text(model.fileOperationsInProgress > 0 ? "正在转移文件…" : model.entries.isEmpty ? "正在读取…" : "已读取 \(model.entries.count) 项…").font(.caption)
                         }.padding(.horizontal, 10).padding(.vertical, 6)
                             .background(.regularMaterial, in: Capsule()).padding(10).allowsHitTesting(false)
                     }
@@ -795,7 +795,7 @@ struct HubView: View {
                 }.frame(maxWidth: .infinity, alignment: .leading)
                 Button { preview([entry.url]) } label: {
                     Image(systemName: "arrow.up.left.and.arrow.down.right").frame(width: 24, height: 24)
-                }.buttonStyle(.plain).help("在独立窗口快速查看").accessibilityLabel("放大预览").disabled(!entry.exists || model.isCloudPlaceholder(entry))
+                }.buttonStyle(.plain).help("在独立窗口快速查看").accessibilityLabel("放大预览").disabled(!entry.exists || model.isCloudPlaceholder(entry) || HubInlinePreviewPolicy.isExecutableBundle(entry.url))
                 Button { model.openExternally(entry.url) } label: {
                     Image(systemName: "arrow.up.right.square").frame(width: 24, height: 24)
                 }.buttonStyle(.plain).help("在默认应用中打开").accessibilityLabel("打开文件").disabled(!model.canOpen(entry))
@@ -805,6 +805,12 @@ struct HubView: View {
             case .file(let identity):
                 HubInlinePreview(item: presentation.previewVisible ? identity : nil)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+            case .application:
+                VStack(spacing: 12) {
+                    HubFileIcon(entry: entry, size: 96, allowsThumbnail: false, lightweight: presentation.defersFileRendering)
+                    Text(entry.name).font(.headline).lineLimit(2)
+                    Text("应用程序").font(.caption).foregroundStyle(.secondary)
+                }.frame(maxWidth: .infinity, maxHeight: .infinity)
             case .directory:
                 previewPlaceholder("folder", title: entry.name, detail: "在左侧选择文件以预览内容")
             case .unavailable:
@@ -857,7 +863,7 @@ struct HubView: View {
                 Button("其他应用…") { chooseApplication(for: entry.url) }
             }
         }
-        HubMenuButton("快速查看", systemImage: "eye") { preview(urls) }
+        HubMenuButton("快速查看", systemImage: "eye") { preview(urls) }.disabled(HubInlinePreviewPolicy.quickLookURLs(urls).isEmpty)
         HubMenuButton("在访达中显示", systemImage: "folder") { NSWorkspace.shared.activateFileViewerSelecting(urls) }
         if urls.count == 1 { HubMenuButton("重新命名…", systemImage: "pencil") { renameName = entry.name; renameEntry = entry }.disabled(model.isStagingRoot && model.stagingTransferInProgress) }
         Divider()

@@ -26,13 +26,23 @@ enum HubInlinePreviewDisposition: Equatable {
     case empty
     case unavailable
     case directory
+    case application
     case file(HubInlinePreviewIdentity)
 }
 
 enum HubInlinePreviewPolicy {
+    /// Executable bundles use icon/metadata only. Document packages such as
+    /// Pages and RTFD remain eligible; this check does not inspect bundle files.
+    static func isExecutableBundle(_ url: URL) -> Bool {
+        ["app", "appex", "xpc", "bundle", "plugin", "prefpane"].contains(url.pathExtension.lowercased())
+    }
+    static func quickLookURLs(_ urls: [URL]) -> [URL] {
+        Array(urls.lazy.filter { $0.isFileURL && !isExecutableBundle($0) }.prefix(20000))
+    }
     static func disposition(for candidate: HubInlinePreviewCandidate) -> HubInlinePreviewDisposition {
         guard let url = candidate.url else { return .empty }
         guard url.isFileURL, candidate.exists else { return .unavailable }
+        if isExecutableBundle(url) { return .application }
         guard !candidate.isDirectory || candidate.isPackage else { return .directory }
         return .file(HubInlinePreviewIdentity(url: url, size: candidate.size, modified: candidate.modified))
     }
