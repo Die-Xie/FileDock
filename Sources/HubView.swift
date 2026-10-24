@@ -58,6 +58,21 @@ struct HubView: View {
             Divider().opacity(0.55)
             browserBar
             Divider().opacity(0.45)
+            if model.directoryLoading {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("正在读取文件信息，可切换工作区…").font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                }.padding(.horizontal, 16).padding(.vertical, 7)
+            }
+            if let message = model.directoryLoadMessage {
+                HStack(spacing: 10) {
+                    Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange)
+                    Text(message).font(.caption).fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                    Button("重试") { model.retryDirectoryLoad() }.controlSize(.small)
+                }.padding(.horizontal, 16).padding(.vertical, 8)
+            }
             if model.isStagingRoot { stagingActions }
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -477,12 +492,16 @@ struct HubView: View {
     }
 
     private var emptyTitle: String {
+        if model.directoryLoading { return "正在读取文件信息…" }
+        if model.directoryLoadMessage != nil { return "暂时无法读取内容" }
         if !model.search.isEmpty { return "没有匹配的项目" }
         if model.isRecentsRoot { return model.recentFilesLoading ? "正在读取最近使用…" : "暂无最近使用的文件" }
         return "这里还没有项目"
     }
 
     private var emptyDetail: String {
+        if model.directoryLoading { return "文件读取在后台进行，你可以随时切换工作区。" }
+        if model.directoryLoadMessage != nil { return "请稍后重试，或通过上方标签切换到其他工作区。" }
         if !model.search.isEmpty { return "试试其他名称" }
         if model.isRecentsRoot { return model.recentFilesMessage ?? "最近打开的文件会自动出现在这里。结果取决于系统索引。" }
         return model.isReferenceRoot ? "拖入文件或文件夹以添加引用" : "拖入文件以移动，按住 ⌥ 键以复制"

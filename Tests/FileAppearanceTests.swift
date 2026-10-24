@@ -10,7 +10,7 @@ import Foundation
         defer { try? fm.removeItem(at: base) }
         let folder = base.appendingPathComponent("folder")
         try fm.createDirectory(at: folder, withIntermediateDirectories: true)
-        let model = HubModel(storageURL: base.appendingPathComponent("config.json"))
+        let model = makeTestModel(storageURL: base.appendingPathComponent("config.json"))
         model.addWorkspace(name: "Fixture", mode: .folder, urls: [base])
         model.navigate(to: base)
 

@@ -57,7 +57,7 @@ import Foundation
         } catch HubFileError.invalidName {}
 
         let storage = base.appendingPathComponent("settings/config.json")
-        let model = HubModel(storageURL: storage, monitor: false)
+        let model = makeTestModel(storageURL: storage, monitor: false)
         let workspace = model.addWorkspace(name: "Fixtures", symbol: "folder", mode: .folder, urls: [source])
         precondition(model.currentURL == source && model.entries.count == 2)
         model.settings.fontSize = 17
@@ -147,7 +147,7 @@ import Foundation
         model.search = "notes"
         precondition(model.visibleEntries.count == 1)
         model.save()
-        let reloaded = HubModel(storageURL: storage, monitor: false)
+        let reloaded = makeTestModel(storageURL: storage, monitor: false)
         precondition(reloaded.settings.fontSize == 17, "Nested settings change must persist")
         precondition(reloaded.settings.resolvedBackgroundTheme == "liquidGlass" && reloaded.settings.appearance == "system",
                      "Glass theme and the saved solid-theme appearance must survive relaunch")
@@ -212,7 +212,7 @@ import Foundation
         let originalData = Data("Favorite visibility and labels must preserve this file".utf8)
         try originalData.write(to: file)
         let storage = base.appendingPathComponent("favorite-shortcut-config.json")
-        let initial = HubModel(storageURL: storage, monitor: false)
+        let initial = makeTestModel(storageURL: storage, monitor: false)
         let favoriteID = initial.favoriteWorkspace!.id
         initial.selectWorkspace(favoriteID)
         initial.appendReferences([file])
@@ -229,7 +229,7 @@ import Foundation
         for index in legacyWorkspaces.indices { legacyWorkspaces[index].removeValue(forKey: "iconOnly") }
         legacy["workspaces"] = legacyWorkspaces
         try JSONSerialization.data(withJSONObject: legacy).write(to: storage, options: .atomic)
-        let model = HubModel(storageURL: storage, monitor: false)
+        let model = makeTestModel(storageURL: storage, monitor: false)
         precondition(model.errorMessage == nil && model.settings.favoriteWorkspaceID == favoriteID && model.settings.resolvedFavoriteShortcutEnabled)
         precondition(model.favoriteWorkspace?.id == favoriteID && model.fixedFavoriteWorkspace?.id == favoriteID,
                      "Legacy reference workspaces named 收藏 must migrate to the fixed shortcut without duplication")
@@ -261,7 +261,7 @@ import Foundation
         precondition(model.favoriteWorkspace?.id == favoriteID && model.favoriteWorkspace?.name == "Saved research" && model.fixedFavoriteWorkspace?.id == favoriteID,
                      "The migrated favorite is identified by ID after its user-visible name changes")
         model.save()
-        let restored = HubModel(storageURL: storage, monitor: false)
+        let restored = makeTestModel(storageURL: storage, monitor: false)
         precondition(restored.fixedFavoriteWorkspace?.id == favoriteID &&
                      restored.favoriteWorkspace?.referencePaths.map { HubFileOperations.canonical(URL(fileURLWithPath: $0)) } == [expectedReference])
         precondition(restored.workspaces.first { $0.id == folder.id }?.iconOnly == true && restored.workspaces.first { $0.id == folder.id }?.name == folder.name,
@@ -269,14 +269,14 @@ import Foundation
         restored.setWorkspaceIconOnly(id: folder.id, enabled: false)
         precondition(restored.workspaces.first { $0.id == folder.id }?.iconOnly == false && restored.workspaces.first { $0.id == folder.id }?.name == folder.name)
         restored.setFavoriteShortcutVisible(false)
-        let hiddenReload = HubModel(storageURL: storage, monitor: false)
+        let hiddenReload = makeTestModel(storageURL: storage, monitor: false)
         precondition(hiddenReload.fixedFavoriteWorkspace == nil && hiddenReload.favoriteWorkspace?.id == favoriteID && hiddenReload.tabWorkspaces.contains { $0.id == favoriteID },
                      "The hidden shortcut preference must persist while its collection remains an ordinary tab")
         hiddenReload.setFavoriteShortcutVisible(true)
         hiddenReload.removeWorkspace(favoriteID)
         let afterRemovalCount = hiddenReload.workspaces.count
         precondition(hiddenReload.favoriteWorkspace == nil && hiddenReload.fixedFavoriteWorkspace == nil)
-        let removedReload = HubModel(storageURL: storage, monitor: false)
+        let removedReload = makeTestModel(storageURL: storage, monitor: false)
         precondition(removedReload.favoriteWorkspace == nil && removedReload.fixedFavoriteWorkspace == nil && removedReload.workspaces.count == afterRemovalCount,
                      "Removing the favorite must not silently recreate it on refresh or restart")
         removedReload.setFavoriteShortcutVisible(true)
@@ -292,16 +292,16 @@ import Foundation
         legacyWorkspaces[favoriteIndex]["name"] = "Other references"
         legacy["workspaces"] = legacyWorkspaces
         try JSONSerialization.data(withJSONObject: legacy).write(to: absentStorage, options: .atomic)
-        let absent = HubModel(storageURL: absentStorage, monitor: false)
+        let absent = makeTestModel(storageURL: absentStorage, monitor: false)
         precondition(absent.favoriteWorkspace == nil && absent.fixedFavoriteWorkspace == nil && absent.workspaces.count == legacyWorkspaces.count,
                      "A legacy configuration without a reference collection named 收藏 must not acquire one automatically")
 
         let emptyStorage = base.appendingPathComponent("favorite-deleted-last-config.json")
-        let empty = HubModel(storageURL: emptyStorage, monitor: false)
+        let empty = makeTestModel(storageURL: emptyStorage, monitor: false)
         let soleFavoriteID = empty.favoriteWorkspace!.id
         for id in empty.workspaces.map(\.id) where id != soleFavoriteID { empty.removeWorkspace(id) }
         empty.removeWorkspace(soleFavoriteID)
-        let emptyReload = HubModel(storageURL: emptyStorage, monitor: false)
+        let emptyReload = makeTestModel(storageURL: emptyStorage, monitor: false)
         precondition(emptyReload.workspaces.isEmpty && emptyReload.favoriteWorkspace == nil && emptyReload.fixedFavoriteWorkspace == nil,
                      "Deleting the last workspace is an intentional empty configuration, not a request to seed new defaults")
         emptyReload.setFavoriteShortcutVisible(true)
@@ -320,7 +320,7 @@ import Foundation
         let document = leaf.appendingPathComponent("keep.txt")
         let originalData = Data("Keyboard navigation must leave this document untouched".utf8)
         try originalData.write(to: document)
-        let model = HubModel(storageURL: base.appendingPathComponent("keyboard-navigation-config.json"), monitor: false)
+        let model = makeTestModel(storageURL: base.appendingPathComponent("keyboard-navigation-config.json"), monitor: false)
         model.addWorkspace(name: "Keyboard navigation", mode: .folder, urls: [root])
         model.navigate(to: leaf)
 
@@ -370,7 +370,7 @@ import Foundation
         let folder = base.appendingPathComponent("workspace-reorder", isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let storage = folder.appendingPathComponent("config.json")
-        let model = HubModel(storageURL: storage, monitor: false)
+        let model = makeTestModel(storageURL: storage, monitor: false)
         let fixtures = (0..<4).map { index in
             model.addWorkspace(name: "Workspace \(index)", mode: .folder, urls: [folder])
         }
@@ -403,7 +403,7 @@ import Foundation
         expect([b, a, d, c])
         let savedAfterNoOps = try Data(contentsOf: storage)
         precondition(savedAfterNoOps == saved, "Invalid and unchanged drops must not rewrite configuration")
-        let reloaded = HubModel(storageURL: storage, monitor: false)
+        let reloaded = makeTestModel(storageURL: storage, monitor: false)
         precondition(reloaded.workspaces.map(\.id) == [b, a, d, c] && reloaded.selectedWorkspaceID == b,
                      "Tab order and selected tab must survive a restart")
         model.removeWorkspace(c)
@@ -421,7 +421,7 @@ import Foundation
         let child = parent.appendingPathComponent("文件夹", isDirectory: true)
         let nested = child.appendingPathComponent("Nested", isDirectory: true)
         try fm.createDirectory(at: nested, withIntermediateDirectories: true)
-        let model = HubModel(storageURL: root.appendingPathComponent("config.json"), monitor: false)
+        let model = makeTestModel(storageURL: root.appendingPathComponent("config.json"), monitor: false)
         let folder = model.addWorkspace(name: "Folder", mode: .folder, urls: [nested])
         let components = model.pathComponents
         precondition(components.first?.url?.path == "/" && components.first?.title == "/")

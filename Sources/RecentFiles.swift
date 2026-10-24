@@ -1,6 +1,6 @@
 import Foundation
 
-struct HubRecentFile: Equatable {
+struct HubRecentFile: Equatable, Sendable {
     let url: URL
     let lastUsed: Date
     var metadataOnly = false

@@ -21,7 +21,7 @@ import Foundation
 
     @MainActor private static func importedSelectionAndBlacklistSettings(_ base: URL) throws {
         let storage = base.appendingPathComponent("import/config.json")
-        let model = HubModel(storageURL: storage)
+        let model = makeTestModel(storageURL: storage)
         let ordinaryID = model.selectedWorkspaceID!
         model.openStagingWorkspace()
         let shelfID = model.stagingWorkspace!.id
@@ -45,7 +45,7 @@ import Foundation
         try model.importConfiguration(data: JSONSerialization.data(withJSONObject: payload))
         let expected = ["com.example.game", "com.example.video"]
         precondition(model.settings.blockedApplicationBundleIDs == expected && !model.settings.resolvedSuppressHoverInFullScreen)
-        let reloaded = HubModel(storageURL: storage)
+        let reloaded = makeTestModel(storageURL: storage)
         precondition(reloaded.settings.blockedApplicationBundleIDs == expected && !reloaded.settings.resolvedSuppressHoverInFullScreen,
                      "Normalized blacklist IDs and an explicit disabled full-screen setting must persist")
         precondition(reloaded.selectedWorkspaceID == ordinaryID)
@@ -73,10 +73,10 @@ import Foundation
         let alias = URL(fileURLWithPath: String(canonicalPath.dropFirst("/private".count)))
         precondition(canonical.path != alias.path && HubFileOperations.canonical(canonical) == HubFileOperations.canonical(alias))
         let storage = base.appendingPathComponent("aliases/config.json")
-        let model = HubModel(storageURL: storage)
+        let model = makeTestModel(storageURL: storage)
         model.stageFiles([canonical, alias])
         precondition(model.stagedURLs.count == 1)
-        let restored = HubModel(storageURL: storage)
+        let restored = makeTestModel(storageURL: storage)
         precondition(restored.stagedURLs.count == 1)
         restored.stageFiles([alias, canonical])
         precondition(restored.stagedURLs.count == 1, "Bookmark resolution must not make a second alias entry after restart")
@@ -90,7 +90,7 @@ import Foundation
         let storage = base.appendingPathComponent("migration/config.json")
         let file = base.appendingPathComponent("source.txt")
         try Data("original remains".utf8).write(to: file)
-        let original = HubModel(storageURL: storage)
+        let original = makeTestModel(storageURL: storage)
         let initialIDs = original.workspaces.map(\.id)
         let originalSelection = original.selectedWorkspaceID
         // Optional fields must not seed another workspace into a pre-feature config.
@@ -100,7 +100,7 @@ import Foundation
         settings.removeValue(forKey: "stagingEnabled")
         payload["settings"] = settings
         try JSONSerialization.data(withJSONObject: payload).write(to: storage)
-        let model = HubModel(storageURL: storage)
+        let model = makeTestModel(storageURL: storage)
         precondition(model.settings.resolvedStagingEnabled && model.stagingWorkspace == nil)
         precondition(model.workspaces.map(\.id) == initialIDs && model.selectedWorkspaceID == originalSelection)
         precondition(!model.stageFiles([URL(string: "https://example.invalid/document")!]))
@@ -117,7 +117,7 @@ import Foundation
         precondition(!model.stageFiles([base.appendingPathComponent("another.txt")]))
         model.selectWorkspace(shelf.id)
         precondition(!model.isStagingWorkspace, "Disabling the shelf also excludes workspace keyboard/navigation selection")
-        let reloaded = HubModel(storageURL: storage)
+        let reloaded = makeTestModel(storageURL: storage)
         precondition(!reloaded.settings.resolvedStagingEnabled && reloaded.stagingWorkspace?.id == shelf.id)
         precondition(reloaded.stagedURLs == [file] && !reloaded.isStagingWorkspace)
         reloaded.setStagingEnabled(true)
@@ -140,7 +140,7 @@ import Foundation
         for id in reloaded.workspaces.map(\.id) where id != shelf.id { reloaded.removeWorkspace(id) }
         reloaded.setStagingEnabled(false)
         precondition(reloaded.selectedWorkspaceID == nil && reloaded.entries.isEmpty)
-        let onlyShelf = HubModel(storageURL: storage)
+        let onlyShelf = makeTestModel(storageURL: storage)
         precondition(onlyShelf.selectedWorkspaceID == nil && onlyShelf.entries.isEmpty)
         onlyShelf.setStagingEnabled(true)
         onlyShelf.openStagingWorkspace()
@@ -159,7 +159,7 @@ import Foundation
         try Data("incoming".utf8).write(to: file)
         try Data("not staged".utf8).write(to: untouched)
         try Data("existing".utf8).write(to: destination.appendingPathComponent("same.txt"))
-        let model = HubModel(storageURL: base.appendingPathComponent("transfer/config.json"))
+        let model = makeTestModel(storageURL: base.appendingPathComponent("transfer/config.json"))
         model.stageFiles([file, missing])
         do {
             _ = try await model.transferStagedFiles([file, missing, untouched], to: destination, copy: true)
@@ -188,7 +188,7 @@ import Foundation
         precondition(targets.count == 1 && targets[0].lastPathComponent == "same copy 2.txt")
         precondition(!fm.fileExists(atPath: file.path) && model.stagedURLs.isEmpty)
         precondition(model.workspaces.first { $0.id == collection.id }?.referencePaths == targets.map(\.path))
-        let restarted = HubModel(storageURL: base.appendingPathComponent("transfer/config.json"))
+        let restarted = makeTestModel(storageURL: base.appendingPathComponent("transfer/config.json"))
         precondition(restarted.stagedURLs.isEmpty && restarted.workspaces.first { $0.id == collection.id }?.referencePaths.map { URL(fileURLWithPath: $0).standardizedFileURL.path } == targets.map(\.path))
     }
 
@@ -200,7 +200,7 @@ import Foundation
         try fm.createDirectory(at: folder, withIntermediateDirectories: true)
         try fm.createDirectory(at: destination, withIntermediateDirectories: true)
         try Data("nested".utf8).write(to: child)
-        let model = HubModel(storageURL: base.appendingPathComponent("directory/config.json"))
+        let model = makeTestModel(storageURL: base.appendingPathComponent("directory/config.json"))
         model.stageFiles([folder, child])
         do {
             _ = try await model.transferStagedFiles([folder], to: folder, copy: false)
@@ -233,14 +233,14 @@ import Foundation
         let aliasedDestination = URL(fileURLWithPath: literalPath)
         precondition(aliasedDestination.path.hasPrefix("/private/var/"))
         let storage = base.appendingPathComponent("alias-transfer/config.json")
-        let model = HubModel(storageURL: storage)
+        let model = makeTestModel(storageURL: storage)
         model.stageFiles([file])
         let collection = model.addWorkspace(name: "Keep moved reference", mode: .references, urls: [file])
         let targets = try await model.transferStagedFiles([file], to: aliasedDestination, copy: false)
         precondition(model.stagedURLs.isEmpty, "Successful moves must drain the shelf even when the destination uses /private/var")
         precondition(targets == [destination.appendingPathComponent(file.lastPathComponent).standardizedFileURL])
         precondition(model.workspaces.first { $0.id == collection.id }?.referencePaths == targets.map(\.path))
-        let reloaded = HubModel(storageURL: storage)
+        let reloaded = makeTestModel(storageURL: storage)
         precondition(reloaded.stagedURLs.isEmpty && fm.fileExists(atPath: targets[0].path))
     }
 
@@ -254,7 +254,7 @@ import Foundation
             return url
         }
         let storage = base.appendingPathComponent("batch/config.json")
-        let model = HubModel(storageURL: storage)
+        let model = makeTestModel(storageURL: storage)
         var writes = model.configurationWriteCount
         precondition(model.stageFiles(files))
         precondition(model.configurationWriteCount == writes + 1, "A batch of bookmarks and a lazy shelf must persist once")
@@ -304,7 +304,7 @@ import Foundation
         model.workspaces[0].name = String(repeating: "x", count: 16 * 1024 * 1024)
         precondition(model.configurationWriteCount == writes && model.errorMessage?.contains("16 MiB") == true)
         try expect(Data(contentsOf: storage) == validDisk, "An oversized configuration must never replace the last valid disk state")
-        let recovered = HubModel(storageURL: storage)
+        let recovered = makeTestModel(storageURL: storage)
         precondition(recovered.workspaces[0].name == originalName)
         model.workspaces[0].name = originalName
         precondition(model.configurationWriteCount == writes + 1)
@@ -331,7 +331,7 @@ import Foundation
         precondition(after.tagNames == (actual.tagNames ?? []).sorted())
         precondition(after.attributesModified == actual.attributeModificationDate)
         precondition(after.snapshotSignature != before.snapshotSignature, "Finder appearance changes must invalidate the display snapshot")
-        let model = HubModel(storageURL: base.appendingPathComponent("appearance/config.json"))
+        let model = makeTestModel(storageURL: base.appendingPathComponent("appearance/config.json"))
         _ = model.addWorkspace(name: "Appearance", mode: .references, urls: [folder])
         precondition(model.entries.first?.snapshotSignature == after.snapshotSignature)
         let prior = model.entries[0].snapshotSignature
@@ -360,14 +360,17 @@ import Foundation
         for index in 0..<240 { try Data("fixture".utf8).write(to: first.appendingPathComponent("item-\(index).txt")) }
         let secondFile = second.appendingPathComponent("second.txt")
         try Data("second folder".utf8).write(to: secondFile)
-        let model = HubModel(storageURL: base.appendingPathComponent("background/config.json"))
-        let workspace = model.addWorkspace(name: "Background", mode: .folder, urls: [first])
+        let storage = base.appendingPathComponent("background/config.json")
+        let fixture = makeTestModel(storageURL: storage)
+        _ = fixture.addWorkspace(name: "Background", mode: .folder, urls: [first])
+        let model = HubModel(storageURL: storage)
+        try await waitForRefresh(model)
+        let workspace = model.selectedWorkspace!
         let startCount = model.backgroundRefreshCount
         model.refreshInBackground()
         for _ in 0..<20 { model.refreshInBackground() }
         precondition(model.backgroundRefreshCount == startCount + 1, "Concurrent ticks must share a single metadata scan")
         model.navigate(to: second)
-        precondition(model.entries.map(\.url) == [secondFile])
         try await waitForRefresh(model)
         precondition(model.entries.map(\.url) == [secondFile] && model.currentURL?.standardizedFileURL == second.standardizedFileURL,
                      "A late scan must not replace a synchronously navigated folder")

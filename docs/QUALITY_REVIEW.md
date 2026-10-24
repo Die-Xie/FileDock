@@ -37,7 +37,7 @@
 
 ```sh
 mkdir -p .build
-swiftc -swift-version 5 -O -parse-as-library Sources/HubModel.swift Sources/FileAppearance.swift Sources/RecentFiles.swift Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift scripts/BenchmarkStaging.swift -o .build/benchmark-staging -framework AppKit -framework Combine -framework Carbon -framework UniformTypeIdentifiers
+swiftc -swift-version 5 -O -parse-as-library Sources/HubModel.swift Sources/DirectoryLoader.swift Sources/FileAppearance.swift Sources/RecentFiles.swift Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift scripts/BenchmarkStaging.swift -o .build/benchmark-staging -framework AppKit -framework Combine -framework Carbon -framework UniformTypeIdentifiers
 .build/benchmark-staging
 ```
 
@@ -45,7 +45,7 @@ swiftc -swift-version 5 -O -parse-as-library Sources/HubModel.swift Sources/File
 
 1. **P2：重命名父目录没有即时迁移所有子路径引用。** `Sources/HubModel.swift` 的 `rename` 目前仅按被重命名路径精确匹配引用；其他合集引用其子文件时可能暂时失效，当前路径和历史也可能保留旧前缀。建议复用 `relocateReferences`，并补父目录、符号链接和历史导航的回归测试。
 2. **P2：普通文件夹的网页图片下载没有全局并发或总内存限制。** `Sources/HubView.swift` 的 `receiveWebImageDrop` 每个地址启动独立会话；单文件上限 32 MiB，但批量峰值仍随数量增加。换目录只阻止末端保存，未取消进行中的网络请求。新暂存入口已按批次串行处理；普通文件夹及跨批次还应引入全局队列、可取消任务及总内存预算。
-3. **P2：首次打开目录、显式导航与最近使用仍可能阻塞主线程。** 本轮改动针对定时刷新。`RecentFiles.swift` 仍在主线程提取查询结果并检查文件元数据，显示上限 500 不等于最多检查 500 个候选。下一步需拆分元数据查询快照、后台验证与导航完成状态，同时保证选中项和历史行为。
+3. **P2：Spotlight 源的候选过滤仍可能阻塞主线程。** 1.17.1 已将首次目录打开、显式导航、刷新及 FileEntry 信息提取统一移至有并发上限和超时的后台加载器，详情见 [卡死修复记录](HANG_DIAGNOSIS.md)。`RecentFiles.swift` 仍在主线程提取查询结果并检查文件元数据，显示上限 500 不等于最多检查 500 个候选。下一步需拆分元数据查询快照、后台验证与导航完成状态，同时保证选中项和历史行为。
 4. **P3：派生列表和视图重建成本。** `visibleEntries` 反复排序、`stagedURLs` 反复标准化路径，音乐更新也可能使大块浏览视图重新求值。建议增加明确的派生缓存失效规则，并拆分音乐、工作区和文件列表的观察边界。`HubModel.swift`、`HubView.swift`、`AppMain.swift` 职责较多，适合分阶段拆分，不宜在同一轮性能修复中大范围重写。
 
 ## 验证边界

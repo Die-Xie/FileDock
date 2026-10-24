@@ -152,7 +152,7 @@ struct HubPathComponent: Identifiable, Equatable {
     let url: URL?
 }
 
-struct FileEntry: Identifiable, Hashable {
+struct FileEntry: Identifiable, Hashable, Sendable {
     var id: URL { url }
     let url: URL
     let name: String
@@ -309,11 +309,16 @@ enum HubFileOperations {
     private static let maximumConfigurationBytes = 16 * 1024 * 1024
     private var refreshTimer: Timer?
     private var refreshGeneration = 0
-    private var backgroundRefreshTask: Task<Void, Never>?
-    private var backgroundRefreshWorker: Task<[FileEntry], Error>?
+    private let directoryLoader: HubDirectoryLoading
+    private var activeDirectoryLoad: UUID?
+    private var displayedDirectoryContext: RefreshContext?
+    private var canonicalDirectoryPath: String?
+    private var retryDirectoryNavigation: (url: URL, selecting: URL?)?
+    @Published private(set) var directoryLoading = false
+    @Published private(set) var directoryLoadMessage: String?
     private var backgroundRefreshRequested = false
     private(set) var backgroundRefreshCount = 0
-    var isRefreshingInBackground: Bool { backgroundRefreshTask != nil }
+    var isRefreshingInBackground: Bool { activeDirectoryLoad != nil }
     private var lastSnapshot: [String] = []
     private let recentFiles: HubRecentFilesProviding
     private var recentRecords: [HubRecentFile] = []
@@ -333,7 +338,8 @@ enum HubFileOperations {
     }
 
     init(storageURL: URL? = nil, demo: Bool = false, monitor: Bool = false,
-         recentFiles: HubRecentFilesProviding? = nil) {
+         recentFiles: HubRecentFilesProviding? = nil, directoryLoader: HubDirectoryLoading? = nil) {
+        self.directoryLoader = directoryLoader ?? HubDirectoryLoader()
         self.recentFiles = recentFiles ?? HubRecentFilesSource()
         let support = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
             .appendingPathComponent("FileDock", isDirectory: true)
@@ -385,8 +391,7 @@ enum HubFileOperations {
 
     deinit {
         refreshTimer?.invalidate()
-        backgroundRefreshTask?.cancel()
-        backgroundRefreshWorker?.cancel()
+
         for url in activeScopes { url.stopAccessingSecurityScopedResource() }
     }
 
@@ -454,7 +459,7 @@ enum HubFileOperations {
         }
         components.append(contentsOf: breadcrumbs.map { url in
             HubPathComponent(id: prefix + ":file:" + url.path,
-                             title: url.path == "/" ? "/" : fm.displayName(atPath: url.path), url: url)
+                             title: url.path == "/" ? "/" : url.lastPathComponent, url: url)
         })
         return components
     }
@@ -463,17 +468,19 @@ enum HubFileOperations {
         return search.isEmpty ? ordered : ordered.filter { $0.name.localizedStandardContains(search) }
     }
 
+    private var directoryOrderPath: String { canonicalDirectoryPath ?? currentURL?.standardizedFileURL.path ?? "" }
+
     var isManualEntryOrder: Bool {
         if isReferenceRoot { return referenceManualOrder }
-        guard let currentURL else { return false }
-        let path = HubFileOperations.canonical(currentURL).path
+        guard currentURL != nil else { return false }
+        let path = directoryOrderPath
         return selectedWorkspace?.directoryOrders?[path] != nil
     }
 
     private var orderedEntries: [FileEntry] {
         if isRecentsRoot { return entries }
         if isReferenceRoot && referenceManualOrder { return entries }
-        if let currentURL, let order = selectedWorkspace?.directoryOrders?[HubFileOperations.canonical(currentURL).path] {
+        if currentURL != nil, let order = selectedWorkspace?.directoryOrders?[directoryOrderPath] {
             let positions = Dictionary(order.enumerated().map { ($0.element, $0.offset) }, uniquingKeysWith: min)
             return entries.sorted {
                 let left = positions[$0.url.lastPathComponent] ?? Int.max, right = positions[$1.url.lastPathComponent] ?? Int.max
@@ -888,9 +895,9 @@ enum HubFileOperations {
         if isReferenceRoot {
             workspaces[index].referencePaths = result
             referenceManualOrder = true
-        } else if let currentURL {
+        } else if currentURL != nil {
             var orders = workspaces[index].directoryOrders ?? [:]
-            orders[HubFileOperations.canonical(currentURL).path] = result.map { URL(fileURLWithPath: $0).lastPathComponent }
+            orders[directoryOrderPath] = result.map { URL(fileURLWithPath: $0).lastPathComponent }
             workspaces[index].directoryOrders = orders
         }
         refresh()
@@ -898,8 +905,8 @@ enum HubFileOperations {
 
     func setManualEntryOrder(_ enabled: Bool) {
         if isReferenceRoot { referenceManualOrder = enabled; return }
-        guard let index = workspaces.firstIndex(where: { $0.id == selectedWorkspaceID }), let currentURL else { return }
-        let path = HubFileOperations.canonical(currentURL).path
+        guard let index = workspaces.firstIndex(where: { $0.id == selectedWorkspaceID }), currentURL != nil else { return }
+        let path = directoryOrderPath
         if enabled {
             var orders = workspaces[index].directoryOrders ?? [:]
             orders[path] = orderedEntries.map { $0.url.lastPathComponent }
@@ -908,29 +915,41 @@ enum HubFileOperations {
     }
 
     private func clearDirectoryOrder() {
-        guard let index = workspaces.firstIndex(where: { $0.id == selectedWorkspaceID }), let currentURL else { return }
-        let path = HubFileOperations.canonical(currentURL).path
+        guard let index = workspaces.firstIndex(where: { $0.id == selectedWorkspaceID }), currentURL != nil else { return }
+        let path = directoryOrderPath
         guard workspaces[index].directoryOrders?[path] != nil else { return }
         workspaces[index].directoryOrders?.removeValue(forKey: path)
     }
 
     func navigate(to url: URL) {
-        guard FileEntry(url: url).canNavigate else { open(FileEntry(url: url)); return }
+        if let entry = entries.first(where: { $0.url == url.standardizedFileURL }), !entry.canNavigate {
+            open(entry); return
+        }
+        navigateDirectory(to: url)
+    }
+
+    private func navigateDirectory(to url: URL, selecting: URL? = nil) {
         let target = url.standardizedFileURL
         guard target != currentURL else { return }
-        currentURL = target
-        if historyIndex + 1 < history.count { history.removeSubrange((historyIndex + 1)..<history.count) }
-        history.append(target)
-        historyIndex = history.count - 1
-        selectedIDs = []; search = ""; refresh()
+        invalidateBackgroundRefresh()
+        let context = refreshContext
+        retryDirectoryNavigation = (target, selecting)
+        let request = HubDirectoryRequest(directory: target, showHiddenFiles: showHiddenFiles)
+        beginDirectoryLoad(request, context: context, reportErrors: true) { [weak self] in
+            guard let self else { return }
+            self.stopRecentFiles()
+            self.retryDirectoryNavigation = nil
+            self.currentURL = target
+            if self.historyIndex + 1 < self.history.count { self.history.removeSubrange((self.historyIndex + 1)..<self.history.count) }
+            self.history.append(target); self.historyIndex = self.history.count - 1
+            self.search = ""; self.selectedIDs = selecting.map { [$0] } ?? []
+        }
     }
 
     func navigatePathComponent(_ component: HubPathComponent) {
         // A drop-down/menu can outlive its location or workspace. Reject stale actions.
         guard pathComponents.contains(component) else { return }
         if let url = component.url {
-            var isDirectory: ObjCBool = false
-            guard fm.fileExists(atPath: url.path, isDirectory: &isDirectory), isDirectory.boolValue else { return }
             navigate(to: url)
         } else if currentURL != nil && isVirtualWorkspace {
             currentURL = nil
@@ -949,11 +968,7 @@ enum HubFileOperations {
     func goUp() {
         guard let departedDirectory = currentURL, departedDirectory.path != "/" else { return }
         let parent = departedDirectory.deletingLastPathComponent()
-        navigate(to: parent)
-        // Keep the folder just left selected, so Command-Down can reopen it.
-        if currentURL == parent, let entry = entries.first(where: { $0.url == departedDirectory }) {
-            selectedIDs = [entry.url]
-        }
+        navigateDirectory(to: parent, selecting: departedDirectory)
     }
     func goHome() { if let id = selectedWorkspaceID { selectWorkspace(id) } }
 
@@ -962,55 +977,59 @@ enum HubFileOperations {
         let directory: URL?
         let references: [String]
         let showHiddenFiles: Bool
+        let recentRecords: [HubRecentFile]
     }
 
     private var refreshContext: RefreshContext {
         RefreshContext(workspaceID: selectedWorkspaceID, directory: currentURL,
                        references: isReferenceRoot ? selectedWorkspace?.referencePaths ?? [] : [],
-                       showHiddenFiles: showHiddenFiles)
+                       showHiddenFiles: showHiddenFiles, recentRecords: isRecentsRoot ? recentRecords : [])
     }
 
     private func invalidateBackgroundRefresh() {
         refreshGeneration += 1
         backgroundRefreshRequested = false
-        backgroundRefreshWorker?.cancel()
+        if let activeDirectoryLoad { directoryLoader.cancel(id: activeDirectoryLoad) }
+        activeDirectoryLoad = nil
+        directoryLoading = false
     }
 
-    /// Periodic refresh reads file metadata away from the main actor. While it is
-    /// running, repeated ticks become one follow-up scan rather than parallel work.
     func refreshInBackground() {
-        if isRecentsRoot { refresh(reportErrors: false); return }
-        if backgroundRefreshTask != nil { backgroundRefreshRequested = true; return }
-        stopRecentFiles()
-        let context = refreshContext
-        let generation = refreshGeneration
+        if isRecentsRoot { recentFiles.refresh(); return }
+        guard directoryLoadMessage == nil else { return }
+        if activeDirectoryLoad != nil { backgroundRefreshRequested = true; return }
         backgroundRefreshCount += 1
-        let worker = Task.detached(priority: .utility) { () throws -> [FileEntry] in
-            try Task.checkCancellation()
-            let urls: [URL]
-            if let directory = context.directory {
-                urls = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil,
-                    options: context.showHiddenFiles ? [] : [.skipsHiddenFiles])
-            } else { urls = context.references.map { URL(fileURLWithPath: $0) } }
-            return try urls.map { url in
-                try Task.checkCancellation()
-                return FileEntry(url: url)
-            }
-        }
-        backgroundRefreshWorker = worker
-        backgroundRefreshTask = Task { @MainActor [weak self] in
-            let result = await worker.result
-            guard let self else { return }
-            self.backgroundRefreshTask = nil
-            self.backgroundRefreshWorker = nil
-            if generation == self.refreshGeneration && context == self.refreshContext && !self.isRecentsRoot {
-                if case .success(let next) = result { self.publishEntries(next) }
-                // Transient periodic read failures retain the last usable snapshot;
-                // explicit Refresh/navigation continues to present an error.
+        beginDirectoryLoad(currentDirectoryRequest, context: refreshContext, reportErrors: false)
+    }
+
+    private var currentDirectoryRequest: HubDirectoryRequest {
+        HubDirectoryRequest(directory: currentURL,
+            references: isRecentsRoot ? recentRecords.map { $0.url.path } : refreshContext.references,
+            showHiddenFiles: showHiddenFiles,
+            metadataOnlyPaths: isRecentsRoot ? Set(recentRecords.filter(\.metadataOnly).map { $0.url.path }) : nil)
+    }
+
+    private func beginDirectoryLoad(_ request: HubDirectoryRequest, context: RefreshContext,
+                                    reportErrors: Bool, commitNavigation: (() -> Void)? = nil) {
+        let id = UUID(), generation = refreshGeneration
+        activeDirectoryLoad = id
+        directoryLoading = reportErrors || entries.isEmpty; directoryLoadMessage = nil
+        directoryLoader.load(id: id, request: request) { [weak self] result in
+            guard let self, self.activeDirectoryLoad == id,
+                  self.refreshGeneration == generation, self.refreshContext == context else { return }
+            self.activeDirectoryLoad = nil; self.directoryLoading = false
+            switch result {
+            case .success(let snapshot):
+                commitNavigation?()
+                self.canonicalDirectoryPath = snapshot.canonicalDirectoryPath
+                self.displayedDirectoryContext = self.refreshContext
+                self.publishEntries(snapshot.entries)
+            case .failure(let error):
+                self.directoryLoadMessage = error.localizedDescription
             }
             let repeatRefresh = self.backgroundRefreshRequested
             self.backgroundRefreshRequested = false
-            if repeatRefresh { self.refreshInBackground() }
+            if repeatRefresh && self.directoryLoadMessage == nil { self.refreshInBackground() }
         }
     }
 
@@ -1023,26 +1042,26 @@ enum HubFileOperations {
         }
     }
 
+    func retryDirectoryLoad() {
+        if let retry = retryDirectoryNavigation { navigateDirectory(to: retry.url, selecting: retry.selecting) }
+        else { refresh() }
+    }
+
     func refresh(reportErrors: Bool = true) {
         invalidateBackgroundRefresh()
+        retryDirectoryNavigation = nil
         if isRecentsRoot {
+            directoryLoadMessage = nil
             if observingRecents { recentFiles.refresh() }
             else { startRecentFiles() }
             return
         }
         stopRecentFiles()
-        do {
-            let urls: [URL]
-            if let currentURL {
-                urls = try fm.contentsOfDirectory(at: currentURL, includingPropertiesForKeys: [.isDirectoryKey, .contentModificationDateKey, .fileSizeKey], options: showHiddenFiles ? [] : [.skipsHiddenFiles])
-            } else if let workspace = selectedWorkspace, workspace.mode == .references {
-                urls = workspace.referencePaths.map { URL(fileURLWithPath: $0) }
-            } else { urls = [] }
-            publishEntries(urls.map(FileEntry.init))
-        } catch {
-            entries = []; lastSnapshot = []; selectedIDs = []
-            if reportErrors { errorMessage = "无法读取文件夹：\(error.localizedDescription)\n可使用“选择文件夹”重新授权访问。" }
+        let context = refreshContext
+        if displayedDirectoryContext != context {
+            entries = []; lastSnapshot = []; selectedIDs = []; canonicalDirectoryPath = nil
         }
+        beginDirectoryLoad(currentDirectoryRequest, context: context, reportErrors: reportErrors)
     }
 
     private func startRecentFiles() {
@@ -1056,7 +1075,8 @@ enum HubFileOperations {
         entries = []; lastSnapshot = []; selectedIDs = []
         recentFiles.start { [weak self] snapshot in
             guard let self, self.observingRecents, self.recentGeneration == generation,
-                  self.selectedWorkspaceID == workspaceID, self.isRecentsRoot else { return }
+                  self.selectedWorkspaceID == workspaceID, self.isRecentsRoot,
+                  self.retryDirectoryNavigation == nil else { return }
             if self.recentFilesLoading != snapshot.gathering { self.recentFilesLoading = snapshot.gathering }
             if self.recentFilesMessage != snapshot.message { self.recentFilesMessage = snapshot.message }
             var byURL: [URL: HubRecentFile] = [:]
@@ -1071,18 +1091,9 @@ enum HubFileOperations {
                 if left.lastUsed == right.lastUsed { return left.url.path < right.url.path }
                 return left.lastUsed > right.lastUsed
             }
-            let next = records.compactMap { record -> FileEntry? in
-                let entry = FileEntry(url: record.url)
-                return entry.exists || record.metadataOnly ? entry : nil
-            }
+            self.invalidateBackgroundRefresh()
             self.recentRecords = records
-            let signature = records.map { "\($0.url.path)|\($0.lastUsed.timeIntervalSince1970)|\($0.metadataOnly)" }
-                + next.map(\.snapshotSignature)
-            if signature != self.lastSnapshot || self.entries.count != next.count {
-                self.entries = next
-                self.lastSnapshot = signature
-                self.selectedIDs.formIntersection(Set(next.map(\.url)))
-            }
+            self.beginDirectoryLoad(self.currentDirectoryRequest, context: self.refreshContext, reportErrors: false)
         }
     }
 

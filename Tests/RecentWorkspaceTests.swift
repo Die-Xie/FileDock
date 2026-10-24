@@ -45,7 +45,7 @@ import Foundation
     @MainActor private static func persistenceAndSanitization(in base: URL, directory: URL, alpha: URL) throws {
         let storage = base.appendingPathComponent("persistence/config.json")
         let provider = RecentFilesFixtureProvider()
-        let model = HubModel(storageURL: storage, monitor: false, recentFiles: provider)
+        let model = makeTestModel(storageURL: storage, monitor: false, recentFiles: provider)
         let bookmarksBefore = try configuration(at: storage)["bookmarks"] as? [String: Any] ?? [:]
         let recent = model.addWorkspace(name: "Recents", symbol: "clock", mode: .recents, urls: [directory, alpha])
         precondition(model.isRecentsRoot && model.isVirtualWorkspace && model.currentURL == nil)
@@ -79,7 +79,7 @@ import Foundation
         workspaces[index]["directoryOrders"] = [directory.path: [alpha.lastPathComponent]]
         payload["workspaces"] = workspaces
         try JSONSerialization.data(withJSONObject: payload).write(to: storage, options: .atomic)
-        let restored = HubModel(storageURL: storage, monitor: false, recentFiles: RecentFilesFixtureProvider())
+        let restored = makeTestModel(storageURL: storage, monitor: false, recentFiles: RecentFilesFixtureProvider())
         precondition(restored.errorMessage == nil && restored.selectedWorkspaceID == recent.id && restored.isRecentsRoot,
                      "A saved recent workspace must survive restart without a fabricated filesystem root")
         precondition(restored.selectedWorkspace?.rootPath == nil && restored.selectedWorkspace?.referencePaths.isEmpty == true)
@@ -93,7 +93,7 @@ import Foundation
 
     @MainActor private static func orderingAndProtection(in base: URL, directory: URL, child: URL, alpha: URL, zulu: URL) throws {
         let provider = RecentFilesFixtureProvider()
-        let model = HubModel(storageURL: base.appendingPathComponent("ordering/config.json"), monitor: false, recentFiles: provider)
+        let model = makeTestModel(storageURL: base.appendingPathComponent("ordering/config.json"), monitor: false, recentFiles: provider)
         let ordinary = model.addWorkspace(name: "Fixture folder", mode: .folder, urls: [directory])
         model.sortKey = .size
         model.ascending = false
@@ -167,7 +167,7 @@ import Foundation
 
     @MainActor private static func navigationAndStaleCallbacks(in base: URL, directory: URL, child: URL, alpha: URL, zulu: URL) throws {
         let provider = RecentFilesFixtureProvider()
-        let model = HubModel(storageURL: base.appendingPathComponent("navigation/config.json"), monitor: false, recentFiles: provider)
+        let model = makeTestModel(storageURL: base.appendingPathComponent("navigation/config.json"), monitor: false, recentFiles: provider)
         let ordinary = model.addWorkspace(name: "Fixture folder", mode: .folder, urls: [directory])
         let recent = model.addRecentWorkspace()
         let initialCallback = provider.latestCallback
