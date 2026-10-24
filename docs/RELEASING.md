@@ -65,3 +65,12 @@ GitHub 的相关行为见 [tag push 触发规则](https://docs.github.com/en/act
 更新源作为 Release 的 `appcast.xml` 附件上传。应用通过 `https://github.com/Die-Xie/FileDock/releases/latest/download/appcast.xml` 检查更新；源内的安装包 URL 固定到当前版本的不可变 tag。每日检查默认关闭。不要在签名完成后修改 ZIP 或 XML；任何修改都必须重新生成签名和校验值。
 
 `--dry-run` 也会生成本地签名更新源，因此可能出现钥匙串系统认证；它不会发布或上传。签名认证未完成时，应保留已测试产物并停止发布，不上传缺失或未签名的更新源。
+
+发布完成、正式附件可下载后，使用真实 Sparkle 对正式地址做只读检查：
+
+```sh
+./test-live-update.sh current
+./test-live-update.sh older
+```
+
+两个模式分别覆盖“无需更新”和“发现新版”。测试使用临时应用标识及正式公钥，不读取 FileDock 用户设置，不展示更新窗口，不下载或安装新应用。不能用发布前的 404 当作最终验证结果，也不能仅凭本地模拟源成功就断言正式源可用。

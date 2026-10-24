@@ -16,7 +16,6 @@ struct HubSettingsView: View {
             appearance.tabItem { Label("外观", systemImage: "paintpalette") }.tag(1)
             shortcuts.tabItem { Label("快捷键", systemImage: "keyboard") }.tag(2)
             musicSettings.tabItem { Label("音乐", systemImage: "music.note") }.tag(3)
-            FileDockUpdateSettings(updater: updater).tabItem { Label("更新", systemImage: "arrow.triangle.2.circlepath") }.tag(5)
             about.tabItem { Label("关于", systemImage: "info.circle") }.tag(4)
         }
         .padding(20).frame(width: 550, height: 495)
@@ -264,24 +263,34 @@ struct HubSettingsView: View {
     }
 
     private var about: some View {
-        VStack(spacing: 15) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 20).fill(LinearGradient(colors: [Color(red: 0.24, green: 0.42, blue: 0.59), Color(red: 0.10, green: 0.17, blue: 0.25)], startPoint: .topLeading, endPoint: .bottomTrailing)).frame(width: 86, height: 86)
-                Image(systemName: "chart.bar.fill").font(.system(size: 40, weight: .light)).foregroundStyle(.white.opacity(0.92))
-            }
-            Text("FileDock").font(.title2.bold())
-            Text("版本 \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—")")
-                .font(.caption).foregroundStyle(.secondary)
-            Text("原生 macOS 文件工作区").foregroundStyle(.secondary)
-            Text("作者：Diexie")
-                .font(.system(size: 12)).foregroundStyle(.secondary)
-            Text("工作区、文件操作和设置均保存在本机。")
-                .font(.system(size: 12)).multilineTextAlignment(.center).foregroundStyle(.secondary).lineSpacing(5)
-            Button("使用说明") { NotificationCenter.default.post(name: Notification.Name("HubHelp"), object: nil) }
-                .padding(.top, 5)
-            Spacer().frame(height: 8)
-            Text("Copyright © 2026 Diexie.").font(.caption).foregroundStyle(.tertiary)
-        }.frame(maxWidth: .infinity, maxHeight: .infinity)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                HStack(spacing: 16) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 16).fill(LinearGradient(colors: [Color(red: 0.24, green: 0.42, blue: 0.59), Color(red: 0.10, green: 0.17, blue: 0.25)], startPoint: .topLeading, endPoint: .bottomTrailing)).frame(width: 64, height: 64)
+                        Image(systemName: "chart.bar.fill").font(.system(size: 30, weight: .light)).foregroundStyle(.white.opacity(0.92))
+                    }
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("FileDock").font(.title2.bold())
+                        Text("版本 \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—")")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Text("原生 macOS 文件工作区 · 作者：Diexie").font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 0)
+                }
+                Divider()
+                FileDockUpdateSettings(updater: updater)
+                Divider()
+                HStack {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("工作区、文件操作和设置均保存在本机。")
+                        Text("Copyright © 2026 Diexie.").foregroundStyle(.tertiary)
+                    }.font(.caption).foregroundStyle(.secondary)
+                    Spacer(minLength: 10)
+                    Button("使用说明") { NotificationCenter.default.post(name: Notification.Name("HubHelp"), object: nil) }
+                }
+            }.padding(10)
+        }
     }
 
     private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
