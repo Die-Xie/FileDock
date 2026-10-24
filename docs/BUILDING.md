@@ -30,6 +30,7 @@ test.sh        运行测试
 ./build.sh              # 当前机器架构
 ./build.sh --universal  # Apple Silicon + Intel
 ./test.sh               # 运行回归测试
+./test-window-panels.sh # 可选：真实文件选择器层级回归，会短暂显示并自动取消测试窗口
 ./test-signing.sh       # 验证跨构建身份，以及对错误身份的拒绝
 ./test-updater.sh       # 临时应用的篡改拒绝、下载、安装与重启端到端测试
 ```

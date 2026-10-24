@@ -55,8 +55,21 @@ enum HubWindowPresentation {
         let previousDialogLevel = dialog.level
         dialogStack.append(dialog)
         if dialogStack.count == 1 { modalStateDidChange?(true) }
-        dialog.level = modalLevel(above: windows.map(\.level))
+        let targetLevel = modalLevel(above: windows.map(\.level))
+        dialog.level = targetLevel
+        // NSSavePanel.runModal resets its level to .modalPanel while ordering
+        // in, after our initial assignment. Its first display update must repair
+        // that reset even before it becomes key (e.g. while the app is inactive).
+        let tokens = [NSWindow.didUpdateNotification, NSWindow.didBecomeKeyNotification].map { name in
+            NotificationCenter.default.addObserver(forName: name, object: dialog, queue: .main) { [weak dialog] _ in
+                MainActor.assumeIsolated {
+                    guard let dialog, dialog.level.rawValue < targetLevel.rawValue else { return }
+                    dialog.level = targetLevel
+                }
+            }
+        }
         defer {
+            tokens.forEach(NotificationCenter.default.removeObserver)
             dialog.level = previousDialogLevel
             // Parents precede children: restoring a parent can change a child's
             // level, so explicitly restore every child's recorded value after it.

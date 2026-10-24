@@ -22,12 +22,33 @@ import AppKit
                    "The picker must rise above every background and sheet")
             expect(unrelated.level == .floating, "Unregistered windows remain unchanged")
             let parentLevel = dialog.level
+            // AppKit changes the level after presentation starts. A display
+            // notification must repair it even if the panel never becomes key.
+            dialog.level = .modalPanel
+            NotificationCenter.default.post(name: NSWindow.didUpdateNotification, object: unrelated)
+            expect(dialog.level == .modalPanel, "Unrelated display updates cannot change the dialog")
+            NotificationCenter.default.post(name: NSWindow.didUpdateNotification, object: dialog)
+            expect(dialog.level == parentLevel, "First display repairs the native modal-level reset")
+            for _ in 0..<5 {
+                NotificationCenter.default.post(name: NSWindow.didUpdateNotification, object: dialog)
+                expect(dialog.level == parentLevel, "Display notifications cannot keep increasing the level")
+            }
+            dialog.level = .popUpMenu
+            NotificationCenter.default.post(name: NSWindow.didUpdateNotification, object: dialog)
+            expect(dialog.level == .popUpMenu, "Higher levels remain untouched")
+            dialog.level = parentLevel
             HubWindowPresentation.withModalWindow(nestedDialog) {
                 expect(nestedDialog.level.rawValue > parentLevel.rawValue && dialog.level == parentLevel,
                        "Nested modal rises above its parent without demoting it")
+                nestedDialog.level = .modalPanel
+                NotificationCenter.default.post(name: NSWindow.didBecomeKeyNotification, object: nestedDialog)
+                expect(nestedDialog.level.rawValue > parentLevel.rawValue,
+                       "A nested panel repairs its own presentation reset")
                 expect(HubWindowPresentation.isPresentingDialog, "Nested scope remains active")
             }
             expect(dialog.level == parentLevel && nestedDialog.level == .normal, "Nested completion restores levels")
+            NotificationCenter.default.post(name: NSWindow.didUpdateNotification, object: nestedDialog)
+            expect(nestedDialog.level == .normal, "Nested observers are removed before restoration")
             expect(HubWindowPresentation.isPresentingDialog, "Outer scope remains active")
             return 42
         }
@@ -35,6 +56,9 @@ import AppKit
         expect(browser.level == .floating && bridge.level == .statusBar && settings.level == .floating,
                "Completion preserves exact background levels")
         expect(sheet.level == originalSheetLevel && dialog.level == .normal, "Child and picker levels restore")
+        NotificationCenter.default.post(name: NSWindow.didUpdateNotification, object: dialog)
+        NotificationCenter.default.post(name: NSWindow.didBecomeKeyNotification, object: dialog)
+        expect(dialog.level == .normal, "Completed modal scopes leave no elevation observers")
         expect(modalChanges == [true, false], "Only outermost transitions suspend and resume shortcuts")
         enum ExpectedError: Error { case cancelled }
         do {
@@ -43,6 +67,8 @@ import AppKit
         } catch ExpectedError.cancelled {} catch { preconditionFailure("Unexpected error") }
         expect(!HubWindowPresentation.isPresentingDialog && dialog.level == .normal && bridge.level == .statusBar,
                "Error unwinding restores both scope and levels")
+        NotificationCenter.default.post(name: NSWindow.didUpdateNotification, object: dialog)
+        expect(dialog.level == .normal, "Throwing scopes remove their observers")
         expect(modalChanges == [true, false, true, false], "Error unwinding resumes shortcuts")
 
         browser.level = HubWindowPresentation.browserLevel(embedded: true)
