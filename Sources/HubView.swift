@@ -2,25 +2,6 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 
-/// Screen-derived layout is transient; it must not leak into saved preferences.
-@MainActor
-final class HubPresentationState: ObservableObject {
-    struct Header: Equatable {
-        var embedded = false
-        var exclusionWidth: CGFloat = 0
-        var topInset: CGFloat = 0
-        var split = false
-        var menuBarMayOverlap = false
-    }
-    @Published var header = Header()
-    @Published var previewVisible = true
-    @Published private(set) var fileDragActive = false
-    func setFileDragActive(_ active: Bool) {
-        HubFileIconCache.prefersLightweight = active
-        if fileDragActive != active { fileDragActive = active }
-    }
-}
-
 private struct HubMenuButton: View {
     var title: String
     var systemImage: String
@@ -58,6 +39,7 @@ struct HubView: View {
     @State private var workspaceRevealPointer: NSPoint?
     @State private var workspaceControlsWidth: CGFloat = 0
     @State private var musicControlsFocused = false
+    @State private var showsLoading = false
     @State private var renameEntry: FileEntry?
     @State private var renameName = ""
 
@@ -67,20 +49,6 @@ struct HubView: View {
             Divider().opacity(0.55)
             browserBar
             Divider().opacity(0.45)
-            if model.directoryLoading {
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text("正在读取文件信息，可切换工作区…").font(.caption).foregroundStyle(.secondary)
-                    Spacer()
-                }.padding(.horizontal, 16).padding(.vertical, 7)
-            }
-            if model.fileOperationsInProgress > 0 {
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text("正在转移文件（\(model.fileOperationsInProgress) 项任务）…").font(.caption).foregroundStyle(.secondary)
-                    Spacer()
-                }.padding(.horizontal, 16).padding(.vertical, 7)
-            }
             if let message = model.directoryLoadMessage {
                 HStack(spacing: 10) {
                     Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange)
@@ -92,6 +60,15 @@ struct HubView: View {
             if model.isStagingRoot { stagingActions }
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .overlay(alignment: .topTrailing) {
+                    if showsLoading || model.fileOperationsInProgress > 0 {
+                        HStack(spacing: 7) {
+                            ProgressView().controlSize(.small)
+                            Text(model.fileOperationsInProgress > 0 ? "正在转移文件…" : "正在读取…").font(.caption)
+                        }.padding(.horizontal, 10).padding(.vertical, 6)
+                            .background(.regularMaterial, in: Capsule()).padding(10).allowsHitTesting(false)
+                    }
+                }
                 .overlay(RoundedRectangle(cornerRadius: 10).stroke(dropTargeted && fileDropFeedback == nil && !model.isRecentsRoot ? Color.accentColor : .clear, lineWidth: 2).padding(4))
                 .onDrop(of: [hubFileDragType, .fileURL, .image, .url, .item], isTargeted: $dropTargeted) { receiveDrop($0, destination: model.currentURL) }
                 .transformAnchorPreference(key: HubFileDropRegionKey.self, value: .bounds) { regions, anchor in regions[.content] = anchor }
@@ -132,6 +109,13 @@ struct HubView: View {
         }
         .onChange(of: presentation.previewVisible) { if !$0 { workspaceSpringLoader.cancel() } }
         .onDisappear { workspaceSpringLoader.cancel(); hoverTask?.cancel() }
+        .task(id: model.directoryLoading) {
+            showsLoading = false
+            guard model.directoryLoading else { return }
+            do { try await Task.sleep(nanoseconds: 150_000_000) } catch { return }
+            guard !Task.isCancelled, model.directoryLoading else { return }
+            showsLoading = true
+        }
         .onChange(of: model.search) { _ in model.selectedIDs = [] }
         .onChange(of: dropTargeted) { if $0 { presentation.setFileDragActive(true) } }
         .sheet(item: $editingWorkspace) { WorkspaceEditor(model: model, workspace: $0) }
@@ -361,7 +345,9 @@ struct HubView: View {
             .menuStyle(.borderlessButton).menuIndicator(.hidden)
             .frame(width: HubWorkspaceShortcutLabel.width, height: HubWorkspaceShortcutLabel.height).clipped()
             .accessibilityLabel("添加工作区").help("添加工作区")
-        Button { onClose() } label: { Image(systemName: "xmark").font(.system(size: 10, weight: .semibold)).frame(width: HubWorkspaceShortcutLabel.width, height: HubWorkspaceShortcutLabel.height) }.buttonStyle(.plain).foregroundStyle(.secondary).help("收起 (Esc)")
+        if presentation.windowMoving ? presentation.movingPinned : model.pinned {
+            Button { onClose() } label: { Image(systemName: "xmark").font(.system(size: 10, weight: .semibold)).frame(width: HubWorkspaceShortcutLabel.width, height: HubWorkspaceShortcutLabel.height) }.buttonStyle(.plain).foregroundStyle(.secondary).help("收起 (Esc)")
+        }
     }
 
     private var stagingActions: some View {
@@ -627,7 +613,8 @@ struct HubView: View {
                 Text(emptyTitle).font(.system(size: 14, weight: .medium))
                 Text(emptyDetail).foregroundStyle(.secondary)
                 if model.search.isEmpty && model.selectedWorkspace?.mode == .references && model.currentURL == nil { Button("添加项目…") { model.addReferences() } }
-            }.frame(maxWidth: .infinity, maxHeight: .infinity).contextMenu { backgroundMenu }
+            }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                .opacity(model.directoryLoading && !showsLoading ? 0 : 1).contextMenu { backgroundMenu }
         } else {
             Group {
                 switch model.viewMode {
@@ -673,7 +660,7 @@ struct HubView: View {
     private func gridCell(_ entry: FileEntry) -> some View {
         VStack(spacing: 7) {
             HubFileIcon(entry: entry, size: model.settings.iconSize, allowsThumbnail: !model.isCloudPlaceholder(entry),
-                        lightweight: presentation.fileDragActive).opacity(entry.exists ? 1 : 0.4)
+                        lightweight: presentation.defersFileRendering).opacity(entry.exists ? 1 : 0.4)
             Text(entry.name).font(.system(size: model.settings.fontSize)).lineLimit(2).multilineTextAlignment(.center).frame(maxWidth: .infinity, minHeight: 29, alignment: .top)
         }
         .padding(.horizontal, 5).padding(.vertical, 9)
@@ -699,7 +686,7 @@ struct HubView: View {
                 LazyVStack(spacing: 1) {
                     ForEach(Array(model.visibleEntries.enumerated()), id: \.element.id) { index, entry in
                         HStack(spacing: 9) {
-                            HubFileIcon(entry: entry, size: 22, allowsThumbnail: false, lightweight: presentation.fileDragActive)
+                            HubFileIcon(entry: entry, size: 22, allowsThumbnail: false, lightweight: presentation.defersFileRendering)
                             Text(entry.name).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
                             Text((model.isRecentsRoot ? model.lastUsedDate(for: entry.url) : entry.modified)?.formatted(date: .abbreviated, time: .shortened) ?? "—").font(.system(size: 10)).foregroundStyle(.secondary).frame(width: 120, alignment: .leading)
                             Text(model.isCloudPlaceholder(entry) ? "仅在云端" : entry.kind).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1).frame(width: 80, alignment: .leading)
@@ -750,7 +737,7 @@ struct HubView: View {
                                     ForEach(parentDirectory.entries) { entry in
                                         let url = entry.url
                                         Button { model.navigate(to: url) } label: {
-                                            HStack(spacing: 7) { HubFileIcon(entry: entry, size: 18, allowsThumbnail: false, lightweight: presentation.fileDragActive); Text(entry.name).lineLimit(1); Spacer(); Image(systemName: "chevron.right").font(.system(size: 8)) }.padding(.horizontal, 9).padding(.vertical, 6).contentShape(Rectangle())
+                                            HStack(spacing: 7) { HubFileIcon(entry: entry, size: 18, allowsThumbnail: false, lightweight: presentation.defersFileRendering); Text(entry.name).lineLimit(1); Spacer(); Image(systemName: "chevron.right").font(.system(size: 8)) }.padding(.horizontal, 9).padding(.vertical, 6).contentShape(Rectangle())
                                                 .background(url == current ? Color.primary.opacity(0.10) : .clear, in: RoundedRectangle(cornerRadius: 5))
                                         }.buttonStyle(.plain)
                                     }
@@ -771,7 +758,7 @@ struct HubView: View {
                             LazyVStack(spacing: 1) {
                                 ForEach(model.visibleEntries) { entry in
                                     HStack(spacing: 7) {
-                                        HubFileIcon(entry: entry, size: 20, allowsThumbnail: false, lightweight: presentation.fileDragActive)
+                                        HubFileIcon(entry: entry, size: 20, allowsThumbnail: false, lightweight: presentation.defersFileRendering)
                                         Text(entry.name).lineLimit(1)
                                         Spacer()
                                         if entry.isDirectory && !entry.isPackage { Image(systemName: "chevron.right").font(.system(size: 8)).foregroundStyle(.secondary) }

@@ -145,3 +145,30 @@ enum HubDirectoryLoadError: LocalizedError {
         current = nil; entries = []; message = nil
     }
 }
+
+/// Small, short-lived workspace cache for immediate tab revisits. Fresh reads
+/// still run in the background; recent-file queries are never cached here.
+@MainActor final class HubDirectorySnapshotCache<Key: Hashable> {
+    private struct Value { var snapshot: HubDirectorySnapshot; var date: TimeInterval }
+    private var values: [Key: Value] = [:]
+    private var order: [Key] = []
+    private let capacity: Int
+    private let maximumEntries: Int
+    private let lifetime: TimeInterval
+    init(capacity: Int = 4, maximumEntries: Int = 1000, lifetime: TimeInterval = 15) {
+        self.capacity = max(1, capacity); self.maximumEntries = max(1, maximumEntries)
+        self.lifetime = max(0, lifetime)
+    }
+    func insert(_ snapshot: HubDirectorySnapshot, for key: Key, now: TimeInterval = ProcessInfo.processInfo.systemUptime) {
+        guard snapshot.entries.count <= maximumEntries else { values.removeValue(forKey: key); order.removeAll { $0 == key }; return }
+        values[key] = Value(snapshot: snapshot, date: now)
+        order.removeAll { $0 == key }; order.append(key)
+        while order.count > capacity { values.removeValue(forKey: order.removeFirst()) }
+    }
+    func snapshot(for key: Key, now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> HubDirectorySnapshot? {
+        guard let value = values[key] else { return nil }
+        guard now - value.date <= lifetime else { values.removeValue(forKey: key); order.removeAll { $0 == key }; return nil }
+        order.removeAll { $0 == key }; order.append(key)
+        return value.snapshot
+    }
+}

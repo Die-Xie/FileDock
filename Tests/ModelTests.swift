@@ -5,6 +5,13 @@ import Foundation
     @MainActor static func main() throws {
         let fm = FileManager.default
         var wakeSettings = HubSettings()
+        precondition(wakeSettings.appearance == "system" && wakeSettings.resolvedBackgroundTheme == "liquidGlass")
+        precondition(wakeSettings.hoverDelay == 0 && wakeSettings.resolvedAutoHideDelay == 0 && wakeSettings.switchDelay == 0.1)
+        precondition(wakeSettings.resolvedAnimationSpeed == 1.3 && wakeSettings.resolvedNotchIntegrationStyle == "embedded")
+        precondition(wakeSettings.width == 683 && wakeSettings.height == 400 && wakeSettings.launchAtLogin)
+        precondition(wakeSettings.resolvedQQMusicEnabled && wakeSettings.resolvedFavoriteShortcutEnabled && wakeSettings.resolvedStagingEnabled)
+        precondition(!wakeSettings.resolvedFoldersFirst && wakeSettings.favoriteWorkspaceID == nil && wakeSettings.stagingWorkspaceID == nil,
+                     "Factory preferences must not contain a user's workspace identity")
         precondition(!wakeSettings.usesNotchClickToWake)
         wakeSettings.notchClickToWake = true
         precondition(wakeSettings.usesNotchClickToWake)
@@ -58,6 +65,11 @@ import Foundation
 
         let storage = base.appendingPathComponent("settings/config.json")
         let model = makeTestModel(storageURL: storage, monitor: false)
+        precondition(model.isInitialConfiguration && model.sortKey == .modified && !model.ascending)
+        // These navigation/reordering fixtures use a deterministic named baseline.
+        model.sortKey = .name
+        model.ascending = true
+        model.settings.foldersFirst = true
         let workspace = model.addWorkspace(name: "Fixtures", symbol: "folder", mode: .folder, urls: [source])
         precondition(model.currentURL == source && model.entries.count == 2)
         model.settings.fontSize = 17
@@ -65,7 +77,7 @@ import Foundation
         model.settings.notchIntegrationStyle = "embedded"
         model.settings.qqMusicEnabled = false
         model.settings.autoHideDelay = 1.25
-        precondition(model.settings.resolvedBackgroundTheme == "solid")
+        precondition(model.settings.resolvedBackgroundTheme == "liquidGlass")
         model.settings.backgroundTheme = "liquidGlass"
         model.settings.appearance = "system"
         for savedAppearance in ["system", "light", "dark"] {
@@ -157,6 +169,7 @@ import Foundation
         precondition(model.visibleEntries.count == 1)
         model.save()
         let reloaded = makeTestModel(storageURL: storage, monitor: false)
+        precondition(!reloaded.isInitialConfiguration)
         precondition(reloaded.settings.fontSize == 17, "Nested settings change must persist")
         precondition(reloaded.settings.resolvedBackgroundTheme == "liquidGlass" && reloaded.settings.appearance == "system",
                      "Glass theme and the saved solid-theme appearance must survive relaunch")
@@ -179,11 +192,15 @@ import Foundation
         legacy.removeValue(forKey: "qqMusicEnabled")
         legacy.removeValue(forKey: "autoHideDelay")
         legacy.removeValue(forKey: "notchIntegrationStyle")
+        legacy.removeValue(forKey: "backgroundTheme")
+        legacy.removeValue(forKey: "foldersFirst")
         let oldSettings = try JSONDecoder().decode(HubSettings.self, from: JSONSerialization.data(withJSONObject: legacy))
         precondition(oldSettings.resolvedAnimationSpeed == 1 && oldSettings.resolvedQQMusicEnabled,
                      "Configs saved before music/speed settings must continue to load")
         precondition(oldSettings.resolvedAutoHideDelay == 0.55, "Older configs must retain the previous 550ms exit delay")
         precondition(oldSettings.notchIntegrationStyle == nil && oldSettings.resolvedNotchIntegrationStyle == "connected", "Older configs must retain the existing connected notch style")
+        precondition(oldSettings.resolvedBackgroundTheme == "solid" && oldSettings.resolvedFoldersFirst,
+                     "New factory defaults must not change missing legacy settings")
         var malformed = HubSettings()
         for (value, expected) in [("embedded", "embedded"), ("connected", "connected"), ("unknown", "connected"), ("", "connected")] {
             malformed.notchIntegrationStyle = value
@@ -225,8 +242,10 @@ import Foundation
         let model = makeTestModel(storageURL: storage, monitor: false)
         let workspace = model.addWorkspace(name: "Sort", mode: .folder, urls: [root])
         model.sortKey = .name; model.ascending = true
+        precondition(!model.settings.resolvedFoldersFirst, "New installs start with mixed folder/file sorting")
+        model.settings.foldersFirst = true
         precondition(model.settings.resolvedFoldersFirst && model.visibleEntries.map(\.name) == ["z-folder", "a-file.txt"],
-                     "Existing settings retain folders-first sorting by default")
+                     "Enabling folders-first groups directories before the selected sort column")
         model.settings.foldersFirst = false
         precondition(model.visibleEntries.map(\.name) == ["a-file.txt", "z-folder"], "Disabling grouping interleaves folders and files by the selected column")
         model.sortByColumn(.name)

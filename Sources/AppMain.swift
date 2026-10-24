@@ -106,7 +106,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
             self?.setPanelLevel(.normal)
         }.store(in: &subscriptions)
         music.setEnabled(model.settings.resolvedQQMusicEnabled)
-        model.settings.launchAtLogin = SMAppService.mainApp.status == .enabled
+        if model.isInitialConfiguration && model.settings.launchAtLogin && fixture == nil && !demo {
+            setLoginItem(true)
+        } else { model.settings.launchAtLogin = SMAppService.mainApp.status == .enabled }
         NSApp.setActivationPolicy(.accessory)
         configureMainMenu()
         configurePanel()
@@ -169,6 +171,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         bridgePanel.contentView = bridgeView
         bridgeView.configure(sourceWidth: 186, bodyColor: bodyColor, reduceMotion: reduceMotion)
         bridgeView.setPresented(false, animated: false) {}
+        let animationChanged: () -> Void = { [weak self] in
+            guard let self else { return }
+            self.presentation.setSurfaceAnimating(self.surface.isAnimating || self.bridgeView.isAnimating)
+        }
+        surface.animationStateChanged = animationChanged
+        bridgeView.animationStateChanged = animationChanged
         surface.effectiveAppearanceDidChange = { [weak self] in self?.updateSurfaceStyle() }
         HubWindowPresentation.backgroundWindows = { [weak self] in
             guard let self else { return [] }
@@ -218,7 +226,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
     private func configureMenuBar() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = statusItem.button {
-            button.image = NSImage(systemSymbolName: "folder.badge.gearshape", accessibilityDescription: "FileDock")
+            button.image = FileDockMenuBarIcon.make()
             button.image?.isTemplate = true
             button.toolTip = "FileDock · 右键打开菜单"
             button.target = self
@@ -482,7 +490,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
             // postpone the first animation frame after the hover deadline.
             guard !self.hasActiveDialog else { return }
             self.lastRefresh = Date()
-            self.model.refresh()
+            self.model.refreshInBackground()
         }
         NSApp.activate(ignoringOtherApps: true)
         hoverDismissal.reset()
@@ -642,10 +650,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         attachedToNotch = false
         anchoredCorner = nil
         cornerKeepAliveFrame = nil
+        presentation.beginWindowMove(pinned: model.pinned)
         model.pinned = windowAttachment.didDetach(currentlyPinned: model.pinned)
         hoverDismissal.reset()
         panel.allowsScreenTopOverlap = false
-        presentation.header = .init()
         updatePanelLevel()
         bridgePanel.orderOut(nil)
         bridgeView.setPresented(false, animated: false) {}
@@ -654,13 +662,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
     }
 
     private func finishWindowDragIfReleased() {
-        guard let session = windowDragSession else { return }
+        guard let session = windowDragSession else {
+            if presentation.windowMoving && NSEvent.pressedMouseButtons & 1 == 0 { presentation.endWindowMove(reduceMotion: reduceMotion) }
+            return
+        }
         guard (NSEvent.pressedMouseButtons & 1) == 0 else { windowDragReleased = false; return }
         // performDrag returns immediately and may not deliver mouseUp. The
         // common-mode timer observes release, then lets the final frame settle.
         guard windowDragReleased else { windowDragReleased = true; return }
         windowDragSession = nil
         windowDragReleased = false
+        presentation.endWindowMove(reduceMotion: reduceMotion)
         guard desiredVisible, !attachedToNotch, anchoredCorner == nil, !hasActiveDialog, let screen = panel.screen else { return }
         let moved = panel.frame.origin != session.origin
         if !moved, let corner = session.corner {

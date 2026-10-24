@@ -29,9 +29,29 @@ struct HubFolderAppearance: Hashable, Sendable {
 
 /// Cache only the current icon revision for each path. Finder changes metadata
 /// without necessarily changing the file's contents or modification date.
-@MainActor final class HubFileIconUpdates: ObservableObject {
-    static let shared = HubFileIconUpdates()
-    @Published fileprivate(set) var generation: UInt64 = 0
+@MainActor enum HubFileIconUpdates {
+    static let changes = PassthroughSubject<Set<String>, Never>()
+    private static var changed = Set<String>()
+    private static var scheduled = false
+    private static var paused = false
+    static func setPaused(_ value: Bool) {
+        paused = value
+        if !value { schedule() }
+    }
+    static func mark(_ path: String) {
+        changed.insert(path)
+        schedule()
+    }
+    private static func schedule() {
+        guard !paused, !changed.isEmpty, !scheduled else { return }
+        scheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.016) {
+            scheduled = false
+            guard !paused else { return }
+            let paths = changed; changed = []
+            changes.send(paths)
+        }
+    }
 }
 
 @MainActor
@@ -77,6 +97,7 @@ enum HubFileIconCache {
         // Drag tracking must not synchronously ask the file provider for every
         // newly revealed file's custom icon. Restore detailed icons on release.
         if prefersLightweight {
+            if let old = cache.object(forKey: key) { return old.image }
             let type: UTType = entry.isDirectory && !entry.isPackage ? .folder : UTType(filenameExtension: entry.url.pathExtension) ?? .data
             let genericKey = type.identifier as NSString
             if let image = genericCache.object(forKey: genericKey) { return image }
@@ -94,13 +115,14 @@ enum HubFileIconCache {
                 url.removeAllCachedResourceValues()
                 let effective = (try? url.resourceValues(forKeys: [.effectiveIconKey]))?.effectiveIcon as? NSImage
                 let original = effective ?? NSWorkspace.shared.icon(forFile: path)
+                let bitmap = rasterized(original) ?? original
                 Task { @MainActor in
                     outstanding -= 1
                     guard pending[path] == token else { return }
                     pending.removeValue(forKey: path)
-                    let image = customizedFolder(rasterized(original) ?? original, entry: entry)
+                    let image = customizedFolder(bitmap, entry: entry)
                     cache.setObject(CachedIcon(revision: revision, image: image), forKey: path as NSString, cost: 256 * 256 * 4)
-                    HubFileIconUpdates.shared.generation &+= 1
+                    HubFileIconUpdates.mark(path)
                 }
             }
         }
@@ -148,7 +170,7 @@ enum HubFileIconCache {
         return result
     }
 
-    private static func rasterized(_ image: NSImage) -> NSImage? {
+    nonisolated private static func rasterized(_ image: NSImage) -> NSImage? {
         var rect = NSRect(x: 0, y: 0, width: 256, height: 256)
         guard let source = image.cgImage(forProposedRect: &rect, context: nil, hints: nil),
               let context = CGContext(data: nil, width: 256, height: 256, bitsPerComponent: 8,

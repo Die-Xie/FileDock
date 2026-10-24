@@ -56,7 +56,8 @@ final class HubNotchSurface: NSView {
     private var measuredSize = NSSize.zero
     private weak var shadowWindow: NSWindow?
     private var shadowBeforeAnimation: Bool?
-    private(set) var isAnimating = false
+    var animationStateChanged: (() -> Void)?
+    private(set) var isAnimating = false { didSet { if oldValue != isAnimating { animationStateChanged?() } } }
 
     init(contentView: NSView) {
         hostedContent = contentView
@@ -313,7 +314,8 @@ final class HubNotchBridgeView: NSView {
     private var presented = false
     private var generation: UInt64 = 0
     private var liquidGlass = false
-    private(set) var isAnimating = false
+    var animationStateChanged: (() -> Void)?
+    private(set) var isAnimating = false { didSet { if oldValue != isAnimating { animationStateChanged?() } } }
     override var isOpaque: Bool { false }
 
     override init(frame frameRect: NSRect) {

@@ -59,6 +59,7 @@ private final class BlockedRead: @unchecked Sendable {
         for _ in 0..<30 { model.refreshInBackground() }
         precondition(blocked.starts == starts, "Periodic refresh must not retry a timed-out directory forever")
         model.selectWorkspace(healthyWorkspace.id)
+        precondition(model.entries.map(\.url) == [file], "Revisiting a warm tab must restore its snapshot immediately, before the fresh asynchronous read")
         try await wait { !model.directoryLoading }
         precondition(model.entries.map(\.url) == [file])
         blocked.gate.signal()

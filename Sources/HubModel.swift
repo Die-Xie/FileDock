@@ -59,38 +59,38 @@ enum HotCorner: String, Codable, CaseIterable, Identifiable {
 }
 
 struct HubSettings: Codable, Equatable {
-    var appearance: String = "dark"
-    var backgroundTheme: String? = nil
+    var appearance: String = "system"
+    var backgroundTheme: String? = "liquidGlass"
     var fontSize: Double = 13
     var iconSize: Double = 46
     var horizontalScroll = false
     var showScrollbar = true
-    var notchClickToWake: Bool? = nil
+    var notchClickToWake: Bool? = false
     var usesNotchClickToWake: Bool { hotCorner == "notch" && notchClickToWake == true }
-    var hoverDelay: Double = 0.12
-    var autoHideDelay: Double? = nil
+    var hoverDelay: Double = 0
+    var autoHideDelay: Double? = 0
     var globalShortcuts: HubGlobalShortcuts? = nil
-    var animationSpeed: Double? = nil
-    var notchIntegrationStyle: String? = nil
-    var qqMusicEnabled: Bool? = nil
+    var animationSpeed: Double? = 1.3
+    var notchIntegrationStyle: String? = "embedded"
+    var qqMusicEnabled: Bool? = true
     var favoriteWorkspaceID: UUID? = nil
-    var favoriteShortcutEnabled: Bool? = nil
+    var favoriteShortcutEnabled: Bool? = true
     var blockedApplicationBundleIDs: [String]? = nil
     var suppressHoverInFullScreen: Bool? = nil
     var stagingWorkspaceID: UUID? = nil
-    var stagingEnabled: Bool? = nil
-    var foldersFirst: Bool? = nil
-    var switchDelay: Double = 0.2
+    var stagingEnabled: Bool? = true
+    var foldersFirst: Bool? = false
+    var switchDelay: Double = 0.1
     var triggerMode: String = "both"
     var hotCorner: String = "notch"
     var secondaryScreens = true
     var showMenuBarIcon = true
     var funAnimation = false
-    var width: Double = 900
-    var height: Double = 480
-    var launchAtLogin = false
+    var width: Double = 683
+    var height: Double = 400
+    var launchAtLogin = true
     var lightBackgroundHex = "F4F5F7"
-    var darkBackgroundHex = "191B20"
+    var darkBackgroundHex = "#1C1C1C"
 
     var resolvedGlobalShortcuts: HubGlobalShortcuts { globalShortcuts ?? .defaults }
     var resolvedBackgroundTheme: String { backgroundTheme == "liquidGlass" ? "liquidGlass" : "solid" }
@@ -279,11 +279,11 @@ enum HubFileOperations {
     @Published var entries: [FileEntry] = []
     @Published var selectedIDs = Set<URL>()
     @Published var search = ""
-    @Published var sortKey: SortKey = .name { didSet {
+    @Published var sortKey: SortKey = .modified { didSet {
         beginPersistenceTransaction(); defer { endPersistenceTransaction() }
         referenceManualOrder = false; if readyToSave { clearDirectoryOrder() }; persistIfReady()
     } }
-    @Published var ascending = true { didSet {
+    @Published var ascending = false { didSet {
         beginPersistenceTransaction(); defer { endPersistenceTransaction() }
         referenceManualOrder = false; if readyToSave { clearDirectoryOrder() }; persistIfReady()
     } }
@@ -305,6 +305,7 @@ enum HubFileOperations {
     private let configurationURL: URL
     private var bookmarkData: [String: Data] = [:]
     private var activeScopes: [URL] = []
+    private(set) var isInitialConfiguration = false
     private var readyToSave = false
     private var persistenceDepth = 0
     private var persistencePending = false
@@ -318,6 +319,17 @@ enum HubFileOperations {
     private let directoryLoader: HubDirectoryLoading
     private var activeDirectoryLoad: UUID?
     private var displayedDirectoryContext: RefreshContext?
+    private let directorySnapshots = HubDirectorySnapshotCache<DirectorySnapshotKey>()
+    private struct DirectorySnapshotKey: Hashable {
+        var workspaceID: UUID?
+        var directory: URL?
+        var references: [String]
+        var hidden: Bool
+    }
+    private func snapshotKey(_ context: RefreshContext) -> DirectorySnapshotKey? {
+        guard context.directory != nil || workspaces.first(where: { $0.id == context.workspaceID })?.mode == .references else { return nil }
+        return DirectorySnapshotKey(workspaceID: context.workspaceID, directory: context.directory, references: context.references, hidden: context.showHiddenFiles)
+    }
     private var canonicalDirectoryPath: String?
     private var retryDirectoryNavigation: (url: URL, selecting: URL?)?
     @Published private(set) var directoryLoading = false
@@ -358,6 +370,7 @@ enum HubFileOperations {
             }
         }
 
+        isInitialConfiguration = !fm.fileExists(atPath: self.configurationURL.path)
         var loadedConfiguration = false
         if fm.fileExists(atPath: self.configurationURL.path) {
             do {
@@ -1048,6 +1061,7 @@ enum HubFileOperations {
                 commitNavigation?()
                 self.canonicalDirectoryPath = snapshot.canonicalDirectoryPath
                 self.displayedDirectoryContext = self.refreshContext
+                if let key = self.snapshotKey(self.refreshContext) { self.directorySnapshots.insert(snapshot, for: key) }
                 self.publishEntries(snapshot.entries)
             case .failure(let error):
                 self.directoryLoadMessage = error.localizedDescription
@@ -1084,7 +1098,14 @@ enum HubFileOperations {
         stopRecentFiles()
         let context = refreshContext
         if displayedDirectoryContext != context {
-            entries = []; lastSnapshot = []; selectedIDs = []; canonicalDirectoryPath = nil
+            selectedIDs = []
+            if let key = snapshotKey(context), let cached = directorySnapshots.snapshot(for: key) {
+                canonicalDirectoryPath = cached.canonicalDirectoryPath
+                displayedDirectoryContext = context
+                publishEntries(cached.entries)
+            } else {
+                entries = []; lastSnapshot = []; canonicalDirectoryPath = nil; displayedDirectoryContext = nil
+            }
         }
         beginDirectoryLoad(currentDirectoryRequest, context: context, reportErrors: reportErrors)
     }

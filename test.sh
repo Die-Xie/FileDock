@@ -126,3 +126,7 @@ swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache
     Sources/NativeFileDrag.swift Sources/NativeWorkspaceDrag.swift Sources/NativeFileDrop.swift Sources/FileDropFeedback.swift Tests/NativeDropHostingTests.swift -o .build/native-drop-hosting-tests \
     -framework AppKit -framework SwiftUI -framework UniformTypeIdentifiers
 .build/native-drop-hosting-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
+    Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/HubModel.swift Sources/DirectoryLoader.swift Sources/FileThumbnail.swift Sources/ThumbnailWorkQueue.swift Sources/PresentationState.swift Sources/MenuBarIcon.swift Tests/RenderingContinuityTests.swift -o .build/rendering-continuity-tests \
+    -framework AppKit -framework Carbon -framework Combine -framework UniformTypeIdentifiers -framework SwiftUI -framework QuickLookThumbnailing
+.build/rendering-continuity-tests
