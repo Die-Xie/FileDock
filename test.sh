@@ -30,7 +30,7 @@ swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache
     -framework ImageIO -framework UniformTypeIdentifiers -framework CoreGraphics
 .build/staging-import-tests
 swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
-    Sources/ImageImport.swift Sources/WebImageLoader.swift Sources/StagingImportStore.swift Sources/StagingDropReceiver.swift Tests/StagingDropTests.swift -o .build/staging-drop-tests \
+    Sources/ImageImport.swift Sources/ImportActivity.swift Sources/WebImageLoader.swift Sources/StagingImportStore.swift Sources/StagingDropReceiver.swift Tests/StagingDropTests.swift -o .build/staging-drop-tests \
     -framework ImageIO -framework UniformTypeIdentifiers -framework CoreGraphics
 .build/staging-drop-tests
 swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
@@ -82,7 +82,7 @@ swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache
     -framework AppKit -framework SwiftUI
 .build/workspace-shortcut-tests
 swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
-    Sources/NativeFileDrag.swift Sources/NativeWorkspaceDrag.swift Sources/MarqueeSelection.swift Tests/MarqueeSelectionTests.swift -o .build/marquee-tests \
+    Sources/NativeFileDrag.swift Sources/NativeWorkspaceDrag.swift Sources/MarqueeSelection.swift Sources/FileDropFeedback.swift Tests/MarqueeSelectionTests.swift -o .build/marquee-tests \
     -framework AppKit -framework SwiftUI -framework UniformTypeIdentifiers
 .build/marquee-tests
 swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
@@ -103,3 +103,26 @@ swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache
     Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/HubModel.swift Sources/DirectoryLoader.swift Tests/ModelTestSupport.swift Tests/DirectoryLoadingTests.swift -o .build/directory-loading-tests \
     -framework AppKit -framework Carbon -framework Combine -framework UniformTypeIdentifiers
 .build/directory-loading-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
+    Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/HubModel.swift Sources/DirectoryLoader.swift Tests/ModelTestSupport.swift Tests/CrossWorkspaceDropTests.swift -o .build/cross-workspace-drop-tests \
+    -framework AppKit -framework Carbon -framework Combine -framework UniformTypeIdentifiers
+.build/cross-workspace-drop-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
+    Sources/NativeFileDrag.swift Sources/NativeWorkspaceDrag.swift Sources/NativeFileDrop.swift Sources/FileDropFeedback.swift Tests/NativeFileDropTests.swift -o .build/native-drop-tests \
+    -framework AppKit -framework SwiftUI -framework UniformTypeIdentifiers
+.build/native-drop-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
+    Sources/FileDropBatch.swift Tests/FileDropBatchTests.swift -o .build/file-drop-batch-tests
+.build/file-drop-batch-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
+    Sources/UpdateRelaunchGate.swift Tests/UpdateRelaunchTests.swift -o .build/update-relaunch-tests
+.build/update-relaunch-tests
+TASK_SPARKLE="$(./scripts/fetch-sparkle.sh)"
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache -F "$TASK_SPARKLE" \
+    Sources/UpdateRelaunchGate.swift Sources/SoftwareUpdate.swift Tests/UpdaterAPITests.swift -o .build/updater-api-tests \
+    -framework AppKit -framework SwiftUI -framework Sparkle -Xlinker -rpath -Xlinker "$TASK_SPARKLE"
+.build/updater-api-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
+    Sources/NativeFileDrag.swift Sources/NativeWorkspaceDrag.swift Sources/NativeFileDrop.swift Sources/FileDropFeedback.swift Tests/NativeDropHostingTests.swift -o .build/native-drop-hosting-tests \
+    -framework AppKit -framework SwiftUI -framework UniformTypeIdentifiers
+.build/native-drop-hosting-tests

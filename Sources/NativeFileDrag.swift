@@ -61,11 +61,15 @@ enum HubFileDragData {
 @MainActor
 enum HubFileDragState {
     private(set) static var current: HubFileDragPayload?
+    private static weak var source: AnyObject?
+    private static var releasedAt: TimeInterval?
     private static var draggingPasteboard: NSPasteboard?
     private static var pasteboardChangeCount: Int?
     static var isDragging: Bool { current != nil }
 
-    static func begin(_ payload: HubFileDragPayload) {
+    static func begin(_ payload: HubFileDragPayload, source: AnyObject? = nil) {
+        self.source = source
+        releasedAt = nil
         current = payload
         draggingPasteboard = nil
         pasteboardChangeCount = nil
@@ -82,9 +86,41 @@ enum HubFileDragState {
     static func end(_ id: UUID) {
         guard current?.id == id else { return }
         current = nil
+        source = nil
+        releasedAt = nil
         draggingPasteboard = nil
         pasteboardChangeCount = nil
         NotificationCenter.default.post(name: hubFileDragDidEnd, object: nil)
+    }
+
+    /// AppKit can dismantle the source cell on a spring-loaded tab change.
+    /// Recover a missing end callback after release, never during a live drag.
+    static func reconcile(mousePressed: Bool, now: TimeInterval) {
+        guard let id = current?.id else { return }
+        if mousePressed { releasedAt = nil; return }
+        guard let releasedAt else { self.releasedAt = now; return }
+        if now - releasedAt >= 0.6 {
+            HubFileDragBridge.FileDragView.clearAbandoned(id)
+            end(id)
+        }
+    }
+
+    static func localPayload(source: AnyObject?, pasteboard: NSPasteboard) -> HubFileDragPayload? {
+        guard let source, self.source === source, draggingPasteboard?.name == pasteboard.name,
+              pasteboard.changeCount == pasteboardChangeCount else { return nil }
+        return validatedPayload()
+    }
+
+    private static func validatedPayload() -> HubFileDragPayload? {
+        guard let current, !current.urls.isEmpty, let draggingPasteboard,
+              draggingPasteboard.changeCount == pasteboardChangeCount,
+              let items = draggingPasteboard.pasteboardItems, items.count == current.urls.count else { return nil }
+        let tokenType = NSPasteboard.PasteboardType(hubFileDragType.identifier)
+        for (item, expected) in zip(items, current.urls) {
+            guard item.string(forType: tokenType) == current.id.uuidString,
+                  item.string(forType: .fileURL).flatMap(URL.init(string:))?.standardizedFileURL == expected.standardizedFileURL else { return nil }
+        }
+        return current
     }
 
     static func localPayload(for providers: [NSItemProvider]) -> HubFileDragPayload? {
@@ -152,6 +188,7 @@ struct HubFileDragBridge: NSViewRepresentable {
         }
         private var press: Press?
         private var activeID: UUID?
+        private var activeSession: NSDraggingSession?
         private var bypassHitTesting = false
         // Keep the source alive if a successful internal reorder recreates its
         // SwiftUI cell before AppKit sends the dragging-session completion.
@@ -204,17 +241,18 @@ struct HubFileDragBridge: NSViewRepresentable {
             let payload = press.payload
             activeID = payload.id
             Self.activeSource = self
-            HubFileDragState.begin(payload)
+            HubFileDragState.begin(payload, source: self)
             let point = convert(press.event.locationInWindow, from: nil)
             let items = payload.urls.enumerated().map { index, url -> NSDraggingItem in
                 let item = NSDraggingItem(pasteboardWriter: HubFileDragData.pasteboardItem(for: url, sessionID: payload.id))
-                let icon = NSWorkspace.shared.icon(forFile: url.path)
+                let icon = NSWorkspace.shared.icon(for: url.hasDirectoryPath ? .folder : .data)
                 icon.size = NSSize(width: 40, height: 40)
                 let offset = CGFloat(min(index, 5)) * 3
                 item.setDraggingFrame(NSRect(x: point.x - 20 + offset, y: point.y - 20 - offset, width: 40, height: 40), contents: icon)
                 return item
             }
             let session = beginDraggingSession(with: items, event: event, source: self)
+            activeSession = session
             HubFileDragState.bind(pasteboard: session.draggingPasteboard, for: payload.id)
             session.animatesToStartingPositionsOnCancelOrFail = true
             session.draggingFormation = .stack
@@ -247,13 +285,24 @@ struct HubFileDragBridge: NSViewRepresentable {
 
         func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation { [.copy, .move, .link] }
         func draggingSession(_ session: NSDraggingSession, willBeginAt screenPoint: NSPoint) {
+            guard activeSession == nil || activeSession === session else { return }
             if let activeID { HubFileDragState.bind(pasteboard: session.draggingPasteboard, for: activeID) }
         }
         func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
-            if let activeID { HubFileDragState.end(activeID) }
-            activeID = nil
+            guard activeSession === session, let activeID else { return }
+            HubFileDragState.end(activeID)
+            self.activeID = nil
+            activeSession = nil
             press = nil
             if Self.activeSource === self { Self.activeSource = nil }
+        }
+
+        static func clearAbandoned(_ id: UUID) {
+            guard let source = activeSource, source.activeID == id else { return }
+            source.activeID = nil
+            source.activeSession = nil
+            source.press = nil
+            activeSource = nil
         }
 
         func cancelPendingInteraction() {

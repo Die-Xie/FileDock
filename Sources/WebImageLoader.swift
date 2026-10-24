@@ -2,12 +2,15 @@ import Foundation
 
 /// Fetches a dropped web image without writing files or sharing browser credentials.
 @MainActor enum HubWebImageLoader {
+    private static var activeCount = 0
     @discardableResult
     static func fetch(url: URL, completion: @escaping (Result<Data, Error>) -> Void) -> URLSessionDataTask? {
         guard HubImageDownload.validURL(url) else {
             completion(.failure(HubImageDownloadError.invalidURL))
             return nil
         }
+        guard activeCount < 2 else { completion(.failure(HubImageDownloadError.busy)); return nil }
+        activeCount += 1
         let configuration = URLSessionConfiguration.ephemeral
         configuration.httpShouldSetCookies = false
         configuration.httpCookieStorage = nil
@@ -16,7 +19,10 @@ import Foundation
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         configuration.timeoutIntervalForRequest = 20
         configuration.timeoutIntervalForResource = 20
-        let delegate = HubImageDownload(completion: completion)
+        let delegate = HubImageDownload { result in
+            activeCount -= 1
+            completion(result)
+        }
         let queue = OperationQueue()
         queue.name = "FileDock.WebImageDownload"
         queue.maxConcurrentOperationCount = 1
@@ -31,9 +37,10 @@ import Foundation
 }
 
 private enum HubImageDownloadError: LocalizedError {
-    case invalidURL, invalidResponse, notImage, tooLarge, redirectLimit, emptyImage
+    case invalidURL, invalidResponse, notImage, tooLarge, redirectLimit, emptyImage, busy
     var errorDescription: String? {
         switch self {
+        case .busy: return "已有图片正在下载，请稍后重试。"
         case .invalidURL: return "图片地址必须是有效的 HTTP 或 HTTPS 地址，且不能包含登录凭据。"
         case .invalidResponse: return "图片服务器未返回成功响应。"
         case .notImage: return "此地址没有返回图片。"

@@ -9,9 +9,11 @@ import QuickLookThumbnailing
     let size: Double
     var allowsThumbnail = true
     var lightweight = false
+    @ObservedObject private var iconUpdates = HubFileIconUpdates.shared
     @StateObject private var loader = HubThumbnailLoader()
 
     var body: some View {
+        let _ = iconUpdates.generation
         Image(nsImage: loader.image ?? entry.icon)
             .resizable()
             .scaledToFit()
@@ -49,7 +51,7 @@ import QuickLookThumbnailing
 
     static func key(for entry: FileEntry, size: Double) -> String {
         let scale = min(2, NSScreen.main?.backingScaleFactor ?? 2)
-        return "\(entry.url.path)|\(entry.modified?.timeIntervalSince1970 ?? 0)|\(entry.size)|\(Int(requestSide(size) * scale))"
+        return "\(entry.url.path)|\(entry.modified?.timeIntervalSince1970 ?? 0)|\(entry.size)|\(entry.attributesModified?.timeIntervalSince1970 ?? 0)|\(Int(requestSide(size) * scale))"
     }
 
     func load(entry: FileEntry, size: Double, key: String) {

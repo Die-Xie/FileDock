@@ -34,6 +34,8 @@ final class HubPanel: NSPanel {
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @preconcurrency QLPreviewPanelDataSource, QLPreviewPanelDelegate {
     private var model: HubModel!
     private var music: HubQQMusicController!
+    private var updater: FileDockUpdater!
+    private var pendingTermination: Task<Void, Never>?
     private var panel: HubPanel!
     private var settingsWindow: NSWindow?
     private var statusItem: NSStatusItem!
@@ -92,6 +94,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         }
         model = HubModel(storageURL: fixture, demo: demo)
         music = HubQQMusicController()
+        updater = FileDockUpdater()
+        updater.filesBusy = { [weak self] in
+            guard let self else { return false }
+            return self.model.stagingTransferInProgress || self.model.fileOperationsInProgress > 0 ||
+                HubImportActivity.isBusy || HubFileDragState.isDragging || HubWorkspaceDragState.isDragging ||
+                HubMarqueeSelectionState.isSelecting || HubWindowPresentation.isPresentingDialog || NSApp.modalWindow != nil || NSApp.windows.contains { $0.attachedSheet != nil }
+        }
+        updater.$sessionInProgress.sink { [weak self] active in
+            guard active else { return }
+            self?.setPanelLevel(.normal)
+        }.store(in: &subscriptions)
         music.setEnabled(model.settings.resolvedQQMusicEnabled)
         model.settings.launchAtLogin = SMAppService.mainApp.status == .enabled
         NSApp.setActivationPolicy(.accessory)
@@ -181,6 +194,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         let preferences = NSMenuItem(title: "设置…", action: #selector(showSettings), keyEquivalent: ",")
         preferences.target = self
         appMenu.addItem(preferences)
+        let update = NSMenuItem(title: "检查更新…", action: #selector(checkForUpdates), keyEquivalent: "")
+        update.target = self
+        appMenu.addItem(update)
         appMenu.addItem(.separator())
         let hide = NSMenuItem(title: "收起窗口", action: #selector(hideApplicationWindows), keyEquivalent: "h")
         hide.target = self
@@ -218,6 +234,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
             menu.addItem(withTitle: "在光标位置显示", action: #selector(showAtCursor), keyEquivalent: "")
             menu.addItem(.separator())
             menu.addItem(withTitle: "设置…", action: #selector(showSettings), keyEquivalent: ",")
+            menu.addItem(withTitle: "检查更新…", action: #selector(checkForUpdates), keyEquivalent: "")
             menu.addItem(withTitle: "使用说明", action: #selector(showHelp), keyEquivalent: "")
             menu.addItem(.separator())
             menu.addItem(withTitle: "退出 FileDock", action: #selector(quit), keyEquivalent: "q")
@@ -601,6 +618,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
             if presentation.header.menuBarMayOverlap != embeddedAtNotch { presentation.header.menuBarMayOverlap = embeddedAtNotch }
             return
         }
+        if updater?.sessionInProgress == true { setPanelLevel(.normal); return }
         let level = HubWindowPresentation.browserLevel(embedded: embeddedAtNotch,
             auxiliaryVisible: settingsWindow?.isVisible == true || hasActiveDialog)
         setPanelLevel(level)
@@ -681,6 +699,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
     }
 
     private func tick() {
+        HubFileDragState.reconcile(mousePressed: NSEvent.pressedMouseButtons & 1 != 0, now: ProcessInfo.processInfo.systemUptime)
         guard let model, let panel else { return }
         finishWindowDragIfReleased()
         updatePanelLevel()
@@ -796,7 +815,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
     }
 
     private var hasActiveDialog: Bool {
-        HubWindowPresentation.isPresentingDialog || NSApp.modalWindow != nil || NSApp.windows.contains { $0.attachedSheet != nil }
+        updater?.sessionInProgress == true || HubWindowPresentation.isPresentingDialog || NSApp.modalWindow != nil || NSApp.windows.contains { $0.attachedSheet != nil }
     }
 
     private func applySettings() {
@@ -880,6 +899,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         else if anchoredCorner != nil { layoutCornerPanel(on: attachmentScreen) }
     }
 
+    @objc private func checkForUpdates() {
+        guard !HubWindowPresentation.isPresentingDialog, NSApp.modalWindow == nil else { return }
+        if QLPreviewPanel.sharedPreviewPanelExists() { QLPreviewPanel.shared()?.orderOut(nil) }
+        setPanelLevel(.normal)
+        updater.checkForUpdates()
+    }
+
     @objc func showSettings() {
         guard !hasActiveDialog else { return }
         if settingsWindow == nil {
@@ -890,7 +916,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
             window.collectionBehavior = [.fullScreenAuxiliary]
             window.isReleasedWhenClosed = false
             window.delegate = self
-            window.contentView = NSHostingView(rootView: HubSettingsView(model: model, music: music))
+            window.contentView = NSHostingView(rootView: HubSettingsView(model: model, music: music, updater: updater))
             window.center()
             settingsWindow = window
             settingsWindow?.appearance = panel.appearance
@@ -929,7 +955,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
 
     func showPreview(_ urls: [URL]) {
         guard !hasActiveDialog else { return }
-        previewURLs = urls.filter { FileManager.default.fileExists(atPath: $0.path) }
+        previewURLs = Array(urls.filter(\.isFileURL).prefix(20000))
         guard !previewURLs.isEmpty, let preview = QLPreviewPanel.shared() else { return }
         preview.dataSource = self
         preview.delegate = self
@@ -939,7 +965,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         preview.makeKeyAndOrderFront(nil)
     }
     func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int { previewURLs.count }
-    func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> QLPreviewItem! { previewURLs[index] as NSURL }
+    func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> QLPreviewItem! {
+        guard previewURLs.indices.contains(index) else { return nil }
+        return previewURLs[index] as NSURL
+    }
 
     private func share(_ urls: [URL]) {
         guard !hasActiveDialog else { return }
@@ -992,6 +1021,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         } completionHandler: { [weak self] in
             DispatchQueue.main.async { self?.funBadge?.orderOut(nil); self?.funBadge?.alphaValue = 1 }
         }
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // File transfers run off-main. Quitting (including install-on-quit)
+        // waits for actual writes instead of terminating halfway through a move.
+        guard model != nil, model.fileOperationsInProgress > 0 || model.stagingTransferInProgress || HubImportActivity.isBusy else { return .terminateNow }
+        if pendingTermination == nil {
+            pendingTermination = Task { [weak self] in
+                while let self, self.model.fileOperationsInProgress > 0 || self.model.stagingTransferInProgress || HubImportActivity.isBusy {
+                    do { try await Task.sleep(nanoseconds: 100_000_000) } catch { return }
+                }
+                guard self != nil, !Task.isCancelled else { return }
+                sender.reply(toApplicationShouldTerminate: true)
+            }
+        }
+        return .terminateLater
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }

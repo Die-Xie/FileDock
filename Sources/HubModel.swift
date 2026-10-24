@@ -168,13 +168,14 @@ struct FileEntry: Identifiable, Hashable, Sendable {
     let attributesModified: Date?
     let labelNumber: Int
     let tagNames: [String]
+    let folderAppearance: HubFolderAppearance
     let exists: Bool
     @MainActor var icon: NSImage { HubFileIconCache.image(for: self) }
     /// Includes every displayed property, including Finder labels and custom-icon changes.
     var snapshotSignature: String {
         func timestamp(_ date: Date?) -> String { date.map { String($0.timeIntervalSinceReferenceDate) } ?? "nil" }
         let fields = [url.path, name, String(isDirectory), String(isPackage), String(size), kind,
-                      timestamp(created), timestamp(modified), timestamp(added), timestamp(attributesModified), String(labelNumber), String(exists)] + tagNames
+                      timestamp(created), timestamp(modified), timestamp(added), timestamp(attributesModified), String(labelNumber), String(exists), String(folderAppearance.customIcon), folderAppearance.customization.base64EncodedString()] + tagNames
         return fields.map { "\($0.utf8.count):\($0)" }.joined()
     }
     var canNavigate: Bool { isDirectory && !isPackage }
@@ -199,6 +200,7 @@ struct FileEntry: Identifiable, Hashable, Sendable {
         attributesModified = values?.attributeModificationDate
         labelNumber = values?.labelNumber ?? 0
         tagNames = (values?.tagNames ?? []).sorted()
+        folderAppearance = isDirectory && !isPackage ? HubFolderAppearance.read(freshURL) : HubFolderAppearance()
     }
 }
 
@@ -297,6 +299,7 @@ enum HubFileOperations {
     @Published private(set) var recentFilesLoading = false
     @Published private(set) var recentFilesMessage: String?
     @Published private(set) var stagingTransferInProgress = false
+    @Published private(set) var fileOperationsInProgress = 0
 
     private let fm = FileManager.default
     private let configurationURL: URL
@@ -307,6 +310,7 @@ enum HubFileOperations {
     private var persistencePending = false
     private var deferringInteractiveResize = false
     private var transferScopeURLs: [URL] = []
+    private var dropScopeURLs: [UUID: [URL]] = [:]
     private(set) var configurationWriteCount = 0
     private static let maximumConfigurationBytes = 16 * 1024 * 1024
     private var refreshTimer: Timer?
@@ -477,6 +481,8 @@ enum HubFileOperations {
         if sortKey == key && !isManualEntryOrder { ascending.toggle() }
         else { sortKey = key; ascending = true }
     }
+
+    var fileOrderURLs: [URL] { orderedEntries.map(\.url) }
 
     private var directoryOrderPath: String { canonicalDirectoryPath ?? currentURL?.standardizedFileURL.path ?? "" }
 
@@ -717,7 +723,16 @@ enum HubFileOperations {
             updated[index].referencePaths = uniquePaths(updated[index].referencePaths.map(relocated))
             if let root = updated[index].rootPath { updated[index].rootPath = relocated(root) }
             if let orders = updated[index].directoryOrders {
-                updated[index].directoryOrders = Dictionary(orders.map { (relocated($0.key), $0.value) }, uniquingKeysWith: { first, _ in first })
+                let oldPath = HubFileOperations.canonical(source).path
+                let newPath = HubFileOperations.canonical(destination).path
+                let moves: (String) -> Bool = { $0 == oldPath || (includingChildren && $0.hasPrefix(oldPath + "/")) }
+                var migrated = orders.filter { !moves($0.key) }
+                // Source order wins over stale metadata at the new path,
+                // independent of Dictionary iteration order.
+                for (path, names) in orders where moves(path) {
+                    migrated[newPath + String(path.dropFirst(oldPath.count))] = names
+                }
+                updated[index].directoryOrders = migrated
             }
         }
         workspaces = updated
@@ -1162,24 +1177,12 @@ enum HubFileOperations {
             if entry.url == target { return }
             let parentPath = HubFileOperations.canonical(entry.url.deletingLastPathComponent()).path
             let symbolicLink = (try? entry.url.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true
-            let oldDirectoryPath = entry.canNavigate && !symbolicLink ? HubFileOperations.canonical(entry.url).path : nil
             try fm.moveItem(at: entry.url, to: target)
+            relocateReferences(from: entry.url, to: target, includingChildren: entry.canNavigate && !symbolicLink)
             for index in workspaces.indices {
-                workspaces[index].referencePaths = workspaces[index].referencePaths.map { $0 == entry.url.path ? target.path : $0 }
-                if workspaces[index].rootPath == entry.url.path { workspaces[index].rootPath = target.path }
                 if var orders = workspaces[index].directoryOrders {
                     if let names = orders[parentPath] {
                         orders[parentPath] = names.filter { $0 != name }.map { $0 == entry.url.lastPathComponent ? name : $0 }
-                    }
-                    if let oldDirectoryPath {
-                        let newDirectoryPath = HubFileOperations.canonical(target).path
-                        let isSource: (String) -> Bool = { $0 == oldDirectoryPath || $0.hasPrefix(oldDirectoryPath + "/") }
-                        var migrated = orders.filter { !isSource($0.key) }
-                        for (path, names) in orders where isSource(path) {
-                            let newPath = newDirectoryPath + String(path.dropFirst(oldDirectoryPath.count))
-                            migrated[newPath] = names
-                        }
-                        orders = migrated
                     }
                     workspaces[index].directoryOrders = orders
                 }
@@ -1221,6 +1224,101 @@ enum HubFileOperations {
         refresh()
         if !failures.isEmpty { throw HubFileError.partial(failures) }
         return true
+    }
+
+    /// A drop captures its destination at release. Subsequent spring navigation
+    /// never redirects files or rejects a legitimate asynchronous transfer.
+    @discardableResult
+    func acceptFileDrop(_ urls: [URL], workspaceID: UUID?, directory: URL?, copy: Bool,
+                        insertionOrder: [URL]? = nil, before: URL? = nil) -> Bool {
+        guard let index = workspaces.firstIndex(where: { $0.id == workspaceID }), workspaces[index].mode != .recents,
+              !urls.isEmpty, urls.count <= 20000, fileOperationsInProgress < 3 else { return false }
+        let files = urls.filter(\.isFileURL).map(\.standardizedFileURL)
+        guard !files.isEmpty else { return false }
+        if directory == nil && workspaceID == settings.stagingWorkspaceID {
+            let accepted = stageFiles(files)
+            if accepted, let insertionOrder {
+                recordDropInsertion(files, workspaceID: workspaceID, directoryPath: nil, priorOrder: insertionOrder, before: before)
+                if isStagingRoot { refresh() }
+            }
+            return accepted
+        }
+        if directory == nil && workspaces[index].mode == .references {
+            beginPersistenceTransaction(); defer { endPersistenceTransaction() }
+            let paths = uniquePaths(workspaces[index].referencePaths + files.map(\.path))
+            guard paths.count <= 20000 else { errorMessage = "合集最多可容纳 20000 个项目。"; return false }
+            files.forEach(remember)
+            workspaces[index].referencePaths = paths
+            if let insertionOrder { recordDropInsertion(files, workspaceID: workspaceID, directoryPath: nil, priorOrder: insertionOrder, before: before) }
+            if selectedWorkspaceID == workspaceID { refresh() }
+            return true
+        }
+        guard let directory else { return false }
+        let orderPath = selectedWorkspaceID == workspaceID && currentURL?.standardizedFileURL == directory.standardizedFileURL
+            ? directoryOrderPath : directory.standardizedFileURL.path
+        let operationID = UUID()
+        dropScopeURLs[operationID] = files + [directory]
+        files.forEach(remember); remember(directory)
+        fileOperationsInProgress += 1
+        Task { @MainActor in
+            defer { fileOperationsInProgress -= 1; dropScopeURLs.removeValue(forKey: operationID); persistIfReady() }
+            let result = await Task.detached(priority: .userInitiated) {
+                var completed: [(URL, URL, Bool)] = [], failures: [String] = []
+                // Collapse selected children only on the worker; resolving a
+                // provider-backed folder must never block the drag event loop.
+                let unique = Array(Set(files)).sorted { $0.path.count < $1.path.count }
+                var roots = Set<String>()
+                for source in unique {
+                    var parent = source.deletingLastPathComponent()
+                    var nested = false
+                    while parent.path != source.path {
+                        if roots.contains(parent.path) { nested = true; break }
+                        if parent.path == "/" { break }
+                        parent.deleteLastPathComponent()
+                    }
+                    if nested { continue }
+                    let values = try? source.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+                    let directorySource = values?.isDirectory == true && values?.isSymbolicLink != true
+                    if directorySource { roots.insert(source.path) }
+                    do { completed.append((source, try HubFileOperations.transfer(source, to: directory, copy: copy), directorySource)) }
+                    catch { failures.append("\(source.lastPathComponent)：\(error.localizedDescription)") }
+                }
+                let positions = Dictionary(files.enumerated().map { ($0.element.path, $0.offset) }, uniquingKeysWith: min)
+                completed.sort { positions[$0.0.path, default: .max] < positions[$1.0.path, default: .max] }
+                return (completed, failures)
+            }.value
+            beginPersistenceTransaction(); defer { endPersistenceTransaction() }
+            if !copy {
+                for (source, target, children) in result.0 where source != target {
+                    relocateReferences(from: source, to: target, includingChildren: children)
+                }
+            }
+            if let insertionOrder, !result.0.isEmpty {
+                recordDropInsertion(result.0.map { $0.1 }, workspaceID: workspaceID, directoryPath: orderPath, priorOrder: insertionOrder, before: before)
+            }
+            refreshInBackground()
+            if !result.1.isEmpty { errorMessage = result.1.joined(separator: "\n") }
+        }
+        return true
+    }
+
+    private func recordDropInsertion(_ urls: [URL], workspaceID: UUID?, directoryPath: String?, priorOrder: [URL], before: URL?) {
+        guard let index = workspaces.firstIndex(where: { $0.id == workspaceID }) else { return }
+        func key(_ url: URL) -> String { directoryPath == nil ? url.standardizedFileURL.path : url.lastPathComponent }
+        var seen = Set<String>()
+        let inserted = urls.map(key).filter { seen.insert($0).inserted }
+        let moving = Set(inserted)
+        let current = directoryPath.flatMap { workspaces[index].directoryOrders?[$0] } ?? (directoryPath == nil ? workspaces[index].referencePaths : priorOrder.map(key))
+        seen = []
+        var result = (current + priorOrder.map(key)).filter { !moving.contains($0) && seen.insert($0).inserted }
+        let position = before.map(key).flatMap { result.firstIndex(of: $0) } ?? result.endIndex
+        result.insert(contentsOf: inserted, at: position)
+        if let directoryPath {
+            var orders = workspaces[index].directoryOrders ?? [:]
+            orders[directoryPath] = result; workspaces[index].directoryOrders = orders
+        } else {
+            workspaces[index].referencePaths = result; referenceManualOrder = true
+        }
     }
 
     func pasteFiles(copy: Bool = true) {
@@ -1345,7 +1443,7 @@ enum HubFileOperations {
 
     private func pruneUnusedBookmarks() {
         var paths = workspaces.flatMap { $0.referencePaths + [$0.rootPath, $0.customIconPath].compactMap { $0 } }
-        paths += (history + transferScopeURLs + [currentURL].compactMap { $0 }).map(\.path)
+        paths += (history + transferScopeURLs + dropScopeURLs.values.flatMap { $0 } + [currentURL].compactMap { $0 }).map(\.path)
         // A folder bookmark may be the only authorization for a retained child.
         // Building ancestor membership once avoids bookmarks × references scans.
         var neededAncestors = Set<String>()

@@ -14,7 +14,38 @@ struct StagingDropTests {
         try await mixedProvidersAndTemporaryLifetime(root)
         try await serializedLoading(root)
         try await svgDocuments(root)
+        try await timeoutAndAdmission(root)
         print("PASS: staging drop references, raw/web images, temporary file/folder representations, partial failure and serial loading")
+    }
+
+    @MainActor private static func timeoutAndAdmission(_ root: URL) async throws {
+        try await wait { !HubImportActivity.isBusy }
+        let gate = DataLoadGate(), image = try tinyPNG()
+        let provider = NSItemProvider()
+        provider.registerDataRepresentation(forTypeIdentifier: UTType.png.identifier, visibility: .all) { completion in
+            gate.hold(completion); return nil
+        }
+        let store = HubStagingImportStore(rootURL: root.appendingPathComponent("timeout-imports"))
+        var calls = 0
+        precondition(HubStagingDropReceiver.receive([provider], store: store, fetch: { _, _ in }, timeout: 0.08) { urls, failures in
+            calls += 1
+            precondition(urls.isEmpty && !failures.isEmpty)
+        })
+        try await wait { gate.started }
+        try await wait { calls == 1 && !HubImportActivity.isBusy }
+        gate.release(image)
+        try await Task.sleep(nanoseconds: 100_000_000)
+        precondition(calls == 1 && !FileManager.default.fileExists(atPath: store.rootURL.path), "A timed-out provider must not materialize late data")
+        let first = HubImportActivity.begin()!, second = HubImportActivity.begin()!
+        precondition(HubImportActivity.begin() == nil)
+        HubImportActivity.end(second)
+        let lease = HubImportLease(id: first)
+        precondition(lease.beginWrite())
+        lease.close()
+        precondition(HubImportActivity.isBusy && !lease.beginWrite())
+        lease.endWrite()
+        try await wait { !HubImportActivity.isBusy }
+        precondition(!HubStagingDropReceiver.receive(Array(repeating: provider, count: 129), store: store) { _, _ in })
     }
 
     @MainActor private static func svgDocuments(_ root: URL) async throws {

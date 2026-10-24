@@ -50,8 +50,10 @@ struct HubView: View {
     @State private var dropTargeted = false
     @State private var stagingDropTargeted = false
     @State private var fileDropTarget: URL?
+    @State private var fileDropFeedback: HubFileDropFeedback?
     @State private var hoveredWorkspace: UUID?
     @State private var hoverTask: DispatchWorkItem?
+    @StateObject private var parentDirectory = HubParentDirectory()
     @StateObject private var workspaceSpringLoader = HubWorkspaceSpringLoader()
     @State private var workspaceRevealPointer: NSPoint?
     @State private var workspaceControlsWidth: CGFloat = 0
@@ -72,6 +74,13 @@ struct HubView: View {
                     Spacer()
                 }.padding(.horizontal, 16).padding(.vertical, 7)
             }
+            if model.fileOperationsInProgress > 0 {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("正在转移文件（\(model.fileOperationsInProgress) 项任务）…").font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                }.padding(.horizontal, 16).padding(.vertical, 7)
+            }
             if let message = model.directoryLoadMessage {
                 HStack(spacing: 10) {
                     Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange)
@@ -83,8 +92,9 @@ struct HubView: View {
             if model.isStagingRoot { stagingActions }
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .overlay(RoundedRectangle(cornerRadius: 10).stroke(dropTargeted && !model.isRecentsRoot ? Color.accentColor : .clear, lineWidth: 2).padding(4))
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(dropTargeted && fileDropFeedback == nil && !model.isRecentsRoot ? Color.accentColor : .clear, lineWidth: 2).padding(4))
                 .onDrop(of: [hubFileDragType, .fileURL, .image, .url, .item], isTargeted: $dropTargeted) { receiveDrop($0, destination: model.currentURL) }
+                .transformAnchorPreference(key: HubFileDropRegionKey.self, value: .bounds) { regions, anchor in regions[.content] = anchor }
             Divider().opacity(0.45)
             if embeddedMusicLayout.placement == .bottom {
                 HubQQMusicBar(controller: music)
@@ -95,10 +105,22 @@ struct HubView: View {
         .font(.system(size: model.settings.fontSize))
         .background(backgroundColor)
         .background(HubKeyMonitor(handler: handleKey))
+        .overlayPreferenceValue(HubFileDropRegionKey.self) { anchors in
+            GeometryReader { geometry in
+                let regions = anchors.mapValues { geometry[$0] }
+                let frames = Dictionary(uniqueKeysWithValues: regions.compactMap { key, frame -> (URL, CGRect)? in
+                    if case .item(let url) = key { return (url, frame) }; return nil
+                })
+                nativeFileDrop(regions: regions, frames: frames)
+                    .frame(width: geometry.size.width, height: geometry.size.height)
+                if let feedback = fileDropFeedback { feedback.overlay(in: geometry.size) }
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: hubFileDragDidEnd)) { _ in
             presentation.setFileDragActive(false)
             workspaceSpringLoader.cancel()
             fileDropTarget = nil
+            fileDropFeedback = nil
             dropTargeted = false
             stagingDropTargeted = false
         }
@@ -191,7 +213,7 @@ struct HubView: View {
                                 .frame(width: layout.rightViewportWidth, alignment: .leading).clipped()
                         }
                         HubWindowDragHandle().frame(width: layout.dragWidth, height: 30).help("拖动窗口")
-                        HStack(spacing: 8) { workspaceControls }
+                        HStack(spacing: 4) { workspaceControls }
                             .fixedSize()
                             .background(GeometryReader { controlsGeometry in
                                 Color.clear.preference(key: HubWorkspaceControlsWidthKey.self,
@@ -211,7 +233,7 @@ struct HubView: View {
             HStack(spacing: 8) {
                 workspaceLeading(model.tabWorkspaces)
                 HubWindowDragHandle().frame(minWidth: 32, maxWidth: .infinity, minHeight: 30, maxHeight: 30).help("拖动窗口")
-                workspaceControls
+                HStack(spacing: 4) { workspaceControls }.fixedSize()
             }.padding(.horizontal, 12).padding(.vertical, 10)
                 .padding(.top, presentation.header.embedded ? presentation.header.topInset : 0)
         }
@@ -228,6 +250,9 @@ struct HubView: View {
                 }.padding(.vertical, 3)
             }
             .contentShape(Rectangle()).clipped()
+            .transformAnchorPreference(key: HubFileDropRegionKey.self, value: .bounds) { regions, anchor in
+                for workspace in workspaces { regions[.tabViewport(workspace.id)] = anchor }
+            }
             .onHover { if !$0 { workspaceRevealPointer = nil } }
             .onAppear { revealSelectedWorkspace(in: workspaces, using: proxy) }
             .onChange(of: model.selectedWorkspaceID) { _ in revealSelectedWorkspace(in: workspaces, using: proxy) }
@@ -280,6 +305,7 @@ struct HubView: View {
                 .help("\(favorite.name) · 右键可隐藏快捷入口")
                 .onHover { shortcutHover($0, key: favorite.id, action: { model.selectWorkspace(favorite.id) }) }
                 .onDrop(of: HubWorkspaceFileDropDelegate.contentTypes, delegate: workspaceFileDrop(favorite))
+                .anchorPreference(key: HubFileDropRegionKey.self, value: .bounds) { [.workspace(favorite.id): $0] }
                 .contextMenu {
                     HubMenuButton("编辑收藏…", systemImage: "pencil") { editingWorkspace = favorite }
                     HubMenuButton("隐藏收藏快捷入口", systemImage: "eye.slash") { model.setFavoriteShortcutVisible(false) }
@@ -300,6 +326,7 @@ struct HubView: View {
                     canActivate: { presentation.previewVisible && model.settings.resolvedStagingEnabled && !HubWorkspaceDragState.isDragging },
                     activate: { if !model.isStagingWorkspace { model.openStagingWorkspace() } },
                     targeted: { stagingDropTargeted = $0; if $0 { presentation.setFileDragActive(true) } }, receive: receiveStagingDrop))
+                .anchorPreference(key: HubFileDropRegionKey.self, value: .bounds) { [.staging: $0] }
                 .contextMenu {
                     HubMenuButton("打开暂存区", systemImage: "tray") { model.openStagingWorkspace() }
                     if model.currentURL != nil {
@@ -330,10 +357,11 @@ struct HubView: View {
             Divider()
             HubMenuButton("文件夹工作区…", systemImage: "folder.badge.plus") { model.chooseWorkspace(mode: .folder) }
             HubMenuButton("文件与文件夹合集…", systemImage: "square.stack.3d.up") { model.chooseWorkspace(mode: .references) }
-        } label: { Image(systemName: "plus").font(.system(size: 14, weight: .medium)).frame(width: 28, height: 27) }
-            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+        } label: { Image(systemName: "plus").font(.system(size: 14, weight: .medium)).frame(width: HubWorkspaceShortcutLabel.width, height: HubWorkspaceShortcutLabel.height) }
+            .menuStyle(.borderlessButton).menuIndicator(.hidden)
+            .frame(width: HubWorkspaceShortcutLabel.width, height: HubWorkspaceShortcutLabel.height).clipped()
             .accessibilityLabel("添加工作区").help("添加工作区")
-        Button { onClose() } label: { Image(systemName: "xmark").font(.system(size: 10, weight: .semibold)).frame(width: 24, height: 24) }.buttonStyle(.plain).foregroundStyle(.secondary).help("收起 (Esc)")
+        Button { onClose() } label: { Image(systemName: "xmark").font(.system(size: 10, weight: .semibold)).frame(width: HubWorkspaceShortcutLabel.width, height: HubWorkspaceShortcutLabel.height) }.buttonStyle(.plain).foregroundStyle(.secondary).help("收起 (Esc)")
     }
 
     private var stagingActions: some View {
@@ -443,6 +471,88 @@ struct HubView: View {
             }
         ))
         .onDrop(of: HubWorkspaceFileDropDelegate.contentTypes, delegate: workspaceFileDrop(workspace))
+        .anchorPreference(key: HubFileDropRegionKey.self, value: .bounds) { [.workspace(workspace.id): $0] }
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(workspaceSpringLoader.target == workspace.id ? Color.accentColor : .clear, lineWidth: 2).allowsHitTesting(false))
+    }
+
+    /// A single native destination survives spring-loaded navigation. Header
+    /// and file cells only publish geometry; neither owns the file session.
+    private func nativeFileDrop(regions: [HubFileDropRegion: CGRect], frames: [URL: CGRect]) -> some View {
+        // Geometry and ordering belong to the same layout snapshot. Do not
+        // locale-sort the directory again for every draggingUpdated event.
+        let order = model.fileOrderURLs
+        return HubNativeFileDropBridge(enabled: presentation.previewVisible,
+            contains: { point in HubFileDropRegion.at(point, in: regions) != nil },
+            operation: { point, urls, payload, copy in
+                guard let region = HubFileDropRegion.at(point, in: regions) else { clearFileDrop(); return [] }
+                presentation.setFileDragActive(true)
+                let plan = fileDropPlan(region: region, point: point, frames: frames, content: regions[.content] ?? .zero, order: order, payload: payload, copy: copy)
+                if case .workspace(let id) = region {
+                    workspaceSpringLoader.enter(id, delay: model.settings.switchDelay,
+                        canActivate: { presentation.previewVisible && model.workspaces.contains(where: { $0.id == id }) },
+                        activate: { if model.selectedWorkspaceID != id { model.selectWorkspace(id) } })
+                } else if region == .staging {
+                    let id = model.settings.stagingWorkspaceID ?? stagingHoverID
+                    workspaceSpringLoader.enter(id, delay: model.settings.switchDelay,
+                        canActivate: { model.settings.resolvedStagingEnabled },
+                        activate: { if !model.isStagingWorkspace { model.openStagingWorkspace() } })
+                } else { workspaceSpringLoader.cancel() }
+                if stagingDropTargeted != (region == .staging) { stagingDropTargeted = region == .staging }
+                let item = region == .content ? plan?.item : nil
+                if fileDropTarget != item { fileDropTarget = item }
+                let targeted = region == .content && plan != nil
+                if dropTargeted != targeted { dropTargeted = targeted }
+                let feedback = plan.map { HubFileDropFeedback(rect: $0.slot?.rect ?? $0.item.flatMap { frames[$0] } ?? region.visibleFrame(in: regions),
+                    title: $0.title, count: urls.count, action: $0.action, insertion: $0.slot != nil) }
+                if fileDropFeedback != feedback { fileDropFeedback = feedback }
+                return plan?.action == .move || plan?.action == .reorder ? .move : plan == nil ? [] : .copy
+            }, exited: clearFileDrop,
+            receive: { urls, payload, point, copy in
+                guard let region = HubFileDropRegion.at(point, in: regions),
+                      let plan = fileDropPlan(region: region, point: point, frames: frames, content: regions[.content] ?? .zero, order: order, payload: payload, copy: copy) else { return false }
+                if plan.action == .reorder { model.reorderEntries(urls, before: plan.slot?.before); return true }
+                if region == .staging { return model.stageFiles(urls) }
+                let accepted = model.acceptFileDrop(urls, workspaceID: plan.workspaceID, directory: plan.directory, copy: copy,
+                    insertionOrder: plan.slot == nil ? nil : order, before: plan.slot?.before)
+                if !accepted && model.errorMessage == nil { model.errorMessage = "目标暂时不可用，文件尚未转移。请等待正在进行的操作完成后重试。" }
+                return accepted
+            })
+    }
+
+    private func clearFileDrop() {
+        fileDropTarget = nil; fileDropFeedback = nil; dropTargeted = false; stagingDropTargeted = false
+        workspaceSpringLoader.cancel()
+    }
+
+    private func fileDropPlan(region: HubFileDropRegion, point: CGPoint, frames: [URL: CGRect], content: CGRect, order: [URL],
+                              payload: HubFileDragPayload?, copy: Bool) -> HubFileDropPlan? {
+        switch region {
+        case .workspace(let id):
+            guard let workspace = model.workspaces.first(where: { $0.id == id }), workspace.mode != .recents else { return nil }
+            return HubFileDropPlan(workspaceID: id, directory: workspace.rootURL, item: nil,
+                title: workspace.name, action: workspace.mode == .references ? .reference : copy ? .copy : .move)
+        case .staging:
+            guard model.settings.resolvedStagingEnabled, !model.stagingTransferInProgress else { return nil }
+            return HubFileDropPlan(workspaceID: model.settings.stagingWorkspaceID, directory: nil, item: nil, title: "暂存区", action: .reference)
+        case .content:
+            guard let id = model.selectedWorkspaceID, !model.isRecentsRoot else { return nil }
+            let hit = frames.first(where: { $0.value.contains(point) })?.key
+            let reorder = payload.map { HubFileDragData.shouldReorder($0, in: fileDragContext) } ?? false
+            let folder = hit.flatMap { target -> URL? in
+                guard !reorder, !model.isReferenceRoot, !model.isStagingRoot, let entry = model.entries.first(where: { $0.url == target && $0.canNavigate }),
+                      let frame = frames[target], frame.insetBy(dx: frame.width * 0.24, dy: frame.height * 0.18).contains(point) else { return nil }
+                return entry.url
+            }
+            let reference = model.isReferenceRoot || model.isStagingRoot
+            let slot = folder == nil ? HubFileInsertionSlot.resolve(at: point, frames: frames, order: order,
+                content: content, horizontal: model.viewMode != .grid || model.settings.horizontalScroll,
+                excluding: reorder ? Set(payload?.urls ?? []) : []) : nil
+            return HubFileDropPlan(workspaceID: id, directory: reference ? nil : folder ?? model.currentURL,
+                item: folder,
+                title: folder?.lastPathComponent ?? model.currentURL?.lastPathComponent ?? model.selectedWorkspace?.name ?? "当前工作区",
+                action: reorder ? .reorder : reference ? .reference : copy ? .copy : .move, slot: slot)
+        case .item, .tabViewport: return nil
+        }
     }
 
     private func workspaceFileDrop(_ workspace: Workspace) -> HubWorkspaceFileDropDelegate {
@@ -589,7 +699,7 @@ struct HubView: View {
                 LazyVStack(spacing: 1) {
                     ForEach(Array(model.visibleEntries.enumerated()), id: \.element.id) { index, entry in
                         HStack(spacing: 9) {
-                            Image(nsImage: entry.icon).resizable().scaledToFit().frame(width: 22, height: 22)
+                            HubFileIcon(entry: entry, size: 22, allowsThumbnail: false, lightweight: presentation.fileDragActive)
                             Text(entry.name).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
                             Text((model.isRecentsRoot ? model.lastUsedDate(for: entry.url) : entry.modified)?.formatted(date: .abbreviated, time: .shortened) ?? "—").font(.system(size: 10)).foregroundStyle(.secondary).frame(width: 120, alignment: .leading)
                             Text(model.isCloudPlaceholder(entry) ? "仅在云端" : entry.kind).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1).frame(width: 80, alignment: .leading)
@@ -637,15 +747,21 @@ struct HubView: View {
                             Divider()
                             ScrollView(showsIndicators: model.settings.showScrollbar) {
                                 LazyVStack(spacing: 1) {
-                                    ForEach(parentDirectories(parent), id: \.self) { url in
+                                    ForEach(parentDirectory.entries) { entry in
+                                        let url = entry.url
                                         Button { model.navigate(to: url) } label: {
-                                            HStack(spacing: 7) { Image(nsImage: NSWorkspace.shared.icon(forFile: url.path)).resizable().frame(width: 18, height: 18); Text(url.lastPathComponent).lineLimit(1); Spacer(); Image(systemName: "chevron.right").font(.system(size: 8)) }.padding(.horizontal, 9).padding(.vertical, 6).contentShape(Rectangle())
+                                            HStack(spacing: 7) { HubFileIcon(entry: entry, size: 18, allowsThumbnail: false, lightweight: presentation.fileDragActive); Text(entry.name).lineLimit(1); Spacer(); Image(systemName: "chevron.right").font(.system(size: 8)) }.padding(.horizontal, 9).padding(.vertical, 6).contentShape(Rectangle())
                                                 .background(url == current ? Color.primary.opacity(0.10) : .clear, in: RoundedRectangle(cornerRadius: 5))
                                         }.buttonStyle(.plain)
                                     }
                                 }.padding(5)
                             }
+                            if let message = parentDirectory.message {
+                                Text(message).font(.caption).foregroundStyle(.secondary).padding(8)
+                            }
                         }.frame(width: layout.parentWidth)
+                            .task(id: parent.path) { parentDirectory.load(parent) }
+                            .onDisappear { parentDirectory.clear() }
                         Divider().frame(width: layout.separatorWidth)
                     }
                     VStack(alignment: .leading, spacing: 0) {
@@ -655,7 +771,7 @@ struct HubView: View {
                             LazyVStack(spacing: 1) {
                                 ForEach(model.visibleEntries) { entry in
                                     HStack(spacing: 7) {
-                                        Image(nsImage: entry.icon).resizable().frame(width: 20, height: 20)
+                                        HubFileIcon(entry: entry, size: 20, allowsThumbnail: false, lightweight: presentation.fileDragActive)
                                         Text(entry.name).lineLimit(1)
                                         Spacer()
                                         if entry.isDirectory && !entry.isPackage { Image(systemName: "chevron.right").font(.system(size: 8)).foregroundStyle(.secondary) }
@@ -812,9 +928,6 @@ struct HubView: View {
 
     private func selectForDrag(_ entry: FileEntry) { if !model.selectedIDs.contains(entry.url) { model.selectedIDs = [entry.url] } }
     private func preview(_ urls: [URL]) { NotificationCenter.default.post(name: Notification.Name("HubPreview"), object: nil, userInfo: ["urls": urls]) }
-    private func parentDirectories(_ url: URL) -> [URL] {
-        ((try? FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: [.isDirectoryKey, .isPackageKey], options: [.skipsHiddenFiles])) ?? []).filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }.sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
-    }
     private func chooseApplication(for url: URL) {
         let panel = NSOpenPanel(); panel.canChooseFiles = true; panel.canChooseDirectories = false; panel.allowedContentTypes = [.application]; panel.directoryURL = URL(fileURLWithPath: "/Applications"); panel.prompt = "打开"
         if HubWindowPresentation.runModal(panel) == .OK, let application = panel.url { NSWorkspace.shared.open([url], withApplicationAt: application, configuration: NSWorkspace.OpenConfiguration()) }
@@ -829,7 +942,7 @@ struct HubView: View {
     }
 
     @ViewBuilder private func dropIndicator(for entry: FileEntry, beforeOnTop: Bool) -> some View {
-        if !model.isRecentsRoot && fileDropTarget == entry.url {
+        if fileDropFeedback == nil && !model.isRecentsRoot && fileDropTarget == entry.url {
             if let payload = HubFileDragState.current, HubFileDragData.shouldReorder(payload, in: fileDragContext) {
                 if beforeOnTop {
                     Rectangle().fill(Color.accentColor).frame(height: 2).frame(maxHeight: .infinity, alignment: .top).allowsHitTesting(false)
@@ -852,6 +965,8 @@ struct HubView: View {
             fileDropTarget = nil
             return true
         }
+        if model.isStagingRoot { return receiveStagingDrop(providers) }
+        if model.isReferenceRoot { return receiveDrop(providers, destination: nil, reorderLocal: false) }
         guard entry.isDirectory && !entry.isPackage else { return false }
         return receiveDrop(providers, destination: entry.url, reorderLocal: false)
     }
@@ -866,17 +981,15 @@ struct HubView: View {
         if model.isStagingRoot { return receiveStagingDrop(providers) }
         let fileProviders = providers.filter { $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) }
         if fileProviders.isEmpty { return receiveImageDrop(providers, destination: destination) }
+        guard fileProviders.count <= 20000, let ticket = HubImportActivity.begin() else { return false }
         let copy = NSEvent.modifierFlags.contains(.option)
         let workspaceID = model.selectedWorkspaceID
-        let currentURL = model.currentURL
-        let referenceRoot = model.isReferenceRoot
         let batch = HubDropBatch(count: fileProviders.count) { urls in
-            guard model.selectedWorkspaceID == workspaceID, model.currentURL == currentURL, model.isReferenceRoot == referenceRoot else {
-                model.errorMessage = "拖入期间工作区或文件夹已切换。未移动任何文件，请重新拖入。"
-                return
-            }
+            HubImportActivity.end(ticket)
             guard !urls.isEmpty else { model.errorMessage = "无法读取拖入的文件地址。"; return }
-            do { _ = try model.handleDrop(urls: urls, to: destination, copy: copy) } catch { model.errorMessage = error.localizedDescription }
+            if !model.acceptFileDrop(urls, workspaceID: workspaceID, directory: destination, copy: copy) {
+                model.errorMessage = "目标工作区已不可用，或已有多个文件传输正在进行。"
+            }
         }
         for (index, provider) in fileProviders.enumerated() {
             provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
@@ -903,74 +1016,14 @@ struct HubView: View {
         }
     }
     private func receiveImageDrop(_ providers: [NSItemProvider], destination: URL?) -> Bool {
-        let images = providers.compactMap { provider -> (NSItemProvider, String)? in
-            guard let type = provider.registeredTypeIdentifiers.first(where: { UTType($0)?.conforms(to: .image) == true }) else { return nil }
-            return (provider, type)
-        }
-        guard !images.isEmpty else { return receiveWebImageDrop(providers, destination: destination) }
-        guard let destination else { model.errorMessage = "请将图片拖入文件夹工作区，或合集中某个文件夹。"; return true }
         let workspaceID = model.selectedWorkspaceID
-        let currentURL = model.currentURL
-        let referenceRoot = model.isReferenceRoot
-        for (provider, type) in images {
-            provider.loadDataRepresentation(forTypeIdentifier: type) { data, error in
-                DispatchQueue.main.async {
-                    let result: Result<Data, Error> = data.map { .success($0) } ?? .failure(error ?? HubImageImportError.invalid)
-                    processImageDrop(result, destination: destination, workspaceID: workspaceID, currentURL: currentURL, referenceRoot: referenceRoot)
-                }
-            }
-        }
-        return true
-    }
-
-    private func receiveWebImageDrop(_ providers: [NSItemProvider], destination: URL?) -> Bool {
-        let urls = providers.filter { $0.hasItemConformingToTypeIdentifier(UTType.url.identifier) }
-        guard !urls.isEmpty else { return false }
-        guard let destination else { model.errorMessage = "请将网页图片拖入文件夹。"; return true }
-        let workspaceID = model.selectedWorkspaceID, currentURL = model.currentURL, referenceRoot = model.isReferenceRoot
-        for provider in urls {
-            provider.loadItem(forTypeIdentifier: UTType.url.identifier, options: nil) { item, _ in
-                let url: URL?
-                if let value = item as? URL { url = value }
-                else if let data = item as? Data { url = URL(dataRepresentation: data, relativeTo: nil) }
-                else if let text = item as? String { url = URL(string: text) }
-                else { url = nil }
-                DispatchQueue.main.async {
-                    guard model.selectedWorkspaceID == workspaceID, model.currentURL == currentURL, model.isReferenceRoot == referenceRoot else { return }
-                    guard let url else { model.errorMessage = "无法读取网页图片地址。"; return }
-                    HubWebImageLoader.fetch(url: url) { result in
-                        processImageDrop(result, destination: destination, workspaceID: workspaceID, currentURL: currentURL, referenceRoot: referenceRoot)
-                    }
-                }
-            }
-        }
-        return true
-    }
-
-    private func processImageDrop(_ input: Result<Data, Error>, destination: URL, workspaceID: UUID?, currentURL: URL?, referenceRoot: Bool) {
-        HubImageImport.workerQueue.async {
-            let result = input.flatMap { data in Result { try HubImageImport.pngData(from: data) } }
-            DispatchQueue.main.async {
-                guard model.selectedWorkspaceID == workspaceID, model.currentURL == currentURL, model.isReferenceRoot == referenceRoot else {
-                    model.errorMessage = "拖入期间工作区已切换，未保存图片。"; return
-                }
-                do {
-                    let png = try result.get()
-                    // Once accepted, finish in the captured destination even if
-                    // navigation changes. Slow disks must not block animation.
-                    HubImageImport.workerQueue.async {
-                        let saved = Result {
-                            let file = HubFileOperations.uniqueDestination(for: URL(fileURLWithPath: "拖入的图片.png"), in: destination)
-                            try png.write(to: file, options: .withoutOverwriting)
-                        }
-                        DispatchQueue.main.async {
-                            if case .failure(let error) = saved { model.errorMessage = error.localizedDescription }
-                            else if model.selectedWorkspaceID == workspaceID, model.currentURL == currentURL,
-                                    model.isReferenceRoot == referenceRoot { model.refreshInBackground() }
-                        }
-                    }
-                } catch { model.errorMessage = error.localizedDescription }
-            }
+        // One bounded importer handles images, SVG, promises and web images.
+        // As with native files, collection roots accept references to imported
+        // content and a captured folder remains the target after navigation.
+        return HubStagingDropReceiver.receive(providers) { urls, failures in
+            if !urls.isEmpty, !model.acceptFileDrop(urls, workspaceID: workspaceID, directory: destination, copy: true) {
+                model.errorMessage = "目标工作区已不可用。导入内容已保留在本机暂存目录。"
+            } else if !failures.isEmpty { model.errorMessage = failures.joined(separator: "\n") }
         }
     }
     private var backgroundColor: Color {
@@ -1023,19 +1076,6 @@ struct HubView: View {
             return true
         }
         return false
-    }
-}
-
-private final class HubDropBatch: @unchecked Sendable {
-    private let lock = NSLock()
-    private var remaining: Int
-    private var urls: [Int: URL] = [:]
-    private let completion: @MainActor ([URL]) -> Void
-    init(count: Int, completion: @escaping @MainActor ([URL]) -> Void) { remaining = count; self.completion = completion }
-    func finish(index: Int, url: URL?) {
-        lock.lock(); if let url, url.isFileURL { urls[index] = url }; remaining -= 1
-        let ready = remaining == 0; let result = ready ? urls.sorted { $0.key < $1.key }.map(\.value) : []; lock.unlock()
-        if ready { DispatchQueue.main.async { self.completion(result) } }
     }
 }
 

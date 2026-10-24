@@ -7,6 +7,7 @@ import UniformTypeIdentifiers
 struct HubSettingsView: View {
     @ObservedObject var model: HubModel
     @ObservedObject var music: HubQQMusicController
+    @ObservedObject var updater: FileDockUpdater
     @State private var selectedTab = 0
     @State private var blockedApplicationError: String?
     var body: some View {
@@ -15,6 +16,7 @@ struct HubSettingsView: View {
             appearance.tabItem { Label("外观", systemImage: "paintpalette") }.tag(1)
             shortcuts.tabItem { Label("快捷键", systemImage: "keyboard") }.tag(2)
             musicSettings.tabItem { Label("音乐", systemImage: "music.note") }.tag(3)
+            FileDockUpdateSettings(updater: updater).tabItem { Label("更新", systemImage: "arrow.triangle.2.circlepath") }.tag(5)
             about.tabItem { Label("关于", systemImage: "info.circle") }.tag(4)
         }
         .padding(20).frame(width: 550, height: 495)

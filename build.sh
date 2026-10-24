@@ -2,6 +2,7 @@
 set -eu
 cd "${0:A:h}"
 ./sign.sh --check
+TASK_SPARKLE="$(./scripts/fetch-sparkle.sh)"
 TASK_ARCH="$(uname -m)"
 TASK_APP="build/FileDock.app"
 mkdir -p "$TASK_APP/Contents/MacOS" "$TASK_APP/Contents/Resources" .build
@@ -13,13 +14,18 @@ for TASK_TARGET in "${TASK_ARCHS[@]}"; do
         -o ".build/FileDock-$TASK_TARGET" \
         -framework AppKit -framework SwiftUI -framework Combine \
         -framework Carbon -framework Quartz -framework QuickLookThumbnailing -framework ImageIO \
-        -framework ServiceManagement -framework UniformTypeIdentifiers -framework ApplicationServices
+        -framework ServiceManagement -framework UniformTypeIdentifiers -framework ApplicationServices \
+        -F "$TASK_SPARKLE" -framework Sparkle -Xlinker -rpath -Xlinker @executable_path/../Frameworks
 done
 if (( ${#TASK_ARCHS[@]} > 1 )); then
     lipo -create .build/FileDock-arm64 .build/FileDock-x86_64 -output "$TASK_APP/Contents/MacOS/FileDock"
 else
     cp ".build/FileDock-$TASK_ARCH" "$TASK_APP/Contents/MacOS/FileDock"
 fi
+mkdir -p "$TASK_APP/Contents/Frameworks"
+ditto "$TASK_SPARKLE/Sparkle.framework" "$TASK_APP/Contents/Frameworks/Sparkle.framework"
+./scripts/sign-sparkle.sh "$TASK_APP/Contents/Frameworks/Sparkle.framework"
+cp "$TASK_SPARKLE/LICENSE" "$TASK_APP/Contents/Resources/Sparkle-LICENSE"
 cp Resources/Info.plist "$TASK_APP/Contents/Info.plist"
 cp LICENSE NOTICE "$TASK_APP/Contents/Resources/"
 if [[ -f Resources/AppIcon.icns ]]; then

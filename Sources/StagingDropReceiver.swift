@@ -18,11 +18,14 @@ enum HubStagingDropReceiver {
     /// The fetch seam keeps provider/lifetime tests entirely offline.
     @discardableResult
     static func receive(_ providers: [NSItemProvider], store: HubStagingImportStore,
-                        fetch: @escaping WebFetch,
+                        fetch: @escaping WebFetch, timeout: TimeInterval = 30,
                         completion: @escaping ([URL], [String]) -> Void) -> Bool {
-        guard providers.contains(where: { route(for: $0) != nil }) else { return false }
-        let batch = Batch(providers: providers, store: store, fetch: fetch, completion: completion)
-        batch.advance()
+        guard !providers.isEmpty, providers.count <= 128,
+              providers.contains(where: { route(for: $0) != nil }),
+              let ticket = HubImportActivity.begin() else { return false }
+        let lease = HubImportLease(id: ticket)
+        let batch = Batch(providers: providers, store: store, fetch: fetch, lease: lease, completion: completion)
+        batch.start(timeout: timeout)
         return true
     }
 
@@ -75,12 +78,17 @@ enum HubStagingDropReceiver {
             self.type = type
         }
 
+        func loadItem(completionHandler: @escaping @Sendable (NSSecureCoding?, Error?) -> Void) {
+            provider.loadItem(forTypeIdentifier: type, options: nil, completionHandler: completionHandler)
+        }
+
         @discardableResult
         func loadFileRepresentation(completionHandler: @escaping @Sendable (URL?, Error?) -> Void) -> Progress {
             provider.loadFileRepresentation(forTypeIdentifier: type, completionHandler: completionHandler)
         }
 
-        func loadDataRepresentation(completionHandler: @escaping @Sendable (Data?, Error?) -> Void) {
+        @discardableResult
+        func loadDataRepresentation(completionHandler: @escaping @Sendable (Data?, Error?) -> Void) -> Progress {
             provider.loadDataRepresentation(forTypeIdentifier: type, completionHandler: completionHandler)
         }
     }
@@ -96,64 +104,99 @@ enum HubStagingDropReceiver {
         var index = 0
         var urls: [URL] = []
         var failures: [String] = []
+        let lease: HubImportLease
+        var deadline: Task<Void, Never>?
+        var providerProgress: Progress?
 
-        init(providers: [NSItemProvider], store: HubStagingImportStore, fetch: @escaping WebFetch,
+        init(providers: [NSItemProvider], store: HubStagingImportStore, fetch: @escaping WebFetch, lease: HubImportLease,
              completion: @escaping ([URL], [String]) -> Void) {
             self.providers = providers
             self.store = store
             self.fetch = fetch
+            self.lease = lease
             self.completion = completion
         }
 
-        func advance() {
-            guard index < providers.count else {
-                let finish = completion
-                completion = nil
-                finish?(urls, failures)
-                return
+        func start(timeout: TimeInterval) {
+            let seconds = timeout.isFinite ? min(300, max(0.05, timeout)) : 30
+            deadline = Task { [self] in
+                do { try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000)) } catch { return }
+                guard completion != nil else { return }
+                providerProgress?.cancel()
+                failures.append("导入等待超时，未完成的项目可重新拖入。")
+                complete()
             }
+            advance()
+        }
+
+        private func complete() {
+            let finish = completion
+            completion = nil
+            deadline?.cancel(); deadline = nil
+            providerProgress = nil
+            lease.close()
+            finish?(urls, failures)
+        }
+
+        func advance() {
+            guard completion != nil else { return }
+            guard index < providers.count else { complete(); return }
             let provider = providers[index]
             let position = index
             let name = provider.suggestedName
             switch HubStagingDropReceiver.route(for: provider) {
             case .fileURL, .webURL:
                 let isFile = provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier)
-                provider.loadItem(forTypeIdentifier: isFile ? UTType.fileURL.identifier : UTType.url.identifier, options: nil) { item, error in
-                    let url = HubStagingDropReceiver.url(from: item)
-                    DispatchQueue.main.async {
-                        guard let url else {
-                            self.finish(.failure(error ?? DropError.invalidFileURL), at: position)
-                            return
-                        }
-                        if url.isFileURL, url.host == nil || url.host == "" || url.host == "localhost" {
-                            self.finish(.success(url.standardizedFileURL), at: position)
-                        }
-                        else if isFile { self.finish(.failure(DropError.invalidFileURL), at: position) }
-                        else {
-                            self.fetch(url) { result in
-                                // Fetch implementations may invoke completion on a worker queue.
-                                DispatchQueue.main.async { self.saveImage(result, name: name ?? url.lastPathComponent, at: position) }
+                let load = FileRepresentationLoad(provider: provider, type: isFile ? UTType.fileURL.identifier : UTType.url.identifier)
+                HubImageImport.workerQueue.async {
+                    load.loadItem { [weak self] item, error in
+                        guard let self else { return }
+                        let url = HubStagingDropReceiver.url(from: item)
+                        DispatchQueue.main.async {
+                            guard self.completion != nil, self.index == position else { return }
+                            guard let url else {
+                                self.finish(.failure(error ?? DropError.invalidFileURL), at: position)
+                                return
+                            }
+                            if url.isFileURL, url.host == nil || url.host == "" || url.host == "localhost" {
+                                self.finish(.success(url.standardizedFileURL), at: position)
+                            } else if isFile { self.finish(.failure(DropError.invalidFileURL), at: position) }
+                            else {
+                                self.fetch(url) { result in
+                                    DispatchQueue.main.async { self.saveImage(result, name: name ?? url.lastPathComponent, at: position) }
+                                }
                             }
                         }
                     }
                 }
             case .image(let type):
-                provider.loadDataRepresentation(forTypeIdentifier: type) { data, error in
-                    let result: Result<Data, Error> = data.map { .success($0) } ?? .failure(error ?? DropError.unavailable)
-                    DispatchQueue.main.async { self.saveImage(result, name: name, at: position) }
+                let load = FileRepresentationLoad(provider: provider, type: type)
+                HubImageImport.workerQueue.async {
+                    let progress = load.loadDataRepresentation { [weak self] data, error in
+                        guard let self else { return }
+                        let result: Result<Data, Error> = data.map { .success($0) } ?? .failure(error ?? DropError.unavailable)
+                        DispatchQueue.main.async { self.saveImage(result, name: name, at: position) }
+                    }
+                    Task { @MainActor [weak self] in
+                        guard let self, self.completion != nil, self.index == position else { progress.cancel(); return }
+                        self.providerProgress = progress
+                    }
                 }
             case .file(let type):
-                let store = store
+                let store = store, lease = lease
                 let load = FileRepresentationLoad(provider: provider, type: type)
                 // Start on a worker, including providers that complete synchronously.
                 HubImageImport.workerQueue.async {
-                    load.loadFileRepresentation { temporaryURL, error in
+                    load.loadFileRepresentation { [weak self] temporaryURL, error in
+                        guard let self else { return }
                         guard let temporaryURL else {
                             // Some Finder/SwiftUI bridges expose only an SVG's
                             // bytes, or a document data representation. Try it
                             // before declaring an otherwise valid file unreadable.
                             load.loadDataRepresentation { data, dataError in
                                 HubImageImport.workerQueue.async {
+                                    guard lease.beginWrite() else { return }
+                                    defer { lease.endWrite() }
                                     let result: Result<URL, Error> = Result {
                                         guard let data else { throw dataError ?? error ?? DropError.unavailable }
                                         return try store.saveFileData(data, typeIdentifier: type, suggestedName: name)
@@ -165,6 +208,8 @@ enum HubStagingDropReceiver {
                         }
                         // NSItemProvider deletes its temporary representation after
                         // this callback returns. Copy here, never in a later task.
+                        guard lease.beginWrite() else { return }
+                        defer { lease.endWrite() }
                         let result: Result<URL, Error> = Result {
                             return try store.copyFile(at: temporaryURL, suggestedName: name)
                         }
@@ -178,8 +223,10 @@ enum HubStagingDropReceiver {
 
         func saveImage(_ input: Result<Data, Error>, name: String?, at position: Int) {
             guard position == index, completion != nil else { return }
-            let store = store
+            let store = store, lease = lease
             HubImageImport.workerQueue.async {
+                guard lease.beginWrite() else { return }
+                defer { lease.endWrite() }
                 let result = input.flatMap { data in Result { try store.saveImage(data: data, suggestedName: name) } }
                 DispatchQueue.main.async { self.finish(result, at: position) }
             }

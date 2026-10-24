@@ -61,12 +61,14 @@ with zipfile.ZipFile(archive) as package:
     assert package.testzip() is None, 'ZIP integrity check failed'
 PY
 unzip -tq "$TASK_TEMP/FileDock.zip"
-(cd "$TASK_TEMP" && shasum -a 256 FileDock.zip RELEASE_NOTES.md SOURCE_COMMIT > SHA256SUMS.txt)
+./scripts/sign-update-feed.sh "$TASK_TEMP/FileDock.zip" "$TASK_TEMP/RELEASE_NOTES.md" "$TASK_TAG" "$TASK_TEMP/feed"
+cp "$TASK_TEMP/feed/appcast.xml" "$TASK_TEMP/appcast.xml"
+(cd "$TASK_TEMP" && shasum -a 256 FileDock.zip RELEASE_NOTES.md SOURCE_COMMIT appcast.xml > SHA256SUMS.txt)
 
-# Build an orphan tree with four explicit blobs. The checkout and real index are untouched.
+# Build an orphan tree with five explicit blobs. The checkout and real index are untouched.
 TASK_INDEX="$TASK_TEMP/git-index"
 GIT_INDEX_FILE="$TASK_INDEX" git read-tree --empty
-for TASK_FILE in FileDock.zip SHA256SUMS.txt RELEASE_NOTES.md SOURCE_COMMIT; do
+for TASK_FILE in FileDock.zip SHA256SUMS.txt RELEASE_NOTES.md SOURCE_COMMIT appcast.xml; do
     TASK_BLOB="$(git hash-object -w -- "$TASK_TEMP/$TASK_FILE")"
     GIT_INDEX_FILE="$TASK_INDEX" git update-index --add --cacheinfo "100644,$TASK_BLOB,$TASK_FILE"
 done

@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 
 private final class DirectoryReadCancellation: @unchecked Sendable {
     private let lock = NSLock()
@@ -115,5 +116,32 @@ enum HubDirectoryLoadError: LocalizedError {
         try request.cancellation?.check()
         return HubDirectorySnapshot(entries: entries,
             canonicalDirectoryPath: request.directory.map { $0.standardizedFileURL.resolvingSymlinksInPath().path })
+    }
+}
+
+/// The parent column is independent of the current-directory read. A timed-out
+/// provider cannot block SwiftUI body evaluation or publish into a later path.
+@MainActor final class HubParentDirectory: ObservableObject {
+    @Published private(set) var entries: [FileEntry] = []
+    @Published private(set) var message: String?
+    private let loader: HubDirectoryLoading
+    private var current: UUID?
+    init(loader: HubDirectoryLoading? = nil) { self.loader = loader ?? HubDirectoryLoader() }
+    func load(_ directory: URL) {
+        clear()
+        let id = UUID(); current = id
+        loader.load(id: id, request: HubDirectoryRequest(directory: directory)) { [weak self] result in
+            guard let self, self.current == id else { return }
+            self.current = nil
+            switch result {
+            case .success(let snapshot):
+                self.entries = snapshot.entries.filter(\.canNavigate).sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            case .failure(let error): self.message = error.localizedDescription
+            }
+        }
+    }
+    func clear() {
+        if let current { loader.cancel(id: current) }
+        current = nil; entries = []; message = nil
     }
 }

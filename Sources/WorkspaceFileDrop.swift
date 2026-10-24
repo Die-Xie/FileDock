@@ -32,6 +32,7 @@ final class HubWorkspaceSpringLoader: ObservableObject {
     func exit(_ id: UUID) { if target == id { cancel() } }
 
     func cancel() {
+        guard target != nil || task != nil else { return }
         generation &+= 1
         task?.cancel()
         task = nil

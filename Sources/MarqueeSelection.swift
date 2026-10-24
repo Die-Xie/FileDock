@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-private struct HubFileSelectionBoundsKey: PreferenceKey {
+struct HubFileSelectionBoundsKey: PreferenceKey {
     static var defaultValue: [URL: Anchor<CGRect>] = [:]
     static func reduce(value: inout [URL: Anchor<CGRect>], nextValue: () -> [URL: Anchor<CGRect>]) {
         value.merge(nextValue(), uniquingKeysWith: { _, new in new })
@@ -11,6 +11,7 @@ private struct HubFileSelectionBoundsKey: PreferenceKey {
 extension View {
     func fileSelectionBounds(_ url: URL) -> some View {
         anchorPreference(key: HubFileSelectionBoundsKey.self, value: .bounds) { [url: $0] }
+            .anchorPreference(key: HubFileDropRegionKey.self, value: .bounds) { [.item(url): $0] }
     }
 
     @MainActor func marqueeFileSelection(context: HubFileDragContext, selection: Set<URL>,

@@ -11,7 +11,7 @@ struct WorkspaceShortcutTests {
                                                       count: count, selected: selected)
                 let unclipped = render(label.padding(8))
                 let clipped = render(label.clipped().padding(8))
-                precondition(unclipped.width == 104 && unclipped.height == 96)
+                precondition(unclipped.width == Int((HubWorkspaceShortcutLabel.width + 16) * 2) && unclipped.height == Int((HubWorkspaceShortcutLabel.height + 16) * 2))
                 precondition(bytes(unclipped) == bytes(clipped),
                              "Clipping a measured shortcut must preserve every symbol/badge pixel (count \(count))")
                 let pixels = bytes(unclipped)
@@ -20,8 +20,8 @@ struct WorkspaceShortcutTests {
                 for y in 0..<unclipped.height {
                     for x in 0..<unclipped.width where pixels[y * row + x * 4 + 3] > 0 {
                         visible += 1
-                        precondition(x >= 16 && x < 88 && y >= 16 && y < 80,
-                                     "No pixels may overflow the reserved 36x32 shortcut label")
+                        precondition(x >= 16 && x < Int((HubWorkspaceShortcutLabel.width + 8) * 2) && y >= 16 && y < Int((HubWorkspaceShortcutLabel.height + 8) * 2),
+                                     "No pixels may overflow the reserved shortcut label")
                     }
                 }
                 precondition(visible > 30, "The snapshot must actually contain the rendered icon and count")

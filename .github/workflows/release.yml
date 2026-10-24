@@ -47,7 +47,7 @@ jobs:
           python3 - "$RUNNER_TEMP/release-tree" <<'PY'
           import pathlib, sys
           entries = pathlib.Path(sys.argv[1]).read_text().splitlines()
-          expected = {'FileDock.zip', 'SHA256SUMS.txt', 'RELEASE_NOTES.md', 'SOURCE_COMMIT'}
+          expected = {'FileDock.zip', 'SHA256SUMS.txt', 'RELEASE_NOTES.md', 'SOURCE_COMMIT', 'appcast.xml'}
           seen = set()
           for entry in entries:
               metadata, name = entry.split('\t', 1)
@@ -57,7 +57,7 @@ jobs:
           assert seen == expected, 'Incomplete artifact tree'
           PY
           # Never checkout or run scripts from the artifact branch, including filters/hooks.
-          for file in FileDock.zip SHA256SUMS.txt RELEASE_NOTES.md SOURCE_COMMIT; do
+          for file in FileDock.zip SHA256SUMS.txt RELEASE_NOTES.md SOURCE_COMMIT appcast.xml; do
             git -C "$repository" show "$asset_commit:$file" > "$payload/$file"
           done
           cd "$payload"
@@ -69,10 +69,10 @@ jobs:
           assert 0 < pathlib.Path('RELEASE_NOTES.md').stat().st_size <= 1024 * 1024
           pathlib.Path('RELEASE_NOTES.md').read_text(encoding='utf-8')
           lines = pathlib.Path('SHA256SUMS.txt').read_text().splitlines()
-          expected = {'FileDock.zip', 'RELEASE_NOTES.md', 'SOURCE_COMMIT'}
+          expected = {'FileDock.zip', 'RELEASE_NOTES.md', 'SOURCE_COMMIT', 'appcast.xml'}
           seen = set()
           for line in lines:
-              match = re.fullmatch(r'[0-9a-f]{64}  (FileDock\.zip|RELEASE_NOTES\.md|SOURCE_COMMIT)', line)
+              match = re.fullmatch(r'[0-9a-f]{64}  (FileDock\.zip|RELEASE_NOTES\.md|SOURCE_COMMIT|appcast\.xml)', line)
               assert match and match[1] not in seen, 'Invalid checksum manifest'
               seen.add(match[1])
           assert seen == expected, 'Incomplete checksum manifest'
@@ -88,6 +88,38 @@ jobs:
               assert info['CFBundleShortVersionString'] == tag[1:]
               assert info['CFBundleIdentifier'] == 'local.diexie.filedock'
               assert info['CFBundleName'] == 'FileDock' and info['CFBundleDisplayName'] == 'FileDock'
+          PY
+          python3 - "$tag" <<'PY'
+          import base64, pathlib, re, subprocess, sys, tempfile, xml.etree.ElementTree as ET
+          tag = sys.argv[1]
+          data = pathlib.Path('appcast.xml').read_bytes()
+          assert 0 < len(data) <= 1024 * 1024
+          ns = {'s': 'http://www.andymatuschak.org/xml-namespaces/sparkle'}
+          root = ET.fromstring(data)
+          items = root.findall('./channel/item')
+          assert len(items) == 1
+          item = items[0]
+          assert item.findtext('s:shortVersionString', namespaces=ns) == tag[1:]
+          enclosure = item.find('enclosure')
+          assert enclosure is not None and enclosure.attrib['url'] == f'https://github.com/Die-Xie/FileDock/releases/download/{tag}/FileDock.zip'
+          assert int(enclosure.attrib['length']) == pathlib.Path('FileDock.zip').stat().st_size
+          archive_signature = base64.b64decode(enclosure.attrib['{'+ns['s']+'}edSignature'], validate=True)
+          assert len(archive_signature) == 64
+          signature = re.search(rb'<!-- sparkle-signatures:\s*edSignature: ([A-Za-z0-9+/=]+)\s*length: ([0-9]+)\s*-->\s*$', data)
+          assert signature and int(signature[2]) == signature.start(), 'Feed signature envelope is invalid'
+          signed_length = int(signature[2])
+          public_key = base64.b64decode('/bksthM2EmaMaizbjOaXUds0JBCrwSHkxAHQGsErylk=', validate=True)
+          with tempfile.TemporaryDirectory() as folder:
+              folder = pathlib.Path(folder)
+              key = folder/'public.der'
+              key.write_bytes(bytes.fromhex('302a300506032b6570032100') + public_key)
+              signed_feed = folder/'feed-data'
+              signed_feed.write_bytes(data[:signed_length])
+              for content, value in [(signed_feed, base64.b64decode(signature[1], validate=True)), (pathlib.Path('FileDock.zip'), archive_signature)]:
+                  assert len(value) == 64
+                  signature_file = folder/'signature'
+                  signature_file.write_bytes(value)
+                  subprocess.run(['openssl', 'pkeyutl', '-verify', '-pubin', '-keyform', 'DER', '-inkey', str(key), '-rawin', '-in', str(content), '-sigfile', str(signature_file)], check=True)
           PY
           sha256sum --check --strict SHA256SUMS.txt
           unzip -tq FileDock.zip
@@ -108,7 +140,7 @@ jobs:
             exit 1
           fi
           gh release create "$tag" --verify-tag --draft --title "FileDock $tag" --notes-file RELEASE_NOTES.md
-          gh release upload "$tag" FileDock.zip SHA256SUMS.txt RELEASE_NOTES.md SOURCE_COMMIT
+          gh release upload "$tag" FileDock.zip SHA256SUMS.txt RELEASE_NOTES.md SOURCE_COMMIT appcast.xml
           gh release edit "$tag" --draft=false --latest
           gh release view "$tag" --json url --jq .url
           printf 'Verify the published download, then remove the temporary branch via SSH: %s\n' "$branch"
