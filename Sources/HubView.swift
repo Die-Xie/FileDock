@@ -10,6 +10,7 @@ final class HubPresentationState: ObservableObject {
         var exclusionWidth: CGFloat = 0
         var topInset: CGFloat = 0
         var split = false
+        var menuBarMayOverlap = false
     }
     @Published var header = Header()
     @Published var previewVisible = true
@@ -46,6 +47,7 @@ struct HubView: View {
     @State private var fileDropTarget: URL?
     @State private var hoveredWorkspace: UUID?
     @State private var hoverTask: DispatchWorkItem?
+    @StateObject private var workspaceSpringLoader = HubWorkspaceSpringLoader()
     @State private var workspaceRevealPointer: NSPoint?
     @State private var workspaceControlsWidth: CGFloat = 0
     @State private var musicControlsFocused = false
@@ -89,15 +91,19 @@ struct HubView: View {
         .background(backgroundColor)
         .background(HubKeyMonitor(handler: handleKey))
         .onReceive(NotificationCenter.default.publisher(for: hubFileDragDidEnd)) { _ in
+            workspaceSpringLoader.cancel()
             fileDropTarget = nil
             dropTargeted = false
             stagingDropTargeted = false
         }
         .onReceive(NotificationCenter.default.publisher(for: hubWorkspaceDragDidEnd)) { _ in
+            workspaceSpringLoader.cancel()
             hoverTask?.cancel()
             hoveredWorkspace = nil
             workspaceRevealPointer = NSEvent.mouseLocation
         }
+        .onChange(of: presentation.previewVisible) { if !$0 { workspaceSpringLoader.cancel() } }
+        .onDisappear { workspaceSpringLoader.cancel(); hoverTask?.cancel() }
         .onChange(of: model.search) { _ in model.selectedIDs = [] }
         .sheet(item: $editingWorkspace) { WorkspaceEditor(model: model, workspace: $0) }
         .alert("新建文件夹", isPresented: $newFolder) {
@@ -132,6 +138,12 @@ struct HubView: View {
                       onControlFocusChange: { musicControlsFocused = $0 })
     }
 
+    private var toolbarTopInset: CGFloat {
+        HubWorkspaceHeaderLayout.toolbarTopInset(embedded: presentation.header.embedded,
+            split: presentation.header.split, safeTop: presentation.header.topInset,
+            menuBarMayOverlap: presentation.header.menuBarMayOverlap)
+    }
+
     @ViewBuilder private var workspaceBar: some View {
         VStack(spacing: 0) {
             workspaceHeader
@@ -154,6 +166,7 @@ struct HubView: View {
                 let rightWorkspaces = Array(model.tabWorkspaces.dropFirst(layout.splitIndex))
                 HStack(spacing: 0) {
                     workspaceLeading(leftWorkspaces, availableWidth: sideWidth)
+                        .padding(.top, toolbarTopInset)
                         .frame(width: sideWidth, alignment: .leading).clipped()
                     VStack(spacing: 0) {
                         if embeddedMusicLayout.placement == .notch {
@@ -179,14 +192,14 @@ struct HubView: View {
                             })
                             .frame(width: layout.controlsWidth, alignment: .trailing)
                             .contentShape(Rectangle()).clipped()
-                    }.frame(width: sideWidth).clipped()
+                    }.padding(.top, toolbarTopInset).frame(width: sideWidth).clipped()
                 }.padding(.horizontal, 12).frame(height: geometry.size.height)
                     .onPreferenceChange(HubWorkspaceControlsWidthKey.self) { width in
                         if width.isFinite && width > 0 && abs(width - workspaceControlsWidth) > 0.5 {
                             workspaceControlsWidth = width
                         }
                     }
-            }.frame(height: embeddedMusicLayout.headerHeight)
+            }.frame(height: embeddedMusicLayout.headerHeight + toolbarTopInset)
         } else {
             HStack(spacing: 8) {
                 workspaceLeading(model.tabWorkspaces)
@@ -252,13 +265,14 @@ struct HubView: View {
     @ViewBuilder private var workspaceControls: some View {
         if let favorite = model.fixedFavoriteWorkspace {
             Button { model.selectWorkspace(favorite.id) } label: {
-                Image(systemName: model.selectedWorkspaceID == favorite.id ? "star.fill" : "star")
-                    .font(.system(size: 15, weight: .medium)).frame(width: 28, height: 27)
-                    .foregroundStyle(model.selectedWorkspaceID == favorite.id ? Color.accentColor : Color.secondary)
+                HubWorkspaceShortcutLabel(symbol: model.selectedWorkspaceID == favorite.id ? "star.fill" : "star",
+                                          selected: model.selectedWorkspaceID == favorite.id,
+                                          targeted: workspaceSpringLoader.target == favorite.id)
             }.buttonStyle(.plain)
                 .accessibilityLabel("收藏：\(favorite.name)")
                 .help("\(favorite.name) · 右键可隐藏快捷入口")
                 .onHover { shortcutHover($0, key: favorite.id, action: { model.selectWorkspace(favorite.id) }) }
+                .onDrop(of: HubWorkspaceFileDropDelegate.contentTypes, delegate: workspaceFileDrop(favorite))
                 .contextMenu {
                     HubMenuButton("编辑收藏…", systemImage: "pencil") { editingWorkspace = favorite }
                     HubMenuButton("隐藏收藏快捷入口", systemImage: "eye.slash") { model.setFavoriteShortcutVisible(false) }
@@ -266,23 +280,19 @@ struct HubView: View {
         }
         if model.settings.resolvedStagingEnabled {
             Button { model.openStagingWorkspace() } label: {
-                Image(systemName: model.stagedURLs.isEmpty ? "tray" : "tray.full.fill")
-                    .font(.system(size: 15, weight: .medium)).frame(width: 28, height: 27)
-                    .foregroundStyle(model.isStagingWorkspace || stagingDropTargeted ? Color.accentColor : Color.secondary)
-                    .background(stagingDropTargeted ? Color.accentColor.opacity(0.16) : Color.clear, in: RoundedRectangle(cornerRadius: 6))
-                    .overlay(alignment: .topTrailing) {
-                        if !model.stagedURLs.isEmpty {
-                            Text(model.stagedURLs.count > 99 ? "99+" : String(model.stagedURLs.count))
-                                .font(.system(size: 8, weight: .semibold)).padding(.horizontal, 3)
-                                .background(Color.accentColor, in: Capsule()).foregroundStyle(.white)
-                                .offset(x: 5, y: -3).allowsHitTesting(false)
-                        }
-                    }
+                HubWorkspaceShortcutLabel(symbol: model.stagedURLs.isEmpty ? "tray" : "tray.full.fill",
+                                          count: model.stagedURLs.count, selected: model.isStagingWorkspace,
+                                          targeted: stagingDropTargeted)
             }.buttonStyle(.plain)
                 .accessibilityLabel("暂存区，\(model.stagedURLs.count) 个项目")
                 .help("暂存区 · 拖入文件暂存引用，点击查看，右键快速转移")
                 .onHover { shortcutHover($0, key: model.settings.stagingWorkspaceID ?? stagingHoverID, action: { model.openStagingWorkspace() }) }
-                .onDrop(of: [hubFileDragType, .fileURL, .image, .url, .item], isTargeted: $stagingDropTargeted, perform: receiveStagingDrop)
+                .onDrop(of: HubWorkspaceFileDropDelegate.contentTypes, delegate: HubWorkspaceFileDropDelegate(
+                    id: model.settings.stagingWorkspaceID ?? stagingHoverID, loader: workspaceSpringLoader,
+                    delay: model.settings.switchDelay,
+                    canActivate: { presentation.previewVisible && model.settings.resolvedStagingEnabled && !HubWorkspaceDragState.isDragging },
+                    activate: { if !model.isStagingWorkspace { model.openStagingWorkspace() } },
+                    targeted: { stagingDropTargeted = $0 }, receive: receiveStagingDrop))
                 .contextMenu {
                     HubMenuButton("打开暂存区", systemImage: "tray") { model.openStagingWorkspace() }
                     if model.currentURL != nil {
@@ -367,7 +377,7 @@ struct HubView: View {
         .accessibilityLabel(workspace.name.isEmpty ? workspace.mode.title : workspace.name)
         .help(workspace.name + "\n" + (workspace.mode == .recents ? "自动更新最近使用的文件" : workspace.rootPath ?? "文件与文件夹合集"))
         .onHover { isOver in
-            guard !HubWorkspaceDragState.isDragging else {
+            guard !HubWorkspaceDragState.isDragging, !HubFileDragState.isDragging else {
                 hoverTask?.cancel()
                 hoveredWorkspace = nil
                 return
@@ -386,7 +396,7 @@ struct HubView: View {
             hoverTask?.cancel()
             hoveredWorkspace = workspace.id
             if model.settings.switchDelay > 0 {
-                let task = DispatchWorkItem { if hoveredWorkspace == workspace.id && !HubWorkspaceDragState.isDragging { model.selectWorkspace(workspace.id) } }
+                let task = DispatchWorkItem { if hoveredWorkspace == workspace.id && !HubWorkspaceDragState.isDragging && !HubFileDragState.isDragging { model.selectWorkspace(workspace.id) } }
                 hoverTask = task
                 DispatchQueue.main.asyncAfter(deadline: .now() + model.settings.switchDelay, execute: task)
             }
@@ -419,11 +429,29 @@ struct HubView: View {
             onSelect: { model.selectWorkspace(workspace.id) },
             onReorder: { source, target, after in model.reorderWorkspace(source, relativeTo: target, after: after) },
             onDragStateChanged: { _ in
+                workspaceSpringLoader.cancel()
                 hoverTask?.cancel()
                 hoveredWorkspace = nil
                 workspaceRevealPointer = NSEvent.mouseLocation
             }
         ))
+        .onDrop(of: HubWorkspaceFileDropDelegate.contentTypes, delegate: workspaceFileDrop(workspace))
+    }
+
+    private func workspaceFileDrop(_ workspace: Workspace) -> HubWorkspaceFileDropDelegate {
+        HubWorkspaceFileDropDelegate(
+            id: workspace.id, loader: workspaceSpringLoader, delay: model.settings.switchDelay,
+            canActivate: { presentation.previewVisible && !HubWorkspaceDragState.isDragging && model.workspaces.contains(where: { $0.id == workspace.id }) },
+            activate: { if model.selectedWorkspaceID != workspace.id { model.selectWorkspace(workspace.id) } },
+            acceptsDrop: workspace.mode != .recents,
+            movesFiles: workspace.mode == .folder,
+            receive: { providers in
+                guard workspace.mode != .recents else { return false }
+                // Releasing on a tab targets its root, never a stale directory
+                // retained by the workspace that was visible before the dwell.
+                model.selectWorkspace(workspace.id)
+                return receiveDrop(providers, destination: workspace.rootURL, reorderLocal: false)
+            })
     }
 
     @ViewBuilder private func workspaceIcon(_ workspace: Workspace) -> some View {
@@ -519,6 +547,7 @@ struct HubView: View {
                 }.padding(14)
             }
         }
+        .marqueeFileSelection(context: fileDragContext, selection: model.selectedIDs) { model.selectedIDs = $0 }
     }
 
     private func gridCell(_ entry: FileEntry) -> some View {
@@ -534,6 +563,7 @@ struct HubView: View {
         .overlay(fileInteraction(for: entry))
         .overlay(dropIndicator(for: entry, beforeOnTop: model.settings.horizontalScroll))
         .onDrop(of: [hubFileDragType, .fileURL, .image, .url], isTargeted: dropBinding(for: entry.url)) { receiveItemDrop($0, entry: entry) }
+        .fileSelectionBounds(entry.url)
     }
 
     private var list: some View {
@@ -561,9 +591,11 @@ struct HubView: View {
                         .overlay(fileInteraction(for: entry))
                         .overlay(dropIndicator(for: entry, beforeOnTop: true))
                         .onDrop(of: [hubFileDragType, .fileURL, .image, .url], isTargeted: dropBinding(for: entry.url)) { receiveItemDrop($0, entry: entry) }
+                        .fileSelectionBounds(entry.url)
                     }
                 }.padding(.horizontal, 10).padding(.vertical, 5)
             }
+            .marqueeFileSelection(context: fileDragContext, selection: model.selectedIDs) { model.selectedIDs = $0 }
         }
     }
 
@@ -608,9 +640,11 @@ struct HubView: View {
                                         .overlay(fileInteraction(for: entry, navigateOnClick: true))
                                         .overlay(dropIndicator(for: entry, beforeOnTop: true))
                                         .onDrop(of: [hubFileDragType, .fileURL, .image, .url], isTargeted: dropBinding(for: entry.url)) { receiveItemDrop($0, entry: entry) }
+                                        .fileSelectionBounds(entry.url)
                                 }
                             }.padding(5)
                         }
+                        .marqueeFileSelection(context: fileDragContext, selection: model.selectedIDs) { model.selectedIDs = $0 }
                     }.frame(width: layout.directoryWidth)
                     Divider().frame(width: layout.separatorWidth)
                     if let entry = model.visibleEntries.first(where: { model.selectedIDs.contains($0.url) }) {
@@ -928,6 +962,10 @@ struct HubView: View {
         Button { model.viewMode = mode } label: { Image(systemName: symbol).font(.system(size: 11)).frame(width: 24, height: 22).background(model.viewMode == mode ? Color.primary.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 4)) }.buttonStyle(.plain).help(label)
     }
     private func handleKey(_ event: NSEvent) -> Bool {
+        if HubMarqueeSelectionState.isSelecting {
+            if event.keyCode == 53 { HubMarqueeSelectionState.cancel() }
+            return true
+        }
         guard !HubFileDragState.isDragging, !HubWorkspaceDragState.isDragging, !musicControlsFocused else { return false }
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         let command = flags.contains(.command)

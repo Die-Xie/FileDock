@@ -15,6 +15,7 @@ final class HubPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
     override func cancelOperation(_ sender: Any?) {
+        if HubMarqueeSelectionState.isSelecting { HubMarqueeSelectionState.cancel(); return }
         if HubFileDragState.isDragging || HubWorkspaceDragState.isDragging { return }
         hubDelegate?.hidePanel()
     }
@@ -164,7 +165,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
             guard let self else { return }
             if active {
                 self.suspendHotKeys()
-                self.panel.level = .floating
+                self.setPanelLevel(.floating)
             } else {
                 self.configureHotKeys()
                 self.updatePanelLevel()
@@ -393,6 +394,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
 
     private func handleKeyboard(_ event: NSEvent) -> Bool {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if panel.isKeyWindow, HubMarqueeSelectionState.isSelecting {
+            if event.keyCode == UInt16(kVK_Escape) { HubMarqueeSelectionState.cancel() }
+            return true
+        }
         guard !shortcutRecordingActive, !hasActiveDialog, !HubFileDragState.isDragging, !HubWorkspaceDragState.isDragging, panel.isKeyWindow else { return false }
         if flags.contains(.command), event.charactersIgnoringModifiers == "," { showSettings(); return true }
         if flags.contains(.command), flags.contains(.shift),
@@ -469,6 +474,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
 
     func hidePanel() {
         guard desiredVisible, !hasActiveDialog else { return }
+        HubMarqueeSelectionState.cancel()
         desiredVisible = false
         cornerKeepAliveFrame = nil
         music.setVisible(false)
@@ -591,10 +597,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         guard panel != nil else { return }
         let previewVisible = QLPreviewPanel.sharedPreviewPanelExists() && QLPreviewPanel.shared()?.isVisible == true
         // The modal coordinator owns levels until its scoped restoration ends.
-        guard !HubWindowPresentation.isPresentingDialog else { return }
+        guard !HubWindowPresentation.isPresentingDialog else {
+            if presentation.header.menuBarMayOverlap != embeddedAtNotch { presentation.header.menuBarMayOverlap = embeddedAtNotch }
+            return
+        }
         let level = HubWindowPresentation.browserLevel(embedded: embeddedAtNotch,
             auxiliaryVisible: settingsWindow?.isVisible == true || previewVisible || hasActiveDialog)
+        setPanelLevel(level)
+    }
+
+    private func setPanelLevel(_ level: NSWindow.Level) {
         if panel.level != level { panel.level = level }
+        // Yielding to Quick Look/settings also exposes the system menu bar.
+        // Keep the side controls below it until the embedded level is restored.
+        let overlap = embeddedAtNotch && level.rawValue < NSWindow.Level.statusBar.rawValue
+        if presentation.header.menuBarMayOverlap != overlap { presentation.header.menuBarMayOverlap = overlap }
     }
 
     func windowWillMove(_ notification: Notification) {
@@ -687,7 +704,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
             let bridgePoint = bridgeView.convert(bridgePanel.convertPoint(fromScreen: pointer), from: nil)
             let insideBridge = attachedToNotch && !embeddedAtNotch && bridgeView.containsVisiblePoint(bridgePoint)
             if insideSurface { panelPointerEntered = true }
-            if !HubFileDragState.isDragging, !HubWorkspaceDragState.isDragging, !panel.inLiveResize,
+            if !HubFileDragState.isDragging, !HubWorkspaceDragState.isDragging, !HubMarqueeSelectionState.isSelecting, !panel.inLiveResize,
                windowDragSession == nil, now.timeIntervalSince(lastRefresh) > 2 {
                 model.refreshInBackground(); lastRefresh = now
             }
@@ -872,7 +889,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
             settingsWindow = window
             settingsWindow?.appearance = panel.appearance
         }
-        panel.level = .floating
+        setPanelLevel(.floating)
         music.setConfigurationVisible(true)
         if settingsWindow?.isMiniaturized == true { settingsWindow?.deminiaturize(nil) }
         settingsWindow?.makeKeyAndOrderFront(nil)
@@ -911,7 +928,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         preview.dataSource = self
         preview.delegate = self
         preview.reloadData()
-        panel.level = .floating
+        setPanelLevel(.floating)
         preview.makeKeyAndOrderFront(nil)
     }
     func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int { previewURLs.count }

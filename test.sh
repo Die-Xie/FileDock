@@ -74,6 +74,18 @@ swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache
     Sources/WorkspaceHeaderLayout.swift Tests/WorkspaceHeaderLayoutTests.swift -o .build/workspace-header-tests
 .build/workspace-header-tests
 swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
+    Sources/NativeFileDrag.swift Sources/NativeWorkspaceDrag.swift Sources/WorkspaceFileDrop.swift Tests/WorkspaceSpringLoadingTests.swift -o .build/workspace-spring-tests \
+    -framework AppKit -framework SwiftUI -framework UniformTypeIdentifiers
+.build/workspace-spring-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
+    Sources/WorkspaceShortcut.swift Tests/WorkspaceShortcutTests.swift -o .build/workspace-shortcut-tests \
+    -framework AppKit -framework SwiftUI
+.build/workspace-shortcut-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
+    Sources/NativeFileDrag.swift Sources/NativeWorkspaceDrag.swift Sources/MarqueeSelection.swift Tests/MarqueeSelectionTests.swift -o .build/marquee-tests \
+    -framework AppKit -framework SwiftUI -framework UniformTypeIdentifiers
+.build/marquee-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
     Sources/EmbeddedMusicLayout.swift Tests/EmbeddedMusicLayoutTests.swift -o .build/embedded-music-tests
 .build/embedded-music-tests
 swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \

@@ -52,9 +52,9 @@ struct WorkspaceHeaderLayoutTests {
         near(widerControls.dragWidth, 32, "Controls must retain an explicit window drag area")
         precondition(check([80, 80, 80], side: 180, controls: 115).splitIndex == 3,
                      "Insufficient right space keeps one usable scrolling strip on the left")
-        near(check([], side: 310).controlsWidth, 132, "First layout reserves a safe control-width fallback")
-        near(check([], side: 310, controls: .nan).controlsWidth, 132, "Invalid measurements use the fallback")
-        near(check([], side: 310, controls: -10).controlsWidth, 132, "Negative measurements use the fallback")
+        near(check([], side: 310).controlsWidth, 148, "First layout reserves shortcut badges inside the control group")
+        near(check([], side: 310, controls: .nan).controlsWidth, 148, "Invalid measurements use the fallback")
+        near(check([], side: 310, controls: -10).controlsWidth, 148, "Negative measurements use the fallback")
         near(check([], side: 180, controls: 1_000).controlsWidth, 148, "Oversized measurements cannot invade the drag region")
 
         let resized = check([110, 100, 80, 120], side: 430, controls: 110)
@@ -64,6 +64,18 @@ struct WorkspaceHeaderLayoutTests {
         let invalid = HubWorkspaceHeaderLayout.make(tabWidths: [.nan, -.infinity, -10], sideWidth: .nan)
         near(invalid.leftViewportWidth + invalid.rightViewportWidth + invalid.controlsWidth + invalid.dragWidth, 0,
              "Transient invalid geometry cannot propagate non-finite view sizes")
+        for inset in [CGFloat(24), 38, 44] {
+            near(HubWorkspaceHeaderLayout.toolbarTopInset(embedded: true, split: true, safeTop: inset, menuBarMayOverlap: true),
+                 inset, "Quick Look/settings must reserve the complete menu depth above embedded side controls")
+            near(HubWorkspaceHeaderLayout.toolbarTopInset(embedded: true, split: true, safeTop: inset, menuBarMayOverlap: false),
+                 0, "Closing auxiliary UI restores the original split toolbar")
+            near(HubWorkspaceHeaderLayout.toolbarTopInset(embedded: true, split: false, safeTop: inset, menuBarMayOverlap: true),
+                 0, "The unsplit toolbar already reserves its hardware/menu inset")
+            near(HubWorkspaceHeaderLayout.toolbarTopInset(embedded: false, split: true, safeTop: inset, menuBarMayOverlap: true),
+                 0, "Detached and corner panels must not gain a top gap")
+        }
+        near(HubWorkspaceHeaderLayout.toolbarTopInset(embedded: true, split: true, safeTop: .nan, menuBarMayOverlap: true),
+             0, "Invalid geometry cannot create a non-finite header")
         print("PASS: Workspace header flows ordered tabs around the notch and reserves controls and window dragging")
     }
 }

@@ -6,13 +6,19 @@ struct HubWorkspaceHeaderLayout {
     static let tabSpacing: CGFloat = 5
     static let minimumTabWidth: CGFloat = 48
     static let minimumDragWidth: CGFloat = 32
-    static let fallbackControlsWidth: CGFloat = 132
+    static let fallbackControlsWidth: CGFloat = 148
 
     let splitIndex: Int
     let leftViewportWidth: CGFloat
     let rightViewportWidth: CGFloat
     let controlsWidth: CGFloat
     let dragWidth: CGFloat
+
+    static func toolbarTopInset(embedded: Bool, split: Bool, safeTop: CGFloat,
+                                menuBarMayOverlap: Bool) -> CGFloat {
+        guard embedded, split, menuBarMayOverlap, safeTop.isFinite else { return 0 }
+        return max(0, safeTop)
+    }
 
     static func make(tabWidths: [CGFloat], sideWidth: CGFloat,
                      measuredControlsWidth: CGFloat = 0) -> HubWorkspaceHeaderLayout {
