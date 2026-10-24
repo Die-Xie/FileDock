@@ -98,8 +98,11 @@ enum HubWindowPresentation {
     }
     private var snapshots: [ObjectIdentifier: Snapshot] = [:]
 
-    func synchronize(_ windows: [NSWindow], above browserLevel: NSWindow.Level) {
+    func synchronize(_ candidates: [NSWindow], excluding excludedWindows: [NSWindow] = [],
+                     above browserLevel: NSWindow.Level) {
         guard !HubWindowPresentation.isPresentingDialog else { return }
+        let excluded = Set(excludedWindows.map(ObjectIdentifier.init))
+        let windows = candidates.filter { !excluded.contains(ObjectIdentifier($0)) }
         let target = HubWindowPresentation.auxiliaryLevel(above: browserLevel)
         let ids = Set(windows.map(ObjectIdentifier.init))
         for (id, snapshot) in snapshots {

@@ -64,6 +64,10 @@ import AppKit
 
         let managed = window(level: .normal), color = window(level: .floating)
         let coordinator = HubAuxiliaryWindowLevels(), managedFrame = managed.frame
+        coordinator.synchronize([browser, bridge, managed], excluding: [browser, bridge], above: .statusBar)
+        expect(browser.level == .statusBar && bridge.level == .statusBar && managed.level.rawValue > browser.level.rawValue,
+               "Primary/connection/status-item windows cannot be elevated by broad auxiliary discovery")
+        coordinator.synchronize([], above: .floating)
         for _ in 0..<5 {
             coordinator.synchronize([managed, color, managed], above: .statusBar)
             expect(managed.level.rawValue > NSWindow.Level.statusBar.rawValue && color.level == managed.level,

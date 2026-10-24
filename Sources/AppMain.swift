@@ -655,7 +655,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
                     !($0 is QLPreviewPanel)
             })
         }
-        auxiliaryWindowLevels.synchronize(windows, above: panel.level)
+        let excluded = [panel, bridgePanel, funBadge, statusItem?.button?.window].compactMap { $0 }
+        auxiliaryWindowLevels.synchronize(windows, excluding: excluded, above: panel.level)
     }
 
     func windowWillMove(_ notification: Notification) {
