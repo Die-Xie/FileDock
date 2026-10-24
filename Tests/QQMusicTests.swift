@@ -57,7 +57,7 @@ struct QQMusicTests {
     }
 
     @MainActor private static func visibleController(_ backend: MockQQMusicBackend, pollInterval: TimeInterval = 3600) -> HubQQMusicController {
-        let controller = HubQQMusicController(backend: backend, pollInterval: pollInterval)
+        let controller = HubQQMusicController(backend: backend, pollInterval: pollInterval, openAccessSettings: {})
         controller.setEnabled(true)
         controller.setVisible(true)
         return controller
@@ -126,6 +126,7 @@ struct QQMusicTests {
         missing.configure(probe: HubQQMusicProbe(installed: false, pid: nil, trusted: false))
         let missingController = visibleController(missing)
         try await wait { missingController.status == .notInstalled }
+        precondition(missingController.setupAction == nil)
         precondition(missing.readCount == 0 && missing.requestCount == 0)
         missingController.setVisible(false)
 
@@ -133,6 +134,7 @@ struct QQMusicTests {
         stopped.configure(probe: HubQQMusicProbe(installed: true, pid: nil, trusted: true))
         let stoppedController = visibleController(stopped)
         try await wait { stoppedController.status == .notRunning }
+        precondition(stoppedController.setupAction == .launch)
         precondition(stopped.readCount == 0 && stopped.actionCount == 0)
         stoppedController.setVisible(false)
 
@@ -140,6 +142,7 @@ struct QQMusicTests {
         unauthorized.configure(probe: HubQQMusicProbe(installed: true, pid: 101, trusted: false))
         let permissionController = visibleController(unauthorized)
         try await wait { permissionController.status == .needsPermission }
+        precondition(permissionController.setupAction == .authorize)
         permissionController.setVisible(false)
         permissionController.setVisible(true)
         precondition(permissionController.status == .needsPermission, "Passive refresh must retain its useful permission state without button flicker")
@@ -153,7 +156,8 @@ struct QQMusicTests {
         permissionController.requestAccess()
         try await wait { permissionController.status == .ready }
         precondition(permissionController.title == "Ton Chin Kan" && permissionController.artist == "AKASAKI")
-        precondition(permissionController.isPlaying == false && unauthorized.requestCount == 2)
+        precondition(permissionController.isPlaying == false && unauthorized.requestCount == 1,
+                     "An existing grant must not request permission again")
 
         // System permission changes must be noticed by passive polling, without
         // asking again, and revocation must immediately disable stale controls.
@@ -201,6 +205,7 @@ struct QQMusicTests {
         wrongPID.configure(snapshot: HubQQMusicSnapshot(pid: 404, title: "Wrong process", artist: "", isPlaying: true))
         let wrongController = visibleController(wrongPID)
         try await wait { wrongController.status == .unavailable }
+        precondition(wrongController.setupAction == .recover)
         precondition(wrongController.title.isEmpty && wrongController.isPlaying == nil)
         wrongPID.configure(snapshot: HubQQMusicSnapshot(pid: 101, title: "Reconnected", artist: "Artist", isPlaying: false))
         wrongController.reconnect()
@@ -278,11 +283,15 @@ struct QQMusicTests {
                               actionGate: actionGate)
         busyController.togglePlayback()
         try await wait { busyBackend.actionCount == 1 }
+        busyController.setConfigurationVisible(true)
+        busyController.setVisible(false)
+        busyController.setVisible(true)
+        busyController.setConfigurationVisible(false)
         busyController.togglePlayback()
         busyController.previousTrack()
         busyController.nextTrack()
         busyController.reconnect()
-        precondition(busyBackend.actionCount == 1)
+        precondition(busyBackend.actionCount == 1, "Changing visible owners must not cancel an action or enable duplicate toggles")
         actionGate.signal()
         try await wait { busyController.title == "Completed action" }
         precondition(busyBackend.actionCount == 1)
@@ -309,7 +318,40 @@ struct QQMusicTests {
         delayedController.reconnect()
         precondition(delayed.actionCount == 0 && delayed.requestCount == 0)
 
-        print("PASS: QQ track parsing, exact AX control recognition, permission recovery, clicks during polling, queued-action cancellation, busy action rejection, PID validation, visibility gating and readback-only playback state")
+        // The settings page remains usable while the file panel is hidden.
+        // Opening system settings is injected so tests never touch native TCC.
+        let setupBackend = MockQQMusicBackend()
+        setupBackend.configure(probe: HubQQMusicProbe(installed: true, pid: 101, trusted: false))
+        var openedSettings = 0
+        let setupController = HubQQMusicController(backend: setupBackend, pollInterval: 3600,
+                                                  openAccessSettings: { openedSettings += 1 })
+        setupController.setEnabled(true)
+        setupController.setConfigurationVisible(true)
+        try await wait { setupController.status == .needsPermission }
+        precondition(setupController.connectionProbe?.installed == true && setupController.connectionProbe?.trusted == false)
+        setupController.performSetupAction()
+        try await wait { openedSettings == 1 }
+        precondition(setupBackend.requestCount == 1 && setupBackend.readCount == 0)
+        setupBackend.configure(probe: HubQQMusicProbe(installed: true, pid: 101, trusted: true))
+        NotificationCenter.default.post(name: NSApplication.didBecomeActiveNotification, object: nil)
+        try await wait { setupController.status == .ready }
+        precondition(setupController.setupAction == .check && setupController.connectionProbe?.trusted == true)
+        precondition(openedSettings == 1 && setupBackend.requestCount == 1, "Returning from settings must reconnect without another prompt")
+        setupController.performSetupAction()
+        try await wait { setupBackend.readCount >= 2 }
+        setupController.setVisible(true)
+        setupController.setConfigurationVisible(false)
+        let panelReads = setupBackend.readCount
+        NotificationCenter.default.post(name: NSApplication.didBecomeActiveNotification, object: nil)
+        try await wait { setupBackend.readCount > panelReads }
+        setupController.setVisible(false)
+        let hiddenReads = setupBackend.readCount
+        NotificationCenter.default.post(name: NSApplication.didBecomeActiveNotification, object: nil)
+        try await Task.sleep(nanoseconds: 30_000_000)
+        precondition(setupBackend.readCount == hiddenReads && setupBackend.requestCount == 1,
+                     "Closing both panel and settings must stop background reads and permission requests")
+
+        print("PASS: QQ parsing, control identity, contextual setup actions, direct permission navigation, settings-only observation, return-to-app recovery, no repeated prompts, hidden polling, read/action cancellation and playback readback")
         print("LIMIT: Tests use a simulated backend; native QQ Music AX compatibility and system authorization require explicit UI verification")
     }
 }

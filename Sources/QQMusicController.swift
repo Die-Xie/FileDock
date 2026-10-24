@@ -3,7 +3,7 @@ import ApplicationServices
 import Combine
 import OSLog
 
-struct HubQQMusicProbe: Sendable {
+struct HubQQMusicProbe: Sendable, Equatable {
     let installed: Bool
     let pid: pid_t?
     let trusted: Bool
@@ -131,6 +131,7 @@ final class HubQQMusicController: ObservableObject {
     @Published private(set) var isPlaying: Bool?
     @Published private(set) var status: Status = .notRunning
     @Published private(set) var message: String?
+    @Published private(set) var connectionProbe: HubQQMusicProbe?
 
     private let backend: HubQQMusicBackend
     private let queue = DispatchQueue(label: "app.filedock.qqmusic.accessibility", qos: .userInitiated)
@@ -139,23 +140,47 @@ final class HubQQMusicController: ObservableObject {
     private var generation: UInt64 = 0
     private var enabled = false
     private var visible = false
+    private var configurationVisible = false
+    private var canObserve: Bool { enabled && (visible || configurationVisible) }
+    private let openAccessSettings: () -> Void
+    private var activationObserver: NSObjectProtocol?
     private enum RequestKind { case read, action }
     private var requestKind: RequestKind?
     private var busy: Bool { requestKind != nil }
     private var targetPID: pid_t?
     private var timer: Timer?
 
-    init(backend: HubQQMusicBackend = HubQQMusicAXBackend(), pollInterval: TimeInterval = 1.5) {
+    init(backend: HubQQMusicBackend = HubQQMusicAXBackend(), pollInterval: TimeInterval = 1.5,
+         openAccessSettings: @escaping () -> Void = {
+             if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+                 NSWorkspace.shared.open(url)
+             }
+         }) {
         self.backend = backend
         self.pollInterval = max(1, pollInterval)
+        self.openAccessSettings = openAccessSettings
+        activationObserver = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.reconnect() }
+        }
     }
 
-    deinit { timer?.invalidate(); _ = epoch.advance() }
+    deinit {
+        timer?.invalidate(); _ = epoch.advance()
+        if let activationObserver { NotificationCenter.default.removeObserver(activationObserver) }
+    }
+
+    func setConfigurationVisible(_ value: Bool) {
+        guard configurationVisible != value else { return }
+        let wasObserving = canObserve
+        configurationVisible = value
+        if wasObserving != canObserve { updatePolling() }
+    }
 
     func setVisible(_ value: Bool) {
         guard visible != value else { return }
+        let wasObserving = canObserve
         visible = value
-        updatePolling()
+        if wasObserving != canObserve { updatePolling() }
     }
 
     func setEnabled(_ value: Bool) {
@@ -169,7 +194,7 @@ final class HubQQMusicController: ObservableObject {
         timer = nil
         generation = epoch.advance()
         requestKind = nil
-        guard enabled && visible else { return }
+        guard canObserve else { return }
         refresh()
         let timer = Timer(timeInterval: pollInterval, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.refresh() }
@@ -190,7 +215,7 @@ final class HubQQMusicController: ObservableObject {
                 guard let self else { return }
                 if let error {
                     self.clear(status: .unavailable, message: "无法打开 QQ 音乐：\(error.localizedDescription)")
-                } else if self.enabled && self.visible {
+                } else if self.canObserve {
                     self.generation = self.epoch.advance()
                     self.requestKind = nil
                     self.refresh()
@@ -201,19 +226,50 @@ final class HubQQMusicController: ObservableObject {
 
     // This is the only path that may ask macOS to show an Accessibility prompt.
     func requestAccess() {
-        guard enabled && visible else { return }
+        guard canObserve, requestKind != .action else { return }
         submit(prompt: true)
     }
 
     // A transient player or layout failure is not a request for system access.
-    func reconnect() { refresh() }
+    func reconnect() {
+        guard canObserve, requestKind != .action else { return }
+        submit()
+    }
+
+    enum SetupAction { case authorize, launch, recover, check }
+    var setupAction: SetupAction? {
+        switch status {
+        case .needsPermission: return .authorize
+        case .notRunning: return .launch
+        case .unavailable: return .recover
+        case .ready: return .check
+        case .notInstalled, .connecting: return nil
+        }
+    }
+    var setupActionTitle: String {
+        switch setupAction {
+        case .authorize: return "打开授权设置"
+        case .launch: return "打开 QQ 音乐"
+        case .recover: return "打开主窗口并重连"
+        case .check: return "检查连接"
+        case nil: return status == .notInstalled ? "未安装 QQ 音乐" : "正在连接…"
+        }
+    }
+    func performSetupAction() {
+        switch setupAction {
+        case .authorize: requestAccess()
+        case .launch, .recover: openQQMusic()
+        case .check: reconnect()
+        case nil: break
+        }
+    }
 
     func togglePlayback() { control(.toggle) }
     func previousTrack() { control(.previous) }
     func nextTrack() { control(.next) }
 
     private func control(_ action: HubQQMusicAction) {
-        guard enabled && visible && requestKind != .action && status == .ready, let pid = targetPID else { return }
+        guard canObserve && requestKind != .action && status == .ready, let pid = targetPID else { return }
         // A click supersedes a passive read, then executes on the same serial
         // queue once that read finishes. Its stale result cannot overwrite the
         // action, while further clicks cannot enqueue duplicate toggles.
@@ -221,7 +277,7 @@ final class HubQQMusicController: ObservableObject {
     }
 
     private func refresh() {
-        guard enabled && visible && !busy else { return }
+        guard canObserve && !busy else { return }
         submit()
     }
 
@@ -235,7 +291,7 @@ final class HubQQMusicController: ObservableObject {
         let backend = backend, epoch = epoch
         queue.async { [weak self] in
             guard epoch.contains(request) else { return }
-            if prompt { _ = backend.requestAccess() }
+            if prompt && !backend.probe().trusted { _ = backend.requestAccess() }
             guard epoch.contains(request) else { return }
             let probe = backend.probe()
             var result: Result<HubQQMusicSnapshot, HubQQMusicFailure>?
@@ -247,14 +303,16 @@ final class HubQQMusicController: ObservableObject {
                 }
             }
             DispatchQueue.main.async {
-                guard let self, self.generation == request, epoch.contains(request), self.enabled && self.visible else { return }
+                guard let self, self.generation == request, epoch.contains(request), self.canObserve else { return }
                 self.requestKind = nil
                 self.accept(probe: probe, result: result)
+                if prompt && !probe.trusted { self.openAccessSettings() }
             }
         }
     }
 
     private func accept(probe: HubQQMusicProbe, result: Result<HubQQMusicSnapshot, HubQQMusicFailure>?) {
+        if connectionProbe != probe { connectionProbe = probe }
         guard probe.installed else { clear(status: .notInstalled, message: "尚未安装 QQ 音乐。"); return }
         guard let pid = probe.pid else { clear(status: .notRunning, message: "打开 QQ 音乐后即可连接。"); return }
         guard probe.trusted else {

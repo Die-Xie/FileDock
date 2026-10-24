@@ -232,6 +232,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         guard !hasActiveDialog else { return }
         hidePanel()
         settingsWindow?.orderOut(nil)
+        music.setConfigurationVisible(false)
     }
     @objc private func quit() { NSApp.terminate(nil) }
 
@@ -321,7 +322,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
                 self.windowDragReleased = false
             }
         })
-        for name in ["HubPreview", "HubShare", "HubSettings", "HubLaunchAtLogin", "HubHelp", "HubShortcutRecording"] {
+        for name in ["HubPreview", "HubShare", "HubSettings", "HubMusicSettings", "HubLaunchAtLogin", "HubHelp", "HubShortcutRecording"] {
             let token = NotificationCenter.default.addObserver(forName: Notification.Name(name), object: nil, queue: .main) { [weak self] note in
                 MainActor.assumeIsolated {
                     guard let self else { return }
@@ -329,6 +330,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
                     case "HubPreview": self.showPreview(note.userInfo?["urls"] as? [URL] ?? self.model.selectedURLs)
                     case "HubShare": self.share(note.userInfo?["urls"] as? [URL] ?? self.model.selectedURLs)
                     case "HubSettings": self.showSettings()
+                    case "HubMusicSettings":
+                        self.showSettings()
+                        DispatchQueue.main.async { NotificationCenter.default.post(name: Notification.Name("HubSelectMusicSettings"), object: nil) }
                     case "HubLaunchAtLogin": self.setLoginItem(note.userInfo?["enabled"] as? Bool ?? false)
                     case "HubShortcutRecording":
                         self.shortcutRecordingActive = note.userInfo?["active"] as? Bool ?? false
@@ -862,14 +866,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
             window.level = HubWindowPresentation.auxiliaryLevel
             window.collectionBehavior = [.fullScreenAuxiliary]
             window.isReleasedWhenClosed = false
-            window.contentView = NSHostingView(rootView: HubSettingsView(model: model))
+            window.delegate = self
+            window.contentView = NSHostingView(rootView: HubSettingsView(model: model, music: music))
             window.center()
             settingsWindow = window
             settingsWindow?.appearance = panel.appearance
         }
         panel.level = .floating
+        music.setConfigurationVisible(true)
+        if settingsWindow?.isMiniaturized == true { settingsWindow?.deminiaturize(nil) }
         settingsWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        if let window = notification.object as? NSWindow, window === settingsWindow {
+            music.setConfigurationVisible(false)
+        }
+    }
+
+    func windowDidMiniaturize(_ notification: Notification) {
+        if let window = notification.object as? NSWindow, window === settingsWindow { music.setConfigurationVisible(false) }
+    }
+
+    func windowDidDeminiaturize(_ notification: Notification) {
+        if let window = notification.object as? NSWindow, window === settingsWindow { music.setConfigurationVisible(true) }
     }
 
     private func setLoginItem(_ enabled: Bool) {

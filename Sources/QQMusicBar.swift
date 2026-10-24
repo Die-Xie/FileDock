@@ -28,19 +28,18 @@ struct HubQQMusicBar: View {
                     .font(.system(size: 12, weight: .medium)).lineLimit(1)
                 Text(subtitle).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
             }.frame(maxWidth: .infinity, alignment: .leading)
-            if controller.status == .needsPermission {
-                Button("连接 QQ 音乐") { controller.requestAccess() }.controlSize(.small)
-                    .help("授权辅助功能，以读取曲目并操作 QQ 音乐的播放控件")
-            } else if controller.status == .notRunning {
-                Button("打开 QQ 音乐") { controller.openQQMusic() }.controlSize(.small)
-            } else if controller.status == .unavailable {
-                Button("重新连接") { controller.reconnect() }.controlSize(.small)
+            if controller.status != .ready {
+                Button(controller.setupActionTitle) { controller.performSetupAction() }.controlSize(.small)
+                    .disabled(controller.setupAction == nil)
             }
             HStack(spacing: 3) {
                 control("backward.end.fill", label: "QQ 音乐上一首") { controller.previousTrack() }
                 control(playSymbol, label: playLabel, prominent: true) { controller.togglePlayback() }
                 control("forward.end.fill", label: "QQ 音乐下一首") { controller.nextTrack() }
             }.disabled(controller.status != .ready)
+            Button(action: showConnectionSettings) {
+                Image(systemName: "gearshape").frame(width: 24, height: 30)
+            }.buttonStyle(.plain).help("音乐连接设置").accessibilityLabel("音乐连接设置")
             Button { controller.openQQMusic() } label: {
                 Image(systemName: "arrow.up.right.square").font(.system(size: 13)).frame(width: 24, height: 30)
             }.buttonStyle(.plain).foregroundStyle(.secondary).help("打开 QQ 音乐窗口")
@@ -77,7 +76,7 @@ struct HubQQMusicBar: View {
                     }.font(.system(size: 10, weight: .medium))
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }.buttonStyle(.plain)
-                    .disabled(controller.status == .notInstalled || controller.status == .connecting)
+                    .disabled(controller.status == .connecting)
                     .accessibilityLabel(connectionLabel)
                     .focused($focusedCompactControl, equals: 3)
             }
@@ -100,6 +99,7 @@ struct HubQQMusicBar: View {
             Text(controller.title.isEmpty ? "QQ 音乐" : controller.title)
             Text(subtitle)
             Divider()
+            Button("音乐连接设置…", action: showConnectionSettings)
             Button("打开 QQ 音乐") { controller.openQQMusic() }.disabled(controller.status == .notInstalled)
             if controller.status == .needsPermission {
                 Button("连接 QQ 音乐") { controller.requestAccess() }
@@ -115,9 +115,9 @@ struct HubQQMusicBar: View {
 
     private var connectionLabel: String {
         switch controller.status {
-        case .needsPermission: return "连接 QQ 音乐"
-        case .notRunning: return "打开 QQ 音乐"
-        case .unavailable: return "重新连接"
+        case .needsPermission: return "授权 QQ 音乐控制"
+        case .notRunning: return "连接 QQ 音乐"
+        case .unavailable: return "修复 QQ 音乐连接"
         case .notInstalled: return "未安装 QQ 音乐"
         case .connecting: return "正在连接…"
         case .ready: return "QQ 音乐"
@@ -125,12 +125,11 @@ struct HubQQMusicBar: View {
     }
 
     private func connect() {
-        switch controller.status {
-        case .needsPermission: controller.requestAccess()
-        case .notRunning: controller.openQQMusic()
-        case .unavailable: controller.reconnect()
-        default: break
-        }
+        showConnectionSettings()
+    }
+
+    private func showConnectionSettings() {
+        NotificationCenter.default.post(name: Notification.Name("HubMusicSettings"), object: nil)
     }
 
     private func compactControl(_ symbol: String, label: String, prominent: Bool = false, focus: Int,

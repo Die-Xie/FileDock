@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 @MainActor
 struct HubSettingsView: View {
     @ObservedObject var model: HubModel
+    @ObservedObject var music: HubQQMusicController
     @State private var selectedTab = 0
     @State private var blockedApplicationError: String?
     var body: some View {
@@ -13,9 +14,24 @@ struct HubSettingsView: View {
             general.tabItem { Label("通用", systemImage: "gearshape") }.tag(0)
             appearance.tabItem { Label("外观", systemImage: "paintpalette") }.tag(1)
             shortcuts.tabItem { Label("快捷键", systemImage: "keyboard") }.tag(2)
-            about.tabItem { Label("关于", systemImage: "info.circle") }.tag(3)
+            musicSettings.tabItem { Label("音乐", systemImage: "music.note") }.tag(3)
+            about.tabItem { Label("关于", systemImage: "info.circle") }.tag(4)
         }
         .padding(20).frame(width: 550, height: 495)
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("HubSelectMusicSettings"))) { _ in selectedTab = 3 }
+    }
+
+    private var musicSettings: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Toggle("显示 QQ 音乐控制", isOn: Binding(get: { model.settings.resolvedQQMusicEnabled }, set: { model.settings.qqMusicEnabled = $0 }))
+                if model.settings.resolvedQQMusicEnabled {
+                    HubQQMusicSetupView(controller: music)
+                }
+                Text("嵌入模式显示歌曲信息，悬停后控制播放；其他模式使用底部播放栏。授权完成后自动连接，无需每次配置。")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }.padding(8)
+        }
     }
 
     private var general: some View {
@@ -131,11 +147,6 @@ struct HubSettingsView: View {
                     Toggle("登录时启动", isOn: Binding(get: { model.settings.launchAtLogin }, set: { enabled in NotificationCenter.default.post(name: Notification.Name("HubLaunchAtLogin"), object: nil, userInfo: ["enabled": enabled]) }))
                     Text("如果系统要求确认，请在「系统设置 → 通用 → 登录项」中允许。")
                         .font(.caption).foregroundStyle(.secondary)
-                }
-                section("音乐控制") {
-                    Toggle("在面板中显示 QQ 音乐控制", isOn: Binding(get: { model.settings.resolvedQQMusicEnabled }, set: { model.settings.qqMusicEnabled = $0 }))
-                    Text("嵌入模式在刘海下方显示歌曲信息，悬停后控制播放；其他模式使用底部播放栏。")
-                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
                 section("文件") {
                     Toggle("在收藏旁显示文件暂存区", isOn: Binding(get: { model.settings.resolvedStagingEnabled }, set: { model.setStagingEnabled($0) }))
