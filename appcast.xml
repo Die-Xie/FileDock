@@ -1,0 +1,28 @@
+<?xml version="1.0" standalone="yes"?><!-- sparkle-sign-warning:
+IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+    <channel>
+        <title>FileDock</title>
+        <item>
+            <title>1.24.0</title>
+            <pubDate>Sun, 25 Oct 2026 23:01:19 +0800</pubDate>
+            <link>https://github.com/Die-Xie/FileDock</link>
+            <sparkle:version>51</sparkle:version>
+            <sparkle:shortVersionString>1.24.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown"><![CDATA[# FileDock 1.24.0
+
+- 系统“音乐”提供真实播放位置与时长时，在嵌入歌曲信息下方和底部播放栏显示细进度条。
+- QQ、网易云音乐及未知时长内容不显示进度轨道或占位提示；原有连接与播放控制保留。
+- 进度使用独立原生图层更新，不增加逐帧计时器；暂停、隐藏和减少动态效果状态停止附加动画。读取进度沿用已有后台轮询，有单独的短时限，不请求额外权限。
+- 设置侧栏底部新增「退出 FileDock」，先提交尚未保存的延迟调节，再沿用应用原有退出流程，保存配置并等待文件传输完成。
+
+支持 macOS 13 及以上，提供 Apple Silicon / Intel 通用版本。当前发行包已签名，尚未经过 Apple 公证。
+]]></description>
+            <enclosure url="https://github.com/Die-Xie/FileDock/releases/download/v1.24.0/FileDock.zip" length="6390651" type="application/octet-stream" sparkle:edSignature="HvMdstJmPBd+4m/HpCMHkBvXWWMbG7BKVw1g9dybHmr8rG5MVehmtGLmi5XCK3IsNxv4j7DdOrWHU37n4UruDg=="></enclosure>
+        </item>
+    </channel>
+</rss><!-- sparkle-signatures:
+edSignature: O31dUAP4Fq9l7NgcxwMj8CJ3SWr+Iib+STH7FVKqQisxgEnZz2s8vG7Ldeyib0qbgqhjf8pQ01XhxXmcV7qXCw==
+length: 1957
+-->
