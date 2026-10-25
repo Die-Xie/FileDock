@@ -34,6 +34,8 @@ final class HubPanel: NSPanel {
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @preconcurrency QLPreviewPanelDataSource, QLPreviewPanelDelegate {
     private var model: HubModel!
     private var music: HubQQMusicController!
+    private let sharing = HubAirDropController()
+    private let sharingWindows = HubSharingWindowSuspension()
     private var updater: FileDockUpdater!
     private var pendingTermination: Task<Void, Never>?
     private var panel: HubPanel!
@@ -94,11 +96,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
             return URL(fileURLWithPath: CommandLine.arguments[index + 1])
         }
         model = HubModel(storageURL: fixture, demo: demo)
+        model.externalFileWorkInProgress = { HubImportActivity.isBusy }
+        sharing.onError = { [weak self] in self?.model.errorMessage = $0 }
+        sharing.presentationStateDidChange = { [weak self] in self?.setSharingPresentation($0) }
+        sharing.$state.sink { [weak self] state in
+            self?.model.sharingInProgress = state != .idle
+        }.store(in: &subscriptions)
         music = HubQQMusicController()
+        music.setPlayerSelection(HubMusicPlayerSelection(rawValue: model.settings.resolvedMusicPlayer) ?? .automatic)
         updater = FileDockUpdater()
+        updater.presentationBusy = { [weak self] in
+            self?.sharing.isBusy == true || HubWindowPresentation.isPresentingDialog || NSApp.modalWindow != nil || NSApp.windows.contains { $0.attachedSheet != nil }
+        }
         updater.filesBusy = { [weak self] in
             guard let self else { return false }
-            return self.model.stagingTransferInProgress || self.model.fileOperationsInProgress > 0 ||
+            return self.model.stagingTransferInProgress || self.model.fileOperationsInProgress > 0 || self.sharing.isBusy ||
                 HubImportActivity.isBusy || HubFileDragState.isDragging || HubWorkspaceDragState.isDragging ||
                 HubMarqueeSelectionState.isSelecting || HubWindowPresentation.isPresentingDialog || NSApp.modalWindow != nil || NSApp.windows.contains { $0.attachedSheet != nil }
         }
@@ -354,13 +366,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
                 self.windowDragReleased = false
             }
         })
-        for name in ["HubPreview", "HubShare", "HubSettings", "HubMusicSettings", "HubLaunchAtLogin", "HubHelp", "HubShortcutRecording"] {
+        for name in ["HubPreview", "HubShare", "HubAirDrop", "HubSettings", "HubMusicSettings", "HubLaunchAtLogin", "HubHelp", "HubShortcutRecording"] {
             let token = NotificationCenter.default.addObserver(forName: Notification.Name(name), object: nil, queue: .main) { [weak self] note in
                 MainActor.assumeIsolated {
                     guard let self else { return }
                     switch name {
                     case "HubPreview": self.showPreview(note.userInfo?["urls"] as? [URL] ?? self.model.selectedURLs)
                     case "HubShare": self.share(note.userInfo?["urls"] as? [URL] ?? self.model.selectedURLs)
+                    case "HubAirDrop": self.sendAirDrop(note.userInfo?["urls"] as? [URL] ?? self.model.selectedURLs)
                     case "HubSettings": self.showSettings()
                     case "HubMusicSettings":
                         self.showSettings()
@@ -842,11 +855,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
     }
 
     private var hasActiveDialog: Bool {
-        updater?.sessionInProgress == true || HubWindowPresentation.isPresentingDialog || NSApp.modalWindow != nil || NSApp.windows.contains { $0.attachedSheet != nil }
+        sharing.isBusy || updater?.sessionInProgress == true || HubWindowPresentation.isPresentingDialog || NSApp.modalWindow != nil || NSApp.windows.contains { $0.attachedSheet != nil }
     }
 
     private func applySettings() {
         guard model != nil, panel != nil else { return }
+        music.setPlayerSelection(HubMusicPlayerSelection(rawValue: model.settings.resolvedMusicPlayer) ?? .automatic)
         music.setEnabled(model.settings.resolvedQQMusicEnabled)
         if registeredTriggerMode != model.settings.triggerMode || registeredShortcuts != model.settings.resolvedGlobalShortcuts { configureHotKeys() }
         preserveMenuBarAccess()
@@ -927,7 +941,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
     }
 
     @objc private func checkForUpdates() {
-        guard !HubWindowPresentation.isPresentingDialog, NSApp.modalWindow == nil else { return }
+        guard !hasActiveDialog else { return }
         if QLPreviewPanel.sharedPreviewPanelExists() { QLPreviewPanel.shared()?.orderOut(nil) }
         setPanelLevel(.normal)
         updater.checkForUpdates()
@@ -1003,9 +1017,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
 
     private func share(_ urls: [URL]) {
         guard !hasActiveDialog else { return }
+        guard canStartSharing else { return }
         guard !urls.isEmpty, let view = panel.contentView else { return }
-        NSSharingServicePicker(items: urls).show(relativeTo: NSRect(x: view.bounds.midX, y: 30, width: 1, height: 1),
-                                                 of: view, preferredEdge: .minY)
+        sharing.showPicker(urls, securityScopedURLs: model.securityScopesForSharing(urls),
+                           relativeTo: NSRect(x: view.bounds.midX, y: 30, width: 1, height: 1), of: view,
+                           allowsAirDrop: model.settings.resolvedAirDropEnabled)
+    }
+
+    private func sendAirDrop(_ urls: [URL]) {
+        guard !hasActiveDialog, !urls.isEmpty else { return }
+        guard model.settings.resolvedAirDropEnabled else { return }
+        guard canStartSharing else { return }
+        sharing.send(urls, securityScopedURLs: model.securityScopesForSharing(urls), from: panel)
+    }
+
+    private var canStartSharing: Bool {
+        guard model.fileOperationsInProgress == 0, !model.stagingTransferInProgress, !HubImportActivity.isBusy else {
+            model.errorMessage = "请等待当前文件操作完成后再共享。"
+            return false
+        }
+        return true
+    }
+
+    private func setSharingPresentation(_ active: Bool) {
+        hoverActivation.cancelPendingDwell()
+        hoverDismissal.reset()
+        if active {
+            transitionGeneration += 1
+            surface.cancelAnimationsAndShow()
+            music.setVisible(false)
+            // A Quick Look panel may own the same URLs. Closing it also avoids
+            // restoring stale previews after the system sharing UI finishes.
+            if QLPreviewPanel.sharedPreviewPanelExists() { QLPreviewPanel.shared()?.orderOut(nil) }
+            var windows = [panel, bridgePanel, settingsWindow].compactMap { $0 }
+            if NSColorPanel.sharedColorPanelExists { windows.append(NSColorPanel.shared) }
+            sharingWindows.begin(windows)
+            funBadge?.orderOut(nil)
+        } else {
+            let restore = !NSApp.isHidden && pendingTermination == nil
+            sharingWindows.end(restoring: restore)
+            if !restore { desiredVisible = false; presentation.previewVisible = false }
+            music.setVisible(restore && desiredVisible)
+            panelPointerEntered = false
+            lastRefresh = Date()
+        }
     }
 
     @objc private func showHelp() {
@@ -1057,10 +1112,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         // File transfers run off-main. Quitting (including install-on-quit)
         // waits for actual writes instead of terminating halfway through a move.
-        guard model != nil, model.fileOperationsInProgress > 0 || model.stagingTransferInProgress || HubImportActivity.isBusy else { return .terminateNow }
+        sharing.cancelPreparation()
+        guard model != nil, model.fileOperationsInProgress > 0 || model.stagingTransferInProgress || HubImportActivity.isBusy || sharing.isBusy else { return .terminateNow }
         if pendingTermination == nil {
             pendingTermination = Task { [weak self] in
-                while let self, self.model.fileOperationsInProgress > 0 || self.model.stagingTransferInProgress || HubImportActivity.isBusy {
+                while let self, self.model.fileOperationsInProgress > 0 || self.model.stagingTransferInProgress || HubImportActivity.isBusy || self.sharing.isBusy {
                     do { try await Task.sleep(nanoseconds: 100_000_000) } catch { return }
                 }
                 guard self != nil, !Task.isCancelled else { return }

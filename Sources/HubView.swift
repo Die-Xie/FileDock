@@ -356,6 +356,15 @@ struct HubView: View {
                 .disabled(model.stagedURLs.isEmpty || model.stagingTransferInProgress)
             Button(model.selectedURLs.isEmpty ? "移动全部到…" : "移动所选到…") { model.chooseStagingTransfer(copy: false) }
                 .disabled(model.stagedURLs.isEmpty || model.stagingTransferInProgress)
+            if model.settings.resolvedAirDropEnabled {
+                Button {
+                    let urls = model.selectedURLs.isEmpty ? model.stagedURLs : model.selectedURLs
+                    NotificationCenter.default.post(name: Notification.Name("HubAirDrop"), object: nil, userInfo: ["urls": urls])
+                } label: { Image(systemName: "airplayaudio") }
+                    .disabled(model.stagedURLs.isEmpty || model.stagingTransferInProgress || model.sharingInProgress || model.fileOperationsInProgress > 0)
+                    .help(model.selectedURLs.isEmpty ? "通过 AirDrop 发送全部暂存文件" : "通过 AirDrop 发送所选文件")
+                    .accessibilityLabel("AirDrop")
+            }
             Button { model.clearStagedFiles() } label: { Image(systemName: "minus.circle") }
                 .disabled(model.stagedURLs.isEmpty || model.stagingTransferInProgress)
                 .help("清空暂存引用，保留原文件").accessibilityLabel("清空暂存引用")
@@ -552,7 +561,11 @@ struct HubView: View {
     }
 
     @ViewBuilder private func workspaceIcon(_ workspace: Workspace) -> some View {
-        if let path = workspace.customIconPath, let image = NSImage(contentsOfFile: path) { Image(nsImage: image).resizable().scaledToFit() }
+        if let path = workspace.customIconPath {
+            HubWorkspaceCustomIcon(path: path, fallbackSymbol: workspace.symbol,
+                                   tint: model.selectedWorkspaceID == workspace.id ? .accentColor : .secondary,
+                                   isVisible: presentation.previewVisible)
+        }
         else { Image(systemName: workspace.symbol.isEmpty ? "folder" : workspace.symbol).foregroundStyle(model.selectedWorkspaceID == workspace.id ? Color.accentColor : Color.secondary) }
     }
 
@@ -880,6 +893,11 @@ struct HubView: View {
                 .disabled(model.stagingTransferInProgress)
         }
         HubMenuButton("共享…", systemImage: "square.and.arrow.up") { NotificationCenter.default.post(name: Notification.Name("HubShare"), object: nil, userInfo: ["urls": urls]) }
+            .disabled(model.sharingInProgress || model.stagingTransferInProgress || model.fileOperationsInProgress > 0)
+        if model.settings.resolvedAirDropEnabled {
+            HubMenuButton("AirDrop…", systemImage: "airplayaudio") { NotificationCenter.default.post(name: Notification.Name("HubAirDrop"), object: nil, userInfo: ["urls": urls]) }
+            .disabled(model.sharingInProgress || model.stagingTransferInProgress || model.fileOperationsInProgress > 0)
+        }
         if model.selectedWorkspace?.mode == .references && model.currentURL == nil {
             Divider()
             if let paths = model.selectedWorkspace?.referencePaths, let index = paths.firstIndex(of: entry.url.path) {
@@ -1098,7 +1116,7 @@ private struct HubKeyMonitor: NSViewRepresentable {
         VStack(alignment: .leading, spacing: 17) {
             Text("编辑工作区").font(.title3.bold())
             HStack(spacing: 12) {
-                if let path = workspace.customIconPath, let image = NSImage(contentsOfFile: path) { Image(nsImage: image).resizable().scaledToFit().frame(width: 36, height: 36) } else { Image(systemName: workspace.symbol).font(.system(size: 30)).foregroundStyle(Color.accentColor).frame(width: 42) }
+                if let path = workspace.customIconPath { HubWorkspaceCustomIcon(path: path, fallbackSymbol: workspace.symbol, tint: .accentColor).frame(width: 36, height: 36) } else { Image(systemName: workspace.symbol).font(.system(size: 30)).foregroundStyle(Color.accentColor).frame(width: 42) }
                 TextField("工作区名称", text: $workspace.name).textFieldStyle(.roundedBorder)
             }
             Text(workspace.mode == .folder ? "文件夹：\(workspace.rootPath ?? "未选择")" : workspace.mode == .recents ? "最近使用 · 自动更新最近打开的文件" : "文件与文件夹合集 · \(workspace.referencePaths.count) 个引用").font(.caption).foregroundStyle(.secondary).lineLimit(2)

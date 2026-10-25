@@ -183,7 +183,7 @@ import Foundation
         } catch HubFileError.partial { }
         precondition(model.stagedURLs == [file] && fm.fileExists(atPath: file.path))
         // A successful move updates references in other collections, then drains only the shelf.
-        let collection = model.addWorkspace(name: "Other references", mode: .references, urls: [file])
+        let collection = model.addWorkspace(name: "Other references", mode: .references, urls: [file])!
         let targets = try await model.transferStagedFiles([file], to: destination, copy: false)
         precondition(targets.count == 1 && targets[0].lastPathComponent == "same copy 2.txt")
         precondition(!fm.fileExists(atPath: file.path) && model.stagedURLs.isEmpty)
@@ -207,8 +207,8 @@ import Foundation
             preconditionFailure("A folder must not be moved into itself")
         } catch HubFileError.partial { }
         precondition(model.stagedURLs.map(\.path) == [folder.path, child.path])
-        let references = model.addWorkspace(name: "Nested references", mode: .references, urls: [child])
-        let folderWorkspace = model.addWorkspace(name: "Folder", mode: .folder, urls: [folder])
+        let references = model.addWorkspace(name: "Nested references", mode: .references, urls: [child])!
+        let folderWorkspace = model.addWorkspace(name: "Folder", mode: .folder, urls: [folder])!
         let targets = try await model.transferStagedFiles([folder, child], to: destination, copy: false)
         precondition(targets.count == 1, "Parent and child must transfer once as a single directory")
         let movedChild = targets[0].appendingPathComponent("child.txt")
@@ -235,7 +235,7 @@ import Foundation
         let storage = base.appendingPathComponent("alias-transfer/config.json")
         let model = makeTestModel(storageURL: storage)
         model.stageFiles([file])
-        let collection = model.addWorkspace(name: "Keep moved reference", mode: .references, urls: [file])
+        let collection = model.addWorkspace(name: "Keep moved reference", mode: .references, urls: [file])!
         let targets = try await model.transferStagedFiles([file], to: aliasedDestination, copy: false)
         precondition(model.stagedURLs.isEmpty, "Successful moves must drain the shelf even when the destination uses /private/var")
         precondition(targets == [destination.appendingPathComponent(file.lastPathComponent).standardizedFileURL])
@@ -263,11 +263,11 @@ import Foundation
             return Set((json["bookmarks"] as! [String: String]).keys.map { URL(fileURLWithPath: $0).standardizedFileURL.path })
         }
         try expect(bookmarks().isSuperset(of: files.map(\.path)))
-        let collection = model.addWorkspace(name: "Retained child", mode: .references, urls: [files[0]])
+        let collection = model.addWorkspace(name: "Retained child", mode: .references, urls: [files[0]])!
         model.clearStagedFiles()
         try expect(bookmarks() == [files[0].path], "Clearing the shelf removes unused bookmarks while retaining shared references")
         // A parent security scope is still useful when only a child remains referenced.
-        let folder = model.addWorkspace(name: "Parent authorization", mode: .folder, urls: [root])
+        let folder = model.addWorkspace(name: "Parent authorization", mode: .folder, urls: [root])!
         model.selectWorkspace(collection.id)
         model.removeWorkspace(folder.id)
         try expect(bookmarks().contains(root.path), "A retained child must keep its authorized parent scope")

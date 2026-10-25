@@ -75,7 +75,7 @@ import Foundation
         model.sortKey = .name
         model.ascending = true
         model.settings.foldersFirst = true
-        let workspace = model.addWorkspace(name: "Fixtures", symbol: "folder", mode: .folder, urls: [source])
+        let workspace = model.addWorkspace(name: "Fixtures", symbol: "folder", mode: .folder, urls: [source])!
         precondition(model.currentURL == source && model.entries.count == 2)
         model.settings.fontSize = 17
         model.settings.animationSpeed = 1.5
@@ -151,7 +151,7 @@ import Foundation
         model.goBack()
         model.rename(FileEntry(url: renamedChild), to: "child")
         try await waitForFileWork(model)
-        let favorites = model.addWorkspace(name: "Favorites", symbol: "star", mode: .references, urls: [file])
+        let favorites = model.addWorkspace(name: "Favorites", symbol: "star", mode: .references, urls: [file])!
         let countBeforeDrop = try fm.contentsOfDirectory(atPath: source.path).count
         precondition(model.acceptFileDrop([child, file], workspaceID: model.selectedWorkspaceID, directory: model.currentURL, copy: false))
         precondition(model.selectedWorkspace?.referencePaths.count == 2, "References must deduplicate without moving files")
@@ -250,7 +250,7 @@ import Foundation
         try Data("bytes".utf8).write(to: file)
         let storage = base.appendingPathComponent("grouping-config.json")
         let model = makeTestModel(storageURL: storage, monitor: false)
-        let workspace = model.addWorkspace(name: "Sort", mode: .folder, urls: [root])
+        let workspace = model.addWorkspace(name: "Sort", mode: .folder, urls: [root])!
         model.sortKey = .name; model.ascending = true
         precondition(!model.settings.resolvedFoldersFirst, "New installs start with mixed folder/file sorting")
         model.settings.foldersFirst = true
@@ -285,7 +285,7 @@ import Foundation
         let favoriteID = initial.favoriteWorkspace!.id
         initial.selectWorkspace(favoriteID)
         initial.appendReferences([file])
-        let folder = initial.addWorkspace(name: "Research files", symbol: "books.vertical", mode: .folder, urls: [root])
+        let folder = initial.addWorkspace(name: "Research files", symbol: "books.vertical", mode: .folder, urls: [root])!
         initial.save()
 
         // Remove every new field to reproduce a configuration from before this feature.
@@ -441,7 +441,7 @@ import Foundation
         let storage = folder.appendingPathComponent("config.json")
         let model = makeTestModel(storageURL: storage, monitor: false)
         let fixtures = (0..<4).map { index in
-            model.addWorkspace(name: "Workspace \(index)", mode: .folder, urls: [folder])
+            model.addWorkspace(name: "Workspace \(index)", mode: .folder, urls: [folder])!
         }
         let a = fixtures[0].id, b = fixtures[1].id, c = fixtures[2].id, d = fixtures[3].id
         model.workspaces = fixtures
@@ -491,7 +491,7 @@ import Foundation
         let nested = child.appendingPathComponent("Nested", isDirectory: true)
         try fm.createDirectory(at: nested, withIntermediateDirectories: true)
         let model = makeTestModel(storageURL: root.appendingPathComponent("config.json"), monitor: false)
-        let folder = model.addWorkspace(name: "Folder", mode: .folder, urls: [nested])
+        let folder = model.addWorkspace(name: "Folder", mode: .folder, urls: [nested])!
         let components = model.pathComponents
         precondition(components.first?.url?.path == "/" && components.first?.title == "/")
         precondition(components.last?.url == nested)
@@ -518,7 +518,7 @@ import Foundation
         precondition(model.currentURL == parent, "A stale descendant breadcrumb must not navigate")
         model.navigatePathComponent(HubPathComponent(id: parentComponent.id, title: "Forged", url: child))
         precondition(model.currentURL == parent, "Matching IDs alone must not authorize a stale or changed destination")
-        let other = model.addWorkspace(name: "Same location", mode: .folder, urls: [nested])
+        let other = model.addWorkspace(name: "Same location", mode: .folder, urls: [nested])!
         model.navigatePathComponent(parentComponent)
         precondition(model.selectedWorkspaceID == other.id && model.currentURL == nested,
                      "A breadcrumb from a different workspace must be rejected")
@@ -530,7 +530,7 @@ import Foundation
         model.navigatePathComponent(currentComponent)
         precondition(model.history == historyBeforeCurrent, "Clicking the current directory must not duplicate history")
 
-        let collection = model.addWorkspace(name: "My collection", symbol: "star", mode: .references, urls: [child])
+        let collection = model.addWorkspace(name: "My collection", symbol: "star", mode: .references, urls: [child])!
         let collectionComponent = model.pathComponents.first!
         precondition(model.pathComponents == [collectionComponent] && collectionComponent.url == nil && collectionComponent.title == "My collection",
                      "A collection root must display its own name without a fictitious filesystem path")

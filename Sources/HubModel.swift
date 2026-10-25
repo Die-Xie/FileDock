@@ -73,12 +73,15 @@ struct HubSettings: Codable, Equatable {
     var animationSpeed: Double? = 1.3
     var notchIntegrationStyle: String? = "embedded"
     var qqMusicEnabled: Bool? = true
+    // Keep the existing enablement key and the previous QQ selection on upgrade.
+    var musicPlayer: String? = "automatic"
     var favoriteWorkspaceID: UUID? = nil
     var favoriteShortcutEnabled: Bool? = true
     var blockedApplicationBundleIDs: [String]? = nil
     var suppressHoverInFullScreen: Bool? = nil
     var stagingWorkspaceID: UUID? = nil
     var stagingEnabled: Bool? = true
+    var airDropEnabled: Bool? = true
     var foldersFirst: Bool? = false
     var switchDelay: Double = 0.1
     var triggerMode: String = "both"
@@ -100,6 +103,11 @@ struct HubSettings: Codable, Equatable {
         return value.isFinite ? min(2, max(0.5, value)) : 1
     }
     var resolvedQQMusicEnabled: Bool { qqMusicEnabled ?? true }
+    var resolvedAirDropEnabled: Bool { airDropEnabled ?? true }
+    var resolvedMusicPlayer: String {
+        guard let musicPlayer else { return "qqMusic" }
+        return ["automatic", "qqMusic", "appleMusic", "neteaseMusic"].contains(musicPlayer) ? musicPlayer : "automatic"
+    }
     var resolvedFavoriteShortcutEnabled: Bool { favoriteShortcutEnabled ?? true }
     var resolvedBlockedApplicationBundleIDs: [String] {
         Array(Set((blockedApplicationBundleIDs ?? []).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -128,6 +136,7 @@ struct HubSettings: Codable, Equatable {
         if animationSpeed != nil { animationSpeed = resolvedAnimationSpeed }
         if notchIntegrationStyle != nil { notchIntegrationStyle = resolvedNotchIntegrationStyle }
         if autoHideDelay != nil { autoHideDelay = resolvedAutoHideDelay }
+        if musicPlayer != nil { musicPlayer = resolvedMusicPlayer }
         if blockedApplicationBundleIDs != nil { blockedApplicationBundleIDs = resolvedBlockedApplicationBundleIDs }
     }
 }
@@ -183,13 +192,28 @@ struct FileEntry: Identifiable, Hashable, Sendable {
 
     static let resourceKeys: Set<URLResourceKey> = [.nameKey, .localizedNameKey, .isDirectoryKey, .isPackageKey, .fileSizeKey, .localizedTypeDescriptionKey, .creationDateKey, .contentModificationDateKey, .addedToDirectoryDateKey, .attributeModificationDateKey, .labelNumberKey, .tagNamesKey]
 
+    static func resourceValues(for url: URL,
+        read: (URL, Set<URLResourceKey>) throws -> URLResourceValues = { try $0.resourceValues(forKeys: $1) }) -> URLResourceValues? {
+        if let values = try? read(url, resourceKeys) { return values }
+        // LaunchServices may have no localized kind string for an otherwise
+        // readable item. Optional display metadata must not turn a directory
+        // into a file or make navigation try to launch an application.
+        if let values = try? read(url, resourceKeys.subtracting([.localizedTypeDescriptionKey])) { return values }
+        if let values = try? read(url, [.nameKey, .isDirectoryKey, .isPackageKey, .fileSizeKey, .creationDateKey, .contentModificationDateKey]) { return values }
+        if let values = try? read(url, [.isDirectoryKey, .isPackageKey]) { return values }
+        // Some providers also omit size, timestamps, or package metadata. The
+        // directory bit alone still prevents an ordinary folder being opened as
+        // a file when only optional attributes are unavailable.
+        return try? read(url, [.isDirectoryKey])
+    }
+
     init(url: URL, preservingResourceCache: Bool = false) {
         // Ordinary callers need a fresh revision; new directory enumerators
         // already provide fresh, prefetched metadata for their current scan.
         var freshURL = URL(fileURLWithPath: url.path).standardizedFileURL
         freshURL.removeAllCachedResourceValues()
         self.url = freshURL
-        let values = try? (preservingResourceCache ? url : freshURL).resourceValues(forKeys: Self.resourceKeys)
+        let values = Self.resourceValues(for: preservingResourceCache ? url : freshURL)
         exists = values?.isDirectory != nil || FileManager.default.fileExists(atPath: freshURL.path)
         name = values?.localizedName ?? values?.name ?? url.lastPathComponent
         isDirectory = values?.isDirectory ?? false
@@ -329,6 +353,7 @@ enum HubFileOperations {
     @Published private(set) var recentFilesMessage: String?
     @Published private(set) var stagingTransferInProgress = false
     @Published private(set) var fileOperationsInProgress = 0
+    @Published var sharingInProgress = false
 
     private let fm = FileManager.default
     private let configurationURL: URL
@@ -343,6 +368,11 @@ enum HubFileOperations {
     private var dropScopeURLs: [UUID: [URL]] = [:]
     private(set) var configurationWriteCount = 0
     private static let maximumConfigurationBytes = 16 * 1024 * 1024
+    static let maximumWorkspaces = 2000
+    static let maximumReferences = 20000
+    /// Provider imports are owned by the UI; the model also guards their lifetime
+    /// before replacing configuration or releasing its security scopes.
+    var externalFileWorkInProgress: () -> Bool = { false }
     private var refreshTimer: Timer?
     private var refreshGeneration = 0
     private let directoryLoader: HubDirectoryLoading
@@ -589,15 +619,18 @@ enum HubFileOperations {
     }
 
     @discardableResult
-    func addWorkspace(name: String, symbol: String = "folder", mode: WorkspaceMode, urls: [URL]) -> Workspace {
+    func addWorkspace(name: String, symbol: String = "folder", mode: WorkspaceMode, urls: [URL]) -> Workspace? {
+        guard canAddWorkspace() else { return nil }
+        let selected = mode == .recents ? [] : urls.filter(\.isFileURL).map(\.standardizedFileURL)
+        let paths = mode == .references ? uniquePaths(selected.map(\.path)) : []
+        guard canStoreReferences(paths) else { return nil }
         beginPersistenceTransaction()
         defer { endPersistenceTransaction() }
         let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let selected = mode == .recents ? [] : urls.filter(\.isFileURL).map(\.standardizedFileURL)
-        selected.forEach(remember)
+        (mode == .folder ? Array(selected.prefix(1)) : selected).forEach(remember)
         let workspace = Workspace(name: clean.isEmpty ? "新工作区" : clean, symbol: symbol, mode: mode,
                                   rootPath: mode == .folder ? selected.first?.path : nil,
-                                  referencePaths: mode == .references ? uniquePaths(selected.map(\.path)) : [])
+                                  referencePaths: paths)
         workspaces.append(workspace)
         bindFavoriteWorkspaceIfNeeded()
         selectWorkspace(workspace.id)
@@ -605,7 +638,7 @@ enum HubFileOperations {
     }
 
     @discardableResult
-    func addRecentWorkspace() -> Workspace {
+    func addRecentWorkspace() -> Workspace? {
         if let existing = workspaces.first(where: { $0.mode == .recents }) {
             selectWorkspace(existing.id)
             return existing
@@ -617,7 +650,7 @@ enum HubFileOperations {
         beginPersistenceTransaction()
         defer { endPersistenceTransaction() }
         if visible {
-            let favorite = favoriteWorkspace ?? addWorkspace(name: "收藏", symbol: "star", mode: .references, urls: [])
+            guard let favorite = favoriteWorkspace ?? addWorkspace(name: "收藏", symbol: "star", mode: .references, urls: []) else { return }
             settings.favoriteWorkspaceID = favorite.id
         }
         settings.favoriteShortcutEnabled = visible
@@ -629,10 +662,11 @@ enum HubFileOperations {
     }
 
     /// The shelf is created lazily, without changing the user's current location.
-    private func ensureStagingWorkspace() -> Workspace {
+    private func ensureStagingWorkspace() -> Workspace? {
         beginPersistenceTransaction()
         defer { endPersistenceTransaction() }
         if let existing = stagingWorkspace { return existing }
+        guard canAddWorkspace() else { return nil }
         let workspace = Workspace(name: "暂存区", symbol: "tray", mode: .references)
         workspaces.append(workspace)
         settings.stagingWorkspaceID = workspace.id
@@ -643,7 +677,8 @@ enum HubFileOperations {
         beginPersistenceTransaction()
         defer { endPersistenceTransaction() }
         guard settings.resolvedStagingEnabled else { return }
-        selectWorkspace(ensureStagingWorkspace().id)
+        guard let workspace = ensureStagingWorkspace() else { return }
+        selectWorkspace(workspace.id)
     }
 
     func setStagingEnabled(_ enabled: Bool) {
@@ -668,10 +703,9 @@ enum HubFileOperations {
         guard settings.resolvedStagingEnabled, !stagingTransferInProgress else { return false }
         let files = urls.filter(\.isFileURL).map(\.standardizedFileURL)
         guard !files.isEmpty else { return false }
-        let workspace = ensureStagingWorkspace()
-        guard let index = workspaces.firstIndex(where: { $0.id == workspace.id }) else { return false }
         let paths = uniquePaths(stagedURLs.map(\.path) + files.map(\.path))
-        guard paths.count <= 20000 else { errorMessage = "暂存区最多可容纳 20000 个项目。"; return false }
+        guard canStoreReferences(paths), let workspace = ensureStagingWorkspace(),
+              let index = workspaces.firstIndex(where: { $0.id == workspace.id }) else { return false }
         files.forEach(remember)
         workspaces[index].referencePaths = paths
         if isStagingRoot { refresh() }
@@ -826,8 +860,6 @@ enum HubFileOperations {
         beginPersistenceTransaction()
         defer { endPersistenceTransaction() }
         guard let index = workspaces.firstIndex(where: { $0.id == workspace.id }) else { return }
-        // Capture a legacy name-based favorite before a rename changes its label.
-        bindFavoriteWorkspaceIfNeeded()
         var updated = workspace
         if workspace.id == stagingWorkspace?.id { updated.mode = .references; updated.rootPath = nil }
         if updated.mode == .recents {
@@ -835,8 +867,11 @@ enum HubFileOperations {
         }
         updated.name = workspace.name.trimmingCharacters(in: .whitespacesAndNewlines)
         if updated.name.isEmpty && updated.symbol.isEmpty && updated.customIconPath == nil { errorMessage = "请至少保留工作区名称或图标。"; return }
-        if let iconPath = updated.customIconPath { remember(URL(fileURLWithPath: iconPath)) }
         updated.referencePaths = uniquePaths(updated.referencePaths)
+        guard canStoreReferences(updated.referencePaths) else { return }
+        // Capture a legacy name-based favorite only after admission succeeds.
+        bindFavoriteWorkspaceIfNeeded()
+        if let iconPath = updated.customIconPath { remember(URL(fileURLWithPath: iconPath)) }
         let rootChanged = workspaces[index].rootPath != updated.rootPath || workspaces[index].mode != updated.mode
         workspaces[index] = updated
         if selectedWorkspaceID == workspace.id {
@@ -929,8 +964,10 @@ enum HubFileOperations {
         if isStagingRoot { _ = stageFiles(urls); return }
         guard let index = workspaces.firstIndex(where: { $0.id == selectedWorkspaceID }), workspaces[index].mode == .references else { return }
         let files = urls.filter(\.isFileURL).map(\.standardizedFileURL)
+        let paths = uniquePaths(workspaces[index].referencePaths + files.map(\.path))
+        guard canStoreReferences(paths) else { return }
         files.forEach(remember)
-        workspaces[index].referencePaths = uniquePaths(workspaces[index].referencePaths + files.map(\.path))
+        workspaces[index].referencePaths = paths
         refresh()
     }
 
@@ -955,7 +992,19 @@ enum HubFileOperations {
         guard let index = workspaces.firstIndex(where: { $0.id == selectedWorkspaceID }),
               canReorderEntries else { return }
         let requested = Set(urls.filter(\.isFileURL).map { $0.standardizedFileURL.path })
-        let original = orderedEntries.map { $0.url.path }
+        var original = orderedEntries.map { $0.url.path }
+        if isReferenceRoot {
+            // During a progressive read, entries is only a displayed prefix.
+            // Keep the complete collection as the source of membership so a
+            // reorder cannot discard unread references or revive removed ones.
+            let references = uniquePaths(workspaces[index].referencePaths.map {
+                URL(fileURLWithPath: $0).standardizedFileURL.path
+            })
+            let members = Set(references)
+            original.removeAll { !members.contains($0) }
+            let displayed = Set(original)
+            original.append(contentsOf: references.filter { !displayed.contains($0) })
+        }
         let moving = original.filter { requested.contains($0) }
         guard !moving.isEmpty else { return }
         let targetPath = target?.standardizedFileURL.path
@@ -1352,7 +1401,7 @@ enum HubFileOperations {
     func acceptFileDrop(_ urls: [URL], workspaceID: UUID?, directory: URL?, copy: Bool,
                         insertionOrder: [URL]? = nil, before: URL? = nil) -> Bool {
         guard let index = workspaces.firstIndex(where: { $0.id == workspaceID }), workspaces[index].mode != .recents,
-              !urls.isEmpty, urls.count <= 20000, fileOperationsInProgress < 3 else { return false }
+              !urls.isEmpty, urls.count <= Self.maximumReferences, fileOperationsInProgress < 3 else { return false }
         let files = urls.filter(\.isFileURL).map(\.standardizedFileURL)
         guard !files.isEmpty else { return false }
         // Remembering every source must not write the entire configuration once
@@ -1369,7 +1418,7 @@ enum HubFileOperations {
         if directory == nil && workspaces[index].mode == .references {
             beginPersistenceTransaction(); defer { endPersistenceTransaction() }
             let paths = uniquePaths(workspaces[index].referencePaths + files.map(\.path))
-            guard paths.count <= 20000 else { errorMessage = "合集最多可容纳 20000 个项目。"; return false }
+            guard canStoreReferences(paths) else { return false }
             files.forEach(remember)
             workspaces[index].referencePaths = paths
             if let insertionOrder { recordDropInsertion(files, workspaceID: workspaceID, directoryPath: nil, priorOrder: insertionOrder, before: before) }
@@ -1444,6 +1493,37 @@ enum HubFileOperations {
         return paths.filter { $0.hasPrefix("/") && seen.insert($0).inserted }
     }
 
+    private func canAddWorkspace() -> Bool {
+        guard workspaces.count < Self.maximumWorkspaces else {
+            errorMessage = "最多可添加 \(Self.maximumWorkspaces) 个工作区。"; return false
+        }
+        return true
+    }
+
+    private func canStoreReferences(_ paths: [String]) -> Bool {
+        guard paths.count <= Self.maximumReferences else {
+            errorMessage = "合集或暂存区最多可容纳 \(Self.maximumReferences) 个项目。"; return false
+        }
+        return true
+    }
+
+    /// Preserve the original scoped URL objects while a sharing service owns
+    /// descendants. Enumerating lexical ancestors avoids a stat per item on UI.
+    func securityScopesForSharing(_ urls: [URL]) -> [URL] {
+        Self.matchingSecurityScopes(activeScopes, for: urls)
+    }
+
+    static func matchingSecurityScopes(_ scopes: [URL], for urls: [URL]) -> [URL] {
+        var ancestors = Set<String>()
+        for url in urls where url.isFileURL {
+            var path = url.standardizedFileURL.path
+            while ancestors.insert(path).inserted && path != "/" {
+                path = (path as NSString).deletingLastPathComponent
+            }
+        }
+        return scopes.filter { ancestors.contains($0.standardizedFileURL.path) }
+    }
+
     func remember(_ url: URL) {
         guard url.isFileURL else { return }
         do {
@@ -1483,8 +1563,8 @@ enum HubFileOperations {
             state.workspaces[index].referencePaths = []
             state.workspaces[index].directoryOrders = nil
         }
-        guard state.version == 1, state.workspaces.count <= 2000, Set(state.workspaces.map(\.id)).count == state.workspaces.count,
-              state.workspaces.allSatisfy({ ($0.rootPath == nil || $0.rootPath!.hasPrefix("/")) && $0.referencePaths.count <= 20000 && $0.referencePaths.allSatisfy { $0.hasPrefix("/") } }) else { throw HubFileError.corruptConfig }
+        guard state.version == 1, state.workspaces.count <= Self.maximumWorkspaces, Set(state.workspaces.map(\.id)).count == state.workspaces.count,
+              state.workspaces.allSatisfy({ ($0.rootPath == nil || $0.rootPath!.hasPrefix("/")) && $0.referencePaths.count <= Self.maximumReferences && $0.referencePaths.allSatisfy { $0.hasPrefix("/") } }) else { throw HubFileError.corruptConfig }
         workspaces = state.workspaces
         selectedWorkspaceID = state.workspaces.contains(where: { $0.id == state.selectedWorkspaceID }) ? state.selectedWorkspaceID : state.workspaces.first?.id
         settings = state.settings
@@ -1593,7 +1673,7 @@ enum HubFileOperations {
         catch { errorMessage = error.localizedDescription }
     }
     func importConfiguration() {
-        guard !stagingTransferInProgress else { errorMessage = "请等暂存文件转移完成后再导入配置。"; return }
+        guard !configurationImportIsBlocked else { errorMessage = "请等文件操作或分享完成后再导入配置。"; return }
         let panel = NSOpenPanel(); panel.allowedContentTypes = [.json]; panel.canChooseDirectories = false
         guard HubWindowPresentation.runModal(panel) == .OK, let url = panel.url else { return }
         do {
@@ -1603,12 +1683,12 @@ enum HubFileOperations {
 
     /// Shared by file import and configuration round-trip tests.
     func importConfiguration(data: Data) throws {
-        guard !stagingTransferInProgress else { throw HubFileError.partial(["请等暂存文件转移完成后再导入配置。"]) }
-        invalidateBackgroundRefresh()
+        guard !configurationImportIsBlocked else { throw HubFileError.partial(["请等文件操作或分享完成后再导入配置。"]) }
         let wasReady = readyToSave
         readyToSave = false
         defer { readyToSave = wasReady }
         try apply(data: data)
+        invalidateBackgroundRefresh()
         if let id = selectedWorkspaceID { selectWorkspace(id) }
         else {
             stopRecentFiles(); currentURL = nil; entries = []; selectedIDs = []
@@ -1616,6 +1696,10 @@ enum HubFileOperations {
         }
         readyToSave = wasReady
         persistIfReady()
+    }
+
+    private var configurationImportIsBlocked: Bool {
+        stagingTransferInProgress || fileOperationsInProgress > 0 || sharingInProgress || externalFileWorkInProgress()
     }
 
     private func seedDemo(in root: URL) {

@@ -7,6 +7,14 @@ swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache
     -framework AppKit -framework Carbon -framework Combine -framework UniformTypeIdentifiers
 .build/model-tests
 swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
+    Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/HubModel.swift Sources/DirectoryLoader.swift Tests/ModelTestSupport.swift Tests/PartialReferenceReorderTests.swift -o .build/partial-reference-reorder-tests \
+    -framework AppKit -framework Carbon -framework Combine -framework UniformTypeIdentifiers
+.build/partial-reference-reorder-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
+    Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/HubModel.swift Sources/DirectoryLoader.swift Tests/ConfigurationAdmissionTests.swift -o .build/configuration-admission-tests \
+    -framework AppKit -framework Carbon -framework Combine -framework UniformTypeIdentifiers
+.build/configuration-admission-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
     Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/HubModel.swift Sources/DirectoryLoader.swift Tests/ModelTestSupport.swift Tests/FileAppearanceTests.swift -o .build/file-appearance-tests \
     -framework AppKit -framework Carbon -framework Combine -framework UniformTypeIdentifiers
 .build/file-appearance-tests
@@ -99,9 +107,25 @@ swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache
     Sources/InlinePreviewPolicy.swift Tests/InlinePreviewTests.swift -o .build/inline-preview-tests
 .build/inline-preview-tests
 swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
-    Sources/QQMusicController.swift Tests/QQMusicTests.swift -o .build/qqmusic-tests \
-    -framework AppKit -framework Combine -framework ApplicationServices
+    Sources/MusicPlayers.swift Sources/NetEaseMusicBackend.swift Sources/QQMusicController.swift Tests/QQMusicTests.swift -o .build/qqmusic-tests \
+    -framework AppKit -framework Combine -framework ApplicationServices -framework Carbon
 .build/qqmusic-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
+    Sources/MusicPlayers.swift Sources/NetEaseMusicBackend.swift Sources/QQMusicController.swift Tests/MultiPlayerTests.swift -o .build/multi-player-tests \
+    -framework AppKit -framework Combine -framework ApplicationServices -framework Carbon
+.build/multi-player-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
+    Sources/AirDrop.swift Tests/AirDropTests.swift -o .build/airdrop-tests \
+    -framework AppKit -framework Combine
+.build/airdrop-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
+    Sources/SharingWindowSuspension.swift Tests/SharingWindowTests.swift -o .build/sharing-window-tests \
+    -framework AppKit
+.build/sharing-window-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
+    Sources/ThumbnailWorkQueue.swift Sources/WorkspaceCustomIcon.swift Tests/WorkspaceCustomIconTests.swift -o .build/workspace-custom-icon-tests \
+    -framework AppKit -framework SwiftUI -framework ImageIO -framework Combine
+.build/workspace-custom-icon-tests
 swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
     Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/HubModel.swift Sources/DirectoryLoader.swift Tests/ModelTestSupport.swift Tests/DirectoryLoadingTests.swift -o .build/directory-loading-tests \
     -framework AppKit -framework Carbon -framework Combine -framework UniformTypeIdentifiers

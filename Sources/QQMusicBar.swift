@@ -24,7 +24,7 @@ struct HubQQMusicBar: View {
                 .frame(width: 34, height: 34)
                 .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 9))
             VStack(alignment: .leading, spacing: 3) {
-                Text(controller.title.isEmpty ? "QQ 音乐" : controller.title)
+                Text(controller.title.isEmpty ? controller.playerName : controller.title)
                     .font(.system(size: 12, weight: .medium)).lineLimit(1)
                 Text(subtitle).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
             }.frame(maxWidth: .infinity, alignment: .leading)
@@ -33,17 +33,17 @@ struct HubQQMusicBar: View {
                     .disabled(controller.setupAction == nil)
             }
             HStack(spacing: 3) {
-                control("backward.end.fill", label: "QQ 音乐上一首") { controller.previousTrack() }
+                control("backward.end.fill", label: "\(controller.playerName)上一首") { controller.previousTrack() }
                 control(playSymbol, label: playLabel, prominent: true) { controller.togglePlayback() }
-                control("forward.end.fill", label: "QQ 音乐下一首") { controller.nextTrack() }
+                control("forward.end.fill", label: "\(controller.playerName)下一首") { controller.nextTrack() }
             }.disabled(controller.status != .ready)
             Button(action: showConnectionSettings) {
                 Image(systemName: "gearshape").frame(width: 24, height: 30)
             }.buttonStyle(.plain).help("音乐连接设置").accessibilityLabel("音乐连接设置")
-            Button { controller.openQQMusic() } label: {
+            Button { controller.openPlayer() } label: {
                 Image(systemName: "arrow.up.right.square").font(.system(size: 13)).frame(width: 24, height: 30)
-            }.buttonStyle(.plain).foregroundStyle(.secondary).help("打开 QQ 音乐窗口")
-                .accessibilityLabel("打开 QQ 音乐窗口").disabled(controller.status == .notInstalled)
+            }.buttonStyle(.plain).foregroundStyle(.secondary).help("打开\(controller.playerName)窗口")
+                .accessibilityLabel("打开\(controller.playerName)窗口").disabled(controller.status == .notInstalled)
         }.padding(.horizontal, 16).padding(.vertical, 10)
         .accessibilityElement(children: .contain)
     }
@@ -52,7 +52,7 @@ struct HubQQMusicBar: View {
         Group {
             if controller.status == .ready {
                 ZStack {
-                    HubMusicMarquee(title: controller.title.isEmpty ? "QQ 音乐" : controller.title,
+                    HubMusicMarquee(title: controller.title.isEmpty ? controller.playerName : controller.title,
                                     artist: controller.artist,
                                     active: isPresented && !showCompactControls)
                         .padding(.horizontal, 6)
@@ -61,9 +61,9 @@ struct HubQQMusicBar: View {
                         .allowsHitTesting(false)
                         .accessibilityHidden(showCompactControls)
                     HStack(spacing: 4) {
-                        compactControl("backward.end.fill", label: "QQ 音乐上一首", focus: 0) { controller.previousTrack() }
+                        compactControl("backward.end.fill", label: "\(controller.playerName)上一首", focus: 0) { controller.previousTrack() }
                         compactControl(playSymbol, label: playLabel, prominent: true, focus: 1) { controller.togglePlayback() }
-                        compactControl("forward.end.fill", label: "QQ 音乐下一首", focus: 2) { controller.nextTrack() }
+                        compactControl("forward.end.fill", label: "\(controller.playerName)下一首", focus: 2) { controller.nextTrack() }
                     }.opacity(showCompactControls ? 1 : 0)
                         .allowsHitTesting(showCompactControls)
                         .accessibilityHidden(!showCompactControls)
@@ -92,17 +92,17 @@ struct HubQQMusicBar: View {
         .onChange(of: focusedCompactControl) { onControlFocusChange($0 != nil) }
         .onChange(of: controller.status) { if $0 != .ready { focusedCompactControl = nil } }
         .onDisappear { onControlFocusChange(false) }
-        .help("\(controller.title.isEmpty ? "QQ 音乐" : controller.title)\n\(subtitle)")
+        .help("\(controller.title.isEmpty ? controller.playerName : controller.title)\n\(subtitle)")
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("\(controller.title.isEmpty ? "QQ 音乐" : controller.title)，\(subtitle)")
+        .accessibilityLabel("\(controller.title.isEmpty ? controller.playerName : controller.title)，\(subtitle)")
         .contextMenu {
-            Text(controller.title.isEmpty ? "QQ 音乐" : controller.title)
+            Text(controller.title.isEmpty ? controller.playerName : controller.title)
             Text(subtitle)
             Divider()
             Button("音乐连接设置…", action: showConnectionSettings)
-            Button("打开 QQ 音乐") { controller.openQQMusic() }.disabled(controller.status == .notInstalled)
+            Button("打开\(controller.playerName)") { controller.openPlayer() }.disabled(controller.status == .notInstalled)
             if controller.status == .needsPermission {
-                Button("连接 QQ 音乐") { controller.requestAccess() }
+                Button("连接\(controller.playerName)") { controller.requestAccess() }
             } else if controller.status == .unavailable {
                 Button("重新连接") { controller.reconnect() }
             }
@@ -115,12 +115,12 @@ struct HubQQMusicBar: View {
 
     private var connectionLabel: String {
         switch controller.status {
-        case .needsPermission: return "授权 QQ 音乐控制"
-        case .notRunning: return "连接 QQ 音乐"
-        case .unavailable: return "修复 QQ 音乐连接"
-        case .notInstalled: return "未安装 QQ 音乐"
+        case .needsPermission: return "授权\(controller.playerName)控制"
+        case .notRunning: return "连接\(controller.playerName)"
+        case .unavailable: return "修复\(controller.playerName)连接"
+        case .notInstalled: return "未安装\(controller.playerName)"
         case .connecting: return "正在连接…"
-        case .ready: return "QQ 音乐"
+        case .ready: return controller.playerName
         }
     }
 
@@ -148,20 +148,20 @@ struct HubQQMusicBar: View {
     }
 
     private var playLabel: String {
-        guard let playing = controller.isPlaying else { return "播放或暂停 QQ 音乐" }
-        return playing ? "暂停 QQ 音乐" : "播放 QQ 音乐"
+        guard let playing = controller.isPlaying else { return "播放或暂停\(controller.playerName)" }
+        return playing ? "暂停\(controller.playerName)" : "播放\(controller.playerName)"
     }
 
     private var subtitle: String {
         if let message = controller.message, !message.isEmpty { return message }
         switch controller.status {
-        case .notInstalled: return "尚未安装 QQ 音乐"
-        case .notRunning: return "打开 QQ 音乐，继续你的播放列表"
-        case .needsPermission: return "首次连接需要辅助功能权限"
-        case .connecting: return "正在连接 QQ 音乐…"
+        case .notInstalled: return "尚未安装\(controller.playerName)"
+        case .notRunning: return "打开\(controller.playerName)，继续你的播放列表"
+        case .needsPermission: return controller.usesAutomationPermission ? "首次连接需要自动化权限" : "首次连接需要辅助功能权限"
+        case .connecting: return "正在连接\(controller.playerName)…"
         case .unavailable: return "暂时无法读取播放状态"
         case .ready:
-            let state = controller.isPlaying.map { $0 ? "正在播放" : "已暂停" } ?? "QQ 音乐"
+            let state = controller.isPlaying.map { $0 ? "正在播放" : "已暂停" } ?? controller.playerName
             return controller.artist.isEmpty ? state : "\(controller.artist) · \(state)"
         }
     }

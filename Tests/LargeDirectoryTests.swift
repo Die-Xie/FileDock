@@ -37,7 +37,7 @@ private final class ScanMetrics: @unchecked Sendable {
         try fm.createDirectory(at: package, withIntermediateDirectories: true)
         try Data().write(to: package.appendingPathComponent("must-not-read.txt"))
         let fixture = makeTestModel(storageURL: root.appendingPathComponent("config.json"))
-        let workspace = fixture.addWorkspace(name: "Large", mode: .folder, urls: [directory])
+        let workspace = fixture.addWorkspace(name: "Large", mode: .folder, urls: [directory])!
         let metrics = ScanMetrics()
         let loader = HubDirectoryLoader { request in
             metrics.mark()

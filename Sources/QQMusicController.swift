@@ -133,8 +133,13 @@ final class HubQQMusicController: ObservableObject {
     @Published private(set) var message: String?
     @Published private(set) var connectionProbe: HubQQMusicProbe?
 
-    private let backend: HubQQMusicBackend
-    private let queue = DispatchQueue(label: "app.filedock.qqmusic.accessibility", qos: .userInitiated)
+    @Published private(set) var playerSelection: HubMusicPlayerSelection = .qqMusic
+    @Published private(set) var activePlayer: HubMusicPlayer = .qqMusic
+    var playerName: String { activePlayer.name }
+    var usesAutomationPermission: Bool { activePlayer == .appleMusic }
+
+    private let backends: [HubMusicPlayer: HubQQMusicBackend]
+    private let queue = DispatchQueue(label: "app.filedock.music.playback", qos: .userInitiated)
     private let epoch = HubQQMusicEpoch()
     private let pollInterval: TimeInterval
     private var generation: UInt64 = 0
@@ -142,7 +147,7 @@ final class HubQQMusicController: ObservableObject {
     private var visible = false
     private var configurationVisible = false
     private var canObserve: Bool { enabled && (visible || configurationVisible) }
-    private let openAccessSettings: () -> Void
+    private let openAccessSettings: (() -> Void)?
     private var activationObserver: NSObjectProtocol?
     private enum RequestKind { case read, action }
     private var requestKind: RequestKind?
@@ -150,13 +155,12 @@ final class HubQQMusicController: ObservableObject {
     private var targetPID: pid_t?
     private var timer: Timer?
 
-    init(backend: HubQQMusicBackend = HubQQMusicAXBackend(), pollInterval: TimeInterval = 1.5,
-         openAccessSettings: @escaping () -> Void = {
-             if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
-                 NSWorkspace.shared.open(url)
-             }
-         }) {
-        self.backend = backend
+    init(backend: HubQQMusicBackend? = nil, pollInterval: TimeInterval = 1.5,
+         openAccessSettings: (() -> Void)? = nil,
+         backends: [HubMusicPlayer: HubQQMusicBackend]? = nil) {
+        self.backends = backends ?? (backend.map { [.qqMusic: $0] } ?? [
+            .qqMusic: HubQQMusicAXBackend(), .appleMusic: HubAppleMusicBackend(), .neteaseMusic: HubNetEaseMusicBackend()
+        ])
         self.pollInterval = max(1, pollInterval)
         self.openAccessSettings = openAccessSettings
         activationObserver = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
@@ -203,18 +207,31 @@ final class HubQQMusicController: ObservableObject {
         RunLoop.main.add(timer, forMode: .common)
     }
 
-    func openQQMusic() {
-        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: HubQQMusicAccessibility.bundleID) else {
-            clear(status: .notInstalled, message: "尚未安装 QQ 音乐。")
+    func setPlayerSelection(_ selection: HubMusicPlayerSelection) {
+        guard playerSelection != selection else { return }
+        playerSelection = selection
+        if let player = selection.player { activePlayer = player }
+        connectionProbe = nil
+        clear(status: .connecting, message: "正在检测播放器…")
+        updatePolling()
+    }
+
+    // Opening a player is always an explicit user action; passive probing never launches it.
+    func openQQMusic() { openPlayer() }
+    func openPlayer() {
+        let player = activePlayer
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: player.bundleID) else {
+            clear(status: .notInstalled, message: "尚未安装\(player.name)。")
             return
         }
         status = .connecting
         message = nil
+        let selection = playerSelection
         NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration()) { [weak self] _, error in
             DispatchQueue.main.async {
-                guard let self else { return }
+                guard let self, self.playerSelection == selection, self.activePlayer == player else { return }
                 if let error {
-                    self.clear(status: .unavailable, message: "无法打开 QQ 音乐：\(error.localizedDescription)")
+                    self.clear(status: .unavailable, message: "无法打开\(player.name)：\(error.localizedDescription)")
                 } else if self.canObserve {
                     self.generation = self.epoch.advance()
                     self.requestKind = nil
@@ -249,10 +266,10 @@ final class HubQQMusicController: ObservableObject {
     var setupActionTitle: String {
         switch setupAction {
         case .authorize: return "打开授权设置"
-        case .launch: return "打开 QQ 音乐"
+        case .launch: return "打开\(playerName)"
         case .recover: return "打开主窗口并重连"
         case .check: return "检查连接"
-        case nil: return status == .notInstalled ? "未安装 QQ 音乐" : "正在连接…"
+        case nil: return status == .notInstalled ? "未安装\(playerName)" : "正在连接…"
         }
     }
     func performSetupAction() {
@@ -288,68 +305,99 @@ final class HubQQMusicController: ObservableObject {
         // Passive polls retain the last useful state instead of repeatedly
         // removing and recreating the connection button while permission is off.
         if prompt { status = .connecting }
-        let backend = backend, epoch = epoch
+        let backends = backends, epoch = epoch, selection = playerSelection, previousPlayer = activePlayer
         queue.async { [weak self] in
             guard epoch.contains(request) else { return }
-            if prompt && !backend.probe().trusted { _ = backend.requestAccess() }
-            guard epoch.contains(request) else { return }
-            let probe = backend.probe()
-            var result: Result<HubQQMusicSnapshot, HubQQMusicFailure>?
-            if probe.installed, probe.trusted, let pid = probe.pid {
-                if let expectedPID, expectedPID != pid {
-                    result = .failure(.wrongTarget)
-                } else if epoch.contains(request) {
-                    result = action.map { backend.perform($0, for: pid) } ?? backend.snapshot(for: pid)
+            let players = action != nil || prompt ? [previousPlayer] : selection.player.map { [$0] } ?? HubMusicPlayer.allCases
+            var candidates: [HubMusicCandidate] = []
+            for player in players {
+                guard epoch.contains(request) else { return }
+                guard let backend = backends[player] else { continue }
+                if prompt && !backend.probe().trusted { _ = backend.requestAccess() }
+                guard epoch.contains(request) else { return }
+                let probe = backend.probe()
+                var result: Result<HubQQMusicSnapshot, HubQQMusicFailure>?
+                if probe.installed, probe.trusted, let pid = probe.pid {
+                    if let expectedPID, expectedPID != pid {
+                        result = .failure(.wrongTarget)
+                    } else if epoch.contains(request) {
+                        result = action.map { backend.perform($0, for: pid) } ?? backend.snapshot(for: pid)
+                    }
                 }
+                candidates.append(HubMusicCandidate(player: player, probe: probe, result: result))
+            }
+            guard epoch.contains(request), let candidate = HubMusicSelectionPolicy.choose(candidates, previous: previousPlayer) else {
+                DispatchQueue.main.async {
+                    guard let self, self.generation == request, self.canObserve else { return }
+                    self.requestKind = nil
+                    self.clear(status: .notInstalled, message: "未检测到支持的播放器。")
+                }
+                return
             }
             DispatchQueue.main.async {
                 guard let self, self.generation == request, epoch.contains(request), self.canObserve else { return }
                 self.requestKind = nil
-                self.accept(probe: probe, result: result)
-                if prompt && !probe.trusted { self.openAccessSettings() }
+                if self.activePlayer != candidate.player { self.activePlayer = candidate.player }
+                self.accept(probe: candidate.probe, result: candidate.result)
+                if prompt && !candidate.probe.trusted { self.showPermissionSettings() }
             }
+        }
+    }
+
+    private func showPermissionSettings() {
+        if let openAccessSettings { openAccessSettings(); return }
+        let pane = usesAutomationPermission ? "Privacy_Automation" : "Privacy_Accessibility"
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)") {
+            NSWorkspace.shared.open(url)
         }
     }
 
     private func accept(probe: HubQQMusicProbe, result: Result<HubQQMusicSnapshot, HubQQMusicFailure>?) {
         if connectionProbe != probe { connectionProbe = probe }
-        guard probe.installed else { clear(status: .notInstalled, message: "尚未安装 QQ 音乐。"); return }
-        guard let pid = probe.pid else { clear(status: .notRunning, message: "打开 QQ 音乐后即可连接。"); return }
+        guard probe.installed else { clear(status: .notInstalled, message: "尚未安装\(playerName)。"); return }
+        guard let pid = probe.pid else { clear(status: .notRunning, message: "打开\(playerName)后即可连接。"); return }
         guard probe.trusted else {
-            clear(status: .needsPermission, message: "连接需要辅助功能权限。请在系统设置 → 隐私与安全性 → 辅助功能中允许 FileDock。")
+            clear(status: .needsPermission, message: permissionMessage)
             return
         }
         guard let result else { return }
         switch result {
         case .success(let snapshot):
             guard snapshot.pid == pid else {
-                clear(status: .unavailable, message: "QQ 音乐进程已变化，请稍后重试。")
+                clear(status: .unavailable, message: "\(playerName)进程已变化，请稍后重试。")
                 return
             }
             targetPID = pid
-            title = snapshot.title
-            artist = snapshot.artist
-            isPlaying = snapshot.isPlaying
-            status = .ready
-            message = nil
+            if title != snapshot.title { title = snapshot.title }
+            if artist != snapshot.artist { artist = snapshot.artist }
+            if isPlaying != snapshot.isPlaying { isPlaying = snapshot.isPlaying }
+            if status != .ready { status = .ready }
+            if message != nil { message = nil }
         case .failure(let error):
             switch error {
             case .permission:
-                clear(status: .needsPermission, message: "请在系统设置的辅助功能中允许 FileDock，再重新连接。")
-            case .notRunning: clear(status: .notRunning, message: "打开 QQ 音乐后即可连接。")
-            case .wrongTarget: clear(status: .unavailable, message: "QQ 音乐进程已变化，请稍后重试。")
+                connectionProbe = HubQQMusicProbe(installed: probe.installed, pid: probe.pid, trusted: false)
+                clear(status: .needsPermission, message: permissionMessage)
+            case .notRunning: clear(status: .notRunning, message: "打开\(playerName)后即可连接。")
+            case .wrongTarget: clear(status: .unavailable, message: "\(playerName)进程已变化，请稍后重试。")
             case .unavailable(let detail): clear(status: .unavailable, message: detail)
             }
         }
     }
 
+    private var permissionMessage: String {
+        usesAutomationPermission
+            ? "请允许 FileDock 控制“音乐”。点下方授权按钮，在系统提示中确认；已有授权可在隐私与安全性 → 自动化中检查。"
+            : "连接需要辅助功能权限。请在系统设置 → 隐私与安全性 → 辅助功能中允许 FileDock。"
+    }
+
     private func clear(status: Status, message: String) {
         targetPID = nil
-        title = ""
-        artist = ""
-        isPlaying = nil
-        self.status = status
-        self.message = message
+        if !title.isEmpty { title = "" }
+        if !artist.isEmpty { artist = "" }
+        if isPlaying != nil { isPlaying = nil }
+        if self.status != status { self.status = status }
+        if self.message != message { self.message = message }
     }
 }
 
@@ -363,7 +411,7 @@ final class HubQQMusicAXBackend: HubQQMusicBackend {
         let installed = NSWorkspace.shared.urlForApplication(withBundleIdentifier: HubQQMusicAccessibility.bundleID) != nil
         let app = NSRunningApplication.runningApplications(withBundleIdentifier: HubQQMusicAccessibility.bundleID)
             .first { !$0.isTerminated }
-        return HubQQMusicProbe(installed: installed, pid: app?.processIdentifier, trusted: AXIsProcessTrusted())
+        return HubQQMusicProbe(installed: installed || app != nil, pid: app?.processIdentifier, trusted: AXIsProcessTrusted())
     }
 
     func requestAccess() -> Bool {

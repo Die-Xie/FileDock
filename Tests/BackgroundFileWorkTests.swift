@@ -33,8 +33,8 @@ private final class Gate: @unchecked Sendable {
             try Data("data".utf8).write(to: url); return url
         }
         let model = makeTestModel(storageURL: root.appendingPathComponent("config.json"))
-        let sourceTab = model.addWorkspace(name: "Source", mode: .folder, urls: [source])
-        let targetTab = model.addWorkspace(name: "Target", mode: .folder, urls: [target])
+        let sourceTab = model.addWorkspace(name: "Source", mode: .folder, urls: [source])!
+        let targetTab = model.addWorkspace(name: "Target", mode: .folder, urls: [target])!
         let before = model.configurationWriteCount
         precondition(model.acceptFileDrop(files, workspaceID: targetTab.id, directory: target, copy: true))
         precondition(model.configurationWriteCount <= before + 1, "Batch bookmark admission must save once rather than once per file")
@@ -84,7 +84,7 @@ private final class Gate: @unchecked Sendable {
         precondition(model.stagedURLs.isEmpty)
 
         let storage = root.appendingPathComponent("recents/config.json")
-        let fixture = makeTestModel(storageURL: storage); _ = fixture.addRecentWorkspace()
+        let fixture = makeTestModel(storageURL: storage); _ = fixture.addRecentWorkspace()!
         let recent = RecentSource(), gate = Gate()
         let loader = HubDirectoryLoader(timeout: 2) { request in
             if !request.references.isEmpty {

@@ -57,6 +57,7 @@ struct FileDockUpdateOutcome {
     private var observations: [NSKeyValueObservation] = []
     private let relaunch = FileDockUpdateRelaunchGate()
     var filesBusy: () -> Bool = { false }
+    var presentationBusy: () -> Bool = { false }
 
     override init() {
         super.init()
@@ -81,6 +82,10 @@ struct FileDockUpdateOutcome {
     func setAutomaticChecks(_ enabled: Bool) { controller.updater.automaticallyChecksForUpdates = enabled }
 
     func checkForUpdates() {
+        guard !presentationBusy() else {
+            status = "请先完成或取消当前共享或对话框，再检查更新。"
+            return
+        }
         guard canCheck else { return }
         status = "正在检查更新…"
         errorDetails = nil

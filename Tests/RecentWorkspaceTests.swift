@@ -47,14 +47,14 @@ import Foundation
         let provider = RecentFilesFixtureProvider()
         let model = makeTestModel(storageURL: storage, monitor: false, recentFiles: provider)
         let bookmarksBefore = try configuration(at: storage)["bookmarks"] as? [String: Any] ?? [:]
-        let recent = model.addWorkspace(name: "Recents", symbol: "clock", mode: .recents, urls: [directory, alpha])
+        let recent = model.addWorkspace(name: "Recents", symbol: "clock", mode: .recents, urls: [directory, alpha])!
         precondition(model.isRecentsRoot && model.isVirtualWorkspace && model.currentURL == nil)
         precondition(recent.rootPath == nil && recent.referencePaths.isEmpty,
                      "A recent workspace must never turn supplied URLs into a real root or references")
         let bookmarksAfter = try configuration(at: storage)["bookmarks"] as? [String: Any] ?? [:]
         precondition(Set(bookmarksBefore.keys) == Set(bookmarksAfter.keys), "Adding Recents must not bookmark ignored input URLs")
         let count = model.workspaces.count
-        let reused = model.addRecentWorkspace()
+        let reused = model.addRecentWorkspace()!
         precondition(reused.id == recent.id && model.workspaces.count == count,
                      "The add-recent command must select the existing workspace instead of creating duplicates")
 
@@ -94,14 +94,14 @@ import Foundation
     @MainActor private static func orderingAndProtection(in base: URL, directory: URL, child: URL, alpha: URL, zulu: URL) throws {
         let provider = RecentFilesFixtureProvider()
         let model = makeTestModel(storageURL: base.appendingPathComponent("ordering/config.json"), monitor: false, recentFiles: provider)
-        let ordinary = model.addWorkspace(name: "Fixture folder", mode: .folder, urls: [directory])
+        let ordinary = model.addWorkspace(name: "Fixture folder", mode: .folder, urls: [directory])!
         model.sortKey = .size
         model.ascending = false
         model.reorderEntries([zulu], before: child)
         let ordinaryOrder = model.visibleEntries.map(\.url)
         let ordinaryMetadata = model.selectedWorkspace?.directoryOrders
         let previousReferenceManualOrder = model.referenceManualOrder
-        let recent = model.addRecentWorkspace()
+        let recent = model.addRecentWorkspace()!
         precondition(model.sortKey == .size && !model.ascending,
                      "Selecting Recents must not overwrite the global sorting preferences")
         let alphaRecord = HubRecentFile(url: alpha, lastUsed: Date(timeIntervalSince1970: 500))
@@ -168,8 +168,8 @@ import Foundation
     @MainActor private static func navigationAndStaleCallbacks(in base: URL, directory: URL, child: URL, alpha: URL, zulu: URL) throws {
         let provider = RecentFilesFixtureProvider()
         let model = makeTestModel(storageURL: base.appendingPathComponent("navigation/config.json"), monitor: false, recentFiles: provider)
-        let ordinary = model.addWorkspace(name: "Fixture folder", mode: .folder, urls: [directory])
-        let recent = model.addRecentWorkspace()
+        let ordinary = model.addWorkspace(name: "Fixture folder", mode: .folder, urls: [directory])!
+        let recent = model.addRecentWorkspace()!
         let initialCallback = provider.latestCallback
         let initialRecords = [HubRecentFile(url: child, lastUsed: Date(timeIntervalSince1970: 400)),
                               HubRecentFile(url: alpha, lastUsed: Date(timeIntervalSince1970: 300))]

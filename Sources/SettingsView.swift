@@ -25,9 +25,9 @@ struct HubSettingsView: View {
     private var musicSettings: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                Toggle("显示 QQ 音乐控制", isOn: Binding(get: { model.settings.resolvedQQMusicEnabled }, set: { model.settings.qqMusicEnabled = $0 }))
+                Toggle("显示音乐控制", isOn: Binding(get: { model.settings.resolvedQQMusicEnabled }, set: { model.settings.qqMusicEnabled = $0 }))
                 if model.settings.resolvedQQMusicEnabled {
-                    HubQQMusicSetupView(controller: music)
+                    HubQQMusicSetupView(controller: music, onSelectionChange: { model.settings.musicPlayer = $0.rawValue })
                 }
                 Text("嵌入模式显示歌曲信息，悬停后控制播放；其他模式使用底部播放栏。授权完成后自动连接，无需每次配置。")
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -150,6 +150,7 @@ struct HubSettingsView: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 section("文件") {
+                    Toggle("启用 AirDrop", isOn: Binding(get: { model.settings.resolvedAirDropEnabled }, set: { model.settings.airDropEnabled = $0 }))
                     Toggle("在收藏旁显示文件暂存区", isOn: Binding(get: { model.settings.resolvedStagingEnabled }, set: { model.setStagingEnabled($0) }))
                     Text("拖入文件以临时收集，随后拖出或转移到目标文件夹。关闭入口会保留暂存项目。")
                         .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)

@@ -26,8 +26,8 @@ private final class BlockedRead: @unchecked Sendable {
         let file = healthy.appendingPathComponent("ready.txt")
         try Data("safe".utf8).write(to: file)
         let fixture = makeTestModel(storageURL: root.appendingPathComponent("config.json"))
-        let slowWorkspace = fixture.addWorkspace(name: "Slow", mode: .folder, urls: [slow])
-        let healthyWorkspace = fixture.addWorkspace(name: "Healthy", mode: .folder, urls: [healthy])
+        let slowWorkspace = fixture.addWorkspace(name: "Slow", mode: .folder, urls: [slow])!
+        let healthyWorkspace = fixture.addWorkspace(name: "Healthy", mode: .folder, urls: [healthy])!
         fixture.selectWorkspace(slowWorkspace.id)
         let blocked = BlockedRead()
         let loader = HubDirectoryLoader(timeout: 0.12, maximumReads: 2) { request in
