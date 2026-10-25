@@ -1,0 +1,28 @@
+<?xml version="1.0" standalone="yes"?><!-- sparkle-sign-warning:
+IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+    <channel>
+        <title>FileDock</title>
+        <item>
+            <title>1.22.1</title>
+            <pubDate>Sun, 25 Oct 2026 18:24:46 +0800</pubDate>
+            <link>https://github.com/Die-Xie/FileDock</link>
+            <sparkle:version>49</sparkle:version>
+            <sparkle:shortVersionString>1.22.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown"><![CDATA[# FileDock 1.22.1
+
+- 工作区悬停延迟改为无刻度连续滑块，以毫秒显示，保留0关闭语义；拖动结束后合并保存，重启保留细分数值。
+- 补齐面板顶栏可拖动空白，包含顶部留白和刘海两侧；使用持续存在的统一原生接收器，拖出后继续沿用自动固定与贴回逻辑。
+- 标签、音乐控件、右上角按钮和文件内容保持独立交互；文件拖放、标签排序、右键与拖放目的地查询不会启动面板移动。
+- 现有动效优化保留。新增真实面板、玻璃表面与完整浏览界面的隐藏窗口回归，检查事件命中、单次移动、拖放透传及拖出布局后的接收器保持。
+
+支持 macOS 13 及以上，提供 Apple Silicon / Intel 通用版本。保留配置和原有应用、更新签名身份。
+]]></description>
+            <enclosure url="https://github.com/Die-Xie/FileDock/releases/download/v1.22.1/FileDock.zip" length="6262664" type="application/octet-stream" sparkle:edSignature="gzK7dIc6MmNcPO+zxMfMpeFpNqpsDtQ29v3aCMPaZsygJaXLe9cj6RqYDp13EasyDkup4yHq7vNX0MUNWBOODg=="></enclosure>
+        </item>
+    </channel>
+</rss><!-- sparkle-signatures:
+edSignature: DYZ4p/1QPbjdMqoLfxy7YS5T/TMbIQfD93puqRt0b850djXNxc/0ZcGhyWv9n9YaCm323bse2yXFzSzsGeZdDA==
+length: 2003
+-->
