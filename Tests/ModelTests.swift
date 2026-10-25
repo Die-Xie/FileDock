@@ -313,8 +313,8 @@ import Foundation
         let allWorkspaces = model.workspaces
         model.setFavoriteShortcutVisible(false)
         precondition(model.fixedFavoriteWorkspace == nil && model.favoriteWorkspace?.id == favoriteID && model.workspaces == allWorkspaces)
-        precondition(model.tabWorkspaces.map(\.id) == allWorkspaces.map(\.id),
-                     "Hiding the fixed shortcut returns the existing favorite to its original tab position")
+        precondition(model.tabWorkspaces.map(\.id) == allWorkspaces.filter { $0.id != favoriteID }.map(\.id),
+                     "Hiding the fixed shortcut keeps the canonical favorite out of ordinary tabs")
         model.setFavoriteShortcutVisible(true)
         precondition(model.fixedFavoriteWorkspace?.id == favoriteID && model.workspaces == allWorkspaces,
                      "Restoring an existing shortcut must preserve its references and must not add a workspace")
@@ -339,8 +339,8 @@ import Foundation
         precondition(restored.workspaces.first { $0.id == folder.id }?.iconOnly == false && restored.workspaces.first { $0.id == folder.id }?.name == folder.name)
         restored.setFavoriteShortcutVisible(false)
         let hiddenReload = makeTestModel(storageURL: storage, monitor: false)
-        precondition(hiddenReload.fixedFavoriteWorkspace == nil && hiddenReload.favoriteWorkspace?.id == favoriteID && hiddenReload.tabWorkspaces.contains { $0.id == favoriteID },
-                     "The hidden shortcut preference must persist while its collection remains an ordinary tab")
+        precondition(hiddenReload.fixedFavoriteWorkspace == nil && hiddenReload.favoriteWorkspace?.id == favoriteID && !hiddenReload.tabWorkspaces.contains { $0.id == favoriteID },
+                     "The hidden preference must persist while preserving the collection without a visible tab")
         hiddenReload.setFavoriteShortcutVisible(true)
         hiddenReload.removeWorkspace(favoriteID)
         let afterRemovalCount = hiddenReload.workspaces.count
@@ -374,7 +374,8 @@ import Foundation
         precondition(emptyReload.workspaces.isEmpty && emptyReload.favoriteWorkspace == nil && emptyReload.fixedFavoriteWorkspace == nil,
                      "Deleting the last workspace is an intentional empty configuration, not a request to seed new defaults")
         emptyReload.setFavoriteShortcutVisible(true)
-        precondition(emptyReload.workspaces.count == 1 && emptyReload.fixedFavoriteWorkspace?.mode == .references)
+        precondition(emptyReload.workspaces.count == 1 && emptyReload.fixedFavoriteWorkspace?.mode == .references
+                     && emptyReload.selectedWorkspaceID == emptyReload.favoriteWorkspace?.id)
         let finalData = try Data(contentsOf: file)
         precondition(finalData == originalData && fm.fileExists(atPath: child.path),
                      "Hiding, renaming, removing and restoring a shortcut must not modify or delete referenced files")

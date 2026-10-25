@@ -3,19 +3,23 @@ set -eu
 cd "${0:A:h}"
 mkdir -p .build
 swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
-    Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/HubModel.swift Sources/DirectoryLoader.swift Tests/ModelTestSupport.swift Tests/ModelTests.swift -o .build/model-tests \
+    Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/WorkspaceShortcutOrder.swift Sources/HubModel.swift Sources/DirectoryLoader.swift Tests/ModelTestSupport.swift Tests/ModelTests.swift -o .build/model-tests \
     -framework AppKit -framework Carbon -framework Combine -framework UniformTypeIdentifiers
 .build/model-tests
 swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
-    Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/HubModel.swift Sources/DirectoryLoader.swift Tests/ModelTestSupport.swift Tests/PartialReferenceReorderTests.swift -o .build/partial-reference-reorder-tests \
+    Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/WorkspaceShortcutOrder.swift Sources/HubModel.swift Sources/DirectoryLoader.swift Tests/ModelTestSupport.swift Tests/PartialReferenceReorderTests.swift -o .build/partial-reference-reorder-tests \
     -framework AppKit -framework Carbon -framework Combine -framework UniformTypeIdentifiers
 .build/partial-reference-reorder-tests
 swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
-    Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/HubModel.swift Sources/DirectoryLoader.swift Tests/ConfigurationAdmissionTests.swift -o .build/configuration-admission-tests \
+    Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/WorkspaceShortcutOrder.swift Sources/HubModel.swift Sources/DirectoryLoader.swift Tests/ConfigurationAdmissionTests.swift -o .build/configuration-admission-tests \
     -framework AppKit -framework Carbon -framework Combine -framework UniformTypeIdentifiers
 .build/configuration-admission-tests
 swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
-    Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/HubModel.swift Sources/DirectoryLoader.swift Tests/ModelTestSupport.swift Tests/FileAppearanceTests.swift -o .build/file-appearance-tests \
+    Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/WorkspaceShortcutOrder.swift Sources/HubModel.swift Sources/DirectoryLoader.swift Tests/WorkspaceShortcutOrderTests.swift -o .build/workspace-shortcut-order-tests \
+    -framework AppKit -framework Carbon -framework Combine -framework UniformTypeIdentifiers
+.build/workspace-shortcut-order-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
+    Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/WorkspaceShortcutOrder.swift Sources/HubModel.swift Sources/DirectoryLoader.swift Tests/ModelTestSupport.swift Tests/FileAppearanceTests.swift -o .build/file-appearance-tests \
     -framework AppKit -framework Carbon -framework Combine -framework UniformTypeIdentifiers
 .build/file-appearance-tests
 swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
@@ -25,11 +29,11 @@ swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache
     Sources/RecentFiles.swift Tests/BackgroundRecentsTests.swift -o .build/background-recents-tests
 .build/background-recents-tests
 swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
-    Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/HubModel.swift Sources/DirectoryLoader.swift Tests/ModelTestSupport.swift Tests/RecentWorkspaceTests.swift -o .build/recent-workspace-tests \
+    Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/WorkspaceShortcutOrder.swift Sources/HubModel.swift Sources/DirectoryLoader.swift Tests/ModelTestSupport.swift Tests/RecentWorkspaceTests.swift -o .build/recent-workspace-tests \
     -framework AppKit -framework Carbon -framework Combine -framework UniformTypeIdentifiers
 .build/recent-workspace-tests
 swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
-    Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/HubModel.swift Sources/DirectoryLoader.swift Tests/ModelTestSupport.swift Tests/StagingWorkspaceTests.swift -o .build/staging-workspace-tests \
+    Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/WorkspaceShortcutOrder.swift Sources/HubModel.swift Sources/DirectoryLoader.swift Tests/ModelTestSupport.swift Tests/StagingWorkspaceTests.swift -o .build/staging-workspace-tests \
     -framework AppKit -framework Carbon -framework Combine -framework UniformTypeIdentifiers
 .build/staging-workspace-tests
 swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
@@ -70,7 +74,7 @@ swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache
     -framework AppKit
 .build/window-presentation-tests
 swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
-    Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/HubModel.swift Sources/DirectoryLoader.swift Tests/ModelTestSupport.swift Tests/GlobalShortcutTests.swift -o .build/shortcut-tests \
+    Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/WorkspaceShortcutOrder.swift Sources/HubModel.swift Sources/DirectoryLoader.swift Tests/ModelTestSupport.swift Tests/GlobalShortcutTests.swift -o .build/shortcut-tests \
     -framework AppKit -framework Carbon -framework Combine -framework UniformTypeIdentifiers
 .build/shortcut-tests
 swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
@@ -131,19 +135,19 @@ swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache
     -framework AppKit -framework SwiftUI -framework ImageIO -framework Combine
 .build/workspace-custom-icon-tests
 swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
-    Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/HubModel.swift Sources/DirectoryLoader.swift Tests/ModelTestSupport.swift Tests/DirectoryLoadingTests.swift -o .build/directory-loading-tests \
+    Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/WorkspaceShortcutOrder.swift Sources/HubModel.swift Sources/DirectoryLoader.swift Tests/ModelTestSupport.swift Tests/DirectoryLoadingTests.swift -o .build/directory-loading-tests \
     -framework AppKit -framework Carbon -framework Combine -framework UniformTypeIdentifiers
 .build/directory-loading-tests
 swiftc -swift-version 5 -O -parse-as-library -module-cache-path .build/module-cache \
-    Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/HubModel.swift Sources/DirectoryLoader.swift Tests/ModelTestSupport.swift Tests/LargeDirectoryTests.swift -o .build/large-directory-tests \
+    Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/WorkspaceShortcutOrder.swift Sources/HubModel.swift Sources/DirectoryLoader.swift Tests/ModelTestSupport.swift Tests/LargeDirectoryTests.swift -o .build/large-directory-tests \
     -framework AppKit -framework Carbon -framework Combine -framework UniformTypeIdentifiers
 .build/large-directory-tests
 swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
-    Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/HubModel.swift Sources/DirectoryLoader.swift Tests/ModelTestSupport.swift Tests/CrossWorkspaceDropTests.swift -o .build/cross-workspace-drop-tests \
+    Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/WorkspaceShortcutOrder.swift Sources/HubModel.swift Sources/DirectoryLoader.swift Tests/ModelTestSupport.swift Tests/CrossWorkspaceDropTests.swift -o .build/cross-workspace-drop-tests \
     -framework AppKit -framework Carbon -framework Combine -framework UniformTypeIdentifiers
 .build/cross-workspace-drop-tests
 swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
-    Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/HubModel.swift Sources/DirectoryLoader.swift Tests/ModelTestSupport.swift Tests/BackgroundFileWorkTests.swift -o .build/background-file-work-tests \
+    Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/WorkspaceShortcutOrder.swift Sources/HubModel.swift Sources/DirectoryLoader.swift Tests/ModelTestSupport.swift Tests/BackgroundFileWorkTests.swift -o .build/background-file-work-tests \
     -framework AppKit -framework Carbon -framework Combine -framework UniformTypeIdentifiers
 .build/background-file-work-tests
 swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
@@ -166,6 +170,6 @@ swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache
     -framework AppKit -framework SwiftUI -framework UniformTypeIdentifiers
 .build/native-drop-hosting-tests
 swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
-    Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/HubModel.swift Sources/DirectoryLoader.swift Sources/FileThumbnail.swift Sources/ThumbnailWorkQueue.swift Sources/PresentationState.swift Sources/MenuBarIcon.swift Tests/RenderingContinuityTests.swift -o .build/rendering-continuity-tests \
+    Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/WorkspaceShortcutOrder.swift Sources/HubModel.swift Sources/DirectoryLoader.swift Sources/FileThumbnail.swift Sources/ThumbnailWorkQueue.swift Sources/PresentationState.swift Sources/MenuBarIcon.swift Tests/RenderingContinuityTests.swift -o .build/rendering-continuity-tests \
     -framework AppKit -framework Carbon -framework Combine -framework UniformTypeIdentifiers -framework SwiftUI -framework QuickLookThumbnailing
 .build/rendering-continuity-tests

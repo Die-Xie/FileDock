@@ -291,101 +291,154 @@ struct HubView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + model.settings.switchDelay, execute: task)
     }
 
-    @ViewBuilder private var workspaceControls: some View {
-        if let favorite = model.fixedFavoriteWorkspace {
-            Button { model.selectWorkspace(favorite.id) } label: {
-                HubWorkspaceShortcutLabel(symbol: model.selectedWorkspaceID == favorite.id ? "star.fill" : "star",
-                                          selected: model.selectedWorkspaceID == favorite.id,
-                                          targeted: workspaceSpringLoader.target == favorite.id)
-            }.buttonStyle(.plain)
-                .accessibilityLabel("收藏：\(favorite.name)")
-                .help("\(favorite.name) · 右键可隐藏快捷入口")
-                .onHover { shortcutHover($0, key: favorite.id, action: { model.selectWorkspace(favorite.id) }) }
-                .onDrop(of: HubWorkspaceFileDropDelegate.contentTypes, delegate: workspaceFileDrop(favorite))
-                .anchorPreference(key: HubFileDropRegionKey.self, value: .bounds) { [.workspace(favorite.id): $0] }
-                .contextMenu {
-                    HubMenuButton("编辑收藏…", systemImage: "pencil") { editingWorkspace = favorite }
-                    HubMenuButton("隐藏收藏快捷入口", systemImage: "eye.slash") { model.setFavoriteShortcutVisible(false) }
-                }
-        }
-        if model.settings.resolvedAirDropEnabled {
-            Button {
-                guard canReceiveAirDrop else { return }
-                let selection = model.selectedURLs
-                let urls = selection.isEmpty && model.isStagingRoot ? model.stagedURLs : selection
-                guard !urls.isEmpty else { showsAirDropHint = true; return }
-                queueAirDropFiles(urls)
-            } label: { HubWorkspaceShortcutLabel(symbol: "airplayaudio", targeted: airDropTargeted) }
-                .buttonStyle(.plain)
-                .disabled(!canReceiveAirDrop)
-                .accessibilityLabel("AirDrop")
-                .help("AirDrop · 拖入文件，或先选择文件后点按")
-                .onDrop(of: HubAirDropFileDropDelegate.contentTypes, delegate: HubAirDropFileDropDelegate(
-                    canReceive: { presentation.previewVisible && canReceiveAirDrop && !HubWorkspaceDragState.isDragging },
-                    targeted: { active in
-                        if active {
-                            if !airDropTargeted {
-                                clearFileDrop()
-                                airDropTargeted = true
-                                showsAirDropHint = false
-                                hoverTask?.cancel(); hoveredWorkspace = nil
-                                presentation.setFileDragActive(true)
-                            }
-                        } else {
-                            airDropTargeted = false
-                            if fileDropFeedback?.action == .airDrop { fileDropFeedback = nil }
-                        }
-                    }, receive: receiveAirDropFiles))
-                .anchorPreference(key: HubFileDropRegionKey.self, value: .bounds) { [.airDrop: $0] }
-        }
-        if let recent = model.fixedRecentWorkspace {
-            Button { model.selectWorkspace(recent.id) } label: {
-                HubWorkspaceShortcutLabel(symbol: "clock",
-                                          selected: model.selectedWorkspaceID == recent.id,
-                                          targeted: workspaceSpringLoader.target == recent.id)
-            }.buttonStyle(.plain)
-                .accessibilityLabel("最近使用：\(recent.name)")
-                .help("\(recent.name) · 右键可隐藏快捷入口")
-                .onHover { shortcutHover($0, key: recent.id, action: { model.selectWorkspace(recent.id) }) }
-                .onDrop(of: HubWorkspaceFileDropDelegate.contentTypes, delegate: workspaceFileDrop(recent))
-                .anchorPreference(key: HubFileDropRegionKey.self, value: .bounds) { [.workspace(recent.id): $0] }
-                .contextMenu {
-                    HubMenuButton("隐藏最近使用快捷入口", systemImage: "eye.slash") { model.setRecentShortcutVisible(false) }
-                }
-        }
-        if model.settings.resolvedStagingEnabled {
-            Button { model.openStagingWorkspace() } label: {
-                HubWorkspaceShortcutLabel(symbol: model.stagedURLs.isEmpty ? "tray" : "tray.full.fill",
-                                          count: model.stagedURLs.count, selected: model.isStagingWorkspace,
-                                          targeted: stagingDropTargeted)
-            }.buttonStyle(.plain)
-                .accessibilityLabel("暂存区，\(model.stagedURLs.count) 个项目")
-                .help("暂存区 · 拖入文件暂存引用，点击查看，右键快速转移")
-                .onHover { shortcutHover($0, key: model.settings.stagingWorkspaceID ?? stagingHoverID, action: { model.openStagingWorkspace() }) }
-                .onDrop(of: HubWorkspaceFileDropDelegate.contentTypes, delegate: HubWorkspaceFileDropDelegate(
-                    id: model.settings.stagingWorkspaceID ?? stagingHoverID, loader: workspaceSpringLoader,
-                    delay: model.settings.switchDelay,
-                    canActivate: { presentation.previewVisible && model.settings.resolvedStagingEnabled && !HubWorkspaceDragState.isDragging },
-                    activate: { if !model.isStagingWorkspace { model.openStagingWorkspace() } },
-                    targeted: { stagingDropTargeted = $0; if $0 { presentation.setFileDragActive(true) } }, receive: receiveStagingDrop))
-                .anchorPreference(key: HubFileDropRegionKey.self, value: .bounds) { [.staging: $0] }
-                .contextMenu {
-                    HubMenuButton("打开暂存区", systemImage: "tray") { model.openStagingWorkspace() }
-                    if model.currentURL != nil {
-                        HubMenuButton("复制全部到当前文件夹", systemImage: "doc.on.doc") { model.transferStagingToCurrentFolder(copy: true) }
-                            .disabled(model.stagedURLs.isEmpty || model.stagingTransferInProgress)
-                        HubMenuButton("移动全部到当前文件夹", systemImage: "folder") { model.transferStagingToCurrentFolder(copy: false) }
-                            .disabled(model.stagedURLs.isEmpty || model.stagingTransferInProgress)
+    @ViewBuilder private func fixedShortcut(_ item: HubShortcutItem) -> some View {
+        switch item {
+        case .favorite:
+            if let favorite = model.fixedFavoriteWorkspace {
+                Button { activateShortcut(.favorite) } label: {
+                    HubWorkspaceShortcutLabel(symbol: model.selectedWorkspaceID == favorite.id ? "star.fill" : "star",
+                                              selected: model.selectedWorkspaceID == favorite.id,
+                                              targeted: workspaceSpringLoader.target == favorite.id)
+                }.buttonStyle(.plain)
+                    .accessibilityLabel("收藏：\(favorite.name)")
+                    .help("\(favorite.name) · 右键可隐藏快捷入口")
+                    .onHover { shortcutHover($0, key: favorite.id, action: { model.selectWorkspace(favorite.id) }) }
+                    .onDrop(of: HubWorkspaceFileDropDelegate.contentTypes, delegate: workspaceFileDrop(favorite))
+                    .anchorPreference(key: HubFileDropRegionKey.self, value: .bounds) { [.workspace(favorite.id): $0] }
+                    .contextMenu {
+                        HubMenuButton("编辑收藏…", systemImage: "pencil") { editingWorkspace = favorite }
+                        HubMenuButton("隐藏收藏快捷入口", systemImage: "eye.slash") { model.setFavoriteShortcutVisible(false) }
                     }
-                    HubMenuButton("复制全部到…", systemImage: "doc.on.doc") { model.chooseStagingTransfer(copy: true, urls: model.stagedURLs) }
-                        .disabled(model.stagedURLs.isEmpty || model.stagingTransferInProgress)
-                    HubMenuButton("移动全部到…", systemImage: "folder") { model.chooseStagingTransfer(copy: false, urls: model.stagedURLs) }
-                        .disabled(model.stagedURLs.isEmpty || model.stagingTransferInProgress)
-                    Divider()
-                    HubMenuButton("清空暂存引用", systemImage: "minus.circle") { model.clearStagedFiles() }
-                        .disabled(model.stagedURLs.isEmpty || model.stagingTransferInProgress)
-                    HubMenuButton("关闭暂存区", systemImage: "eye.slash") { model.setStagingEnabled(false) }
-                }
+            }
+        case .airDrop:
+            if model.settings.resolvedAirDropEnabled {
+                Button { activateShortcut(.airDrop) } label: { HubWorkspaceShortcutLabel(symbol: "airplayaudio", targeted: airDropTargeted) }
+                    .buttonStyle(.plain)
+                    .disabled(!canReceiveAirDrop)
+                    .accessibilityLabel("AirDrop")
+                    .help("AirDrop · 拖入文件，或先选择文件后点按")
+                    .onDrop(of: HubAirDropFileDropDelegate.contentTypes, delegate: HubAirDropFileDropDelegate(
+                        canReceive: { presentation.previewVisible && canReceiveAirDrop && !HubWorkspaceDragState.isDragging },
+                        targeted: { active in
+                            if active {
+                                if !airDropTargeted {
+                                    clearFileDrop()
+                                    airDropTargeted = true
+                                    showsAirDropHint = false
+                                    hoverTask?.cancel(); hoveredWorkspace = nil
+                                    presentation.setFileDragActive(true)
+                                }
+                            } else {
+                                airDropTargeted = false
+                                if fileDropFeedback?.action == .airDrop { fileDropFeedback = nil }
+                            }
+                        }, receive: receiveAirDropFiles))
+                    .anchorPreference(key: HubFileDropRegionKey.self, value: .bounds) { [.airDrop: $0] }
+            }
+        case .recents:
+            if let recent = model.fixedRecentWorkspace {
+                Button { activateShortcut(.recents) } label: {
+                    HubWorkspaceShortcutLabel(symbol: "clock",
+                                              selected: model.selectedWorkspaceID == recent.id,
+                                              targeted: workspaceSpringLoader.target == recent.id)
+                }.buttonStyle(.plain)
+                    .accessibilityLabel("最近使用：\(recent.name)")
+                    .help("\(recent.name) · 右键可隐藏快捷入口")
+                    .onHover { shortcutHover($0, key: recent.id, action: { model.selectWorkspace(recent.id) }) }
+                    .onDrop(of: HubWorkspaceFileDropDelegate.contentTypes, delegate: workspaceFileDrop(recent))
+                    .anchorPreference(key: HubFileDropRegionKey.self, value: .bounds) { [.workspace(recent.id): $0] }
+                    .contextMenu {
+                        HubMenuButton("隐藏最近使用快捷入口", systemImage: "eye.slash") { model.setRecentShortcutVisible(false) }
+                    }
+            }
+        case .staging:
+            if model.settings.resolvedStagingEnabled {
+                Button { activateShortcut(.staging) } label: {
+                    HubWorkspaceShortcutLabel(symbol: model.stagedURLs.isEmpty ? "tray" : "tray.full.fill",
+                                              count: model.stagedURLs.count, selected: model.isStagingWorkspace,
+                                              targeted: stagingDropTargeted)
+                }.buttonStyle(.plain)
+                    .accessibilityLabel("暂存区，\(model.stagedURLs.count) 个项目")
+                    .help("暂存区 · 拖入文件暂存引用，点击查看，右键快速转移")
+                    .onHover { shortcutHover($0, key: model.settings.stagingWorkspaceID ?? stagingHoverID, action: { model.openStagingWorkspace() }) }
+                    .onDrop(of: HubWorkspaceFileDropDelegate.contentTypes, delegate: HubWorkspaceFileDropDelegate(
+                        id: model.settings.stagingWorkspaceID ?? stagingHoverID, loader: workspaceSpringLoader,
+                        delay: model.settings.switchDelay,
+                        canActivate: { presentation.previewVisible && model.settings.resolvedStagingEnabled && !HubWorkspaceDragState.isDragging },
+                        activate: { if !model.isStagingWorkspace { model.openStagingWorkspace() } },
+                        targeted: { stagingDropTargeted = $0; if $0 { presentation.setFileDragActive(true) } }, receive: receiveStagingDrop))
+                    .anchorPreference(key: HubFileDropRegionKey.self, value: .bounds) { [.staging: $0] }
+                    .contextMenu {
+                        HubMenuButton("打开暂存区", systemImage: "tray") { model.openStagingWorkspace() }
+                        if model.currentURL != nil {
+                            HubMenuButton("复制全部到当前文件夹", systemImage: "doc.on.doc") { model.transferStagingToCurrentFolder(copy: true) }
+                                .disabled(model.stagedURLs.isEmpty || model.stagingTransferInProgress)
+                            HubMenuButton("移动全部到当前文件夹", systemImage: "folder") { model.transferStagingToCurrentFolder(copy: false) }
+                                .disabled(model.stagedURLs.isEmpty || model.stagingTransferInProgress)
+                        }
+                        HubMenuButton("复制全部到…", systemImage: "doc.on.doc") { model.chooseStagingTransfer(copy: true, urls: model.stagedURLs) }
+                            .disabled(model.stagedURLs.isEmpty || model.stagingTransferInProgress)
+                        HubMenuButton("移动全部到…", systemImage: "folder") { model.chooseStagingTransfer(copy: false, urls: model.stagedURLs) }
+                            .disabled(model.stagedURLs.isEmpty || model.stagingTransferInProgress)
+                        Divider()
+                        HubMenuButton("清空暂存引用", systemImage: "minus.circle") { model.clearStagedFiles() }
+                            .disabled(model.stagedURLs.isEmpty || model.stagingTransferInProgress)
+                        HubMenuButton("关闭暂存区", systemImage: "eye.slash") { model.setStagingEnabled(false) }
+                    }
+            }
+        }
+    }
+
+    private func shortcutTitle(_ item: HubShortcutItem) -> String {
+        switch item {
+        case .favorite: return model.fixedFavoriteWorkspace?.name ?? "收藏"
+        case .airDrop: return "AirDrop"
+        case .recents: return model.fixedRecentWorkspace?.name ?? "最近使用"
+        case .staging: return "暂存区"
+        }
+    }
+
+    private func shortcutSymbol(_ item: HubShortcutItem) -> String {
+        switch item {
+        case .favorite: return model.fixedFavoriteWorkspace?.id == model.selectedWorkspaceID ? "star.fill" : "star"
+        case .airDrop: return "airplayaudio"
+        case .recents: return "clock"
+        case .staging: return model.stagedURLs.isEmpty ? "tray" : "tray.full.fill"
+        }
+    }
+
+    private func activateShortcut(_ item: HubShortcutItem) {
+        guard model.visibleShortcutItems.contains(item) else { return }
+        switch item {
+        case .favorite:
+            if let favorite = model.fixedFavoriteWorkspace { model.selectWorkspace(favorite.id) }
+        case .airDrop:
+            guard canReceiveAirDrop else { return }
+            let selection = model.selectedURLs
+            let urls = selection.isEmpty && model.isStagingRoot ? model.stagedURLs : selection
+            guard !urls.isEmpty else { showsAirDropHint = true; return }
+            queueAirDropFiles(urls)
+        case .recents:
+            if let recent = model.fixedRecentWorkspace { model.selectWorkspace(recent.id) }
+        case .staging: model.openStagingWorkspace()
+        }
+    }
+
+    @ViewBuilder private var workspaceControls: some View {
+        ForEach(model.visibleShortcutItems) { item in
+            fixedShortcut(item)
+                .overlay(HubWorkspaceDragBridge(
+                    workspaceID: item.dragID, title: shortcutTitle(item),
+                    domain: .shortcut, symbol: shortcutSymbol(item),
+                    onSelect: { activateShortcut(item) },
+                    onReorder: { source, target, after in
+                        model.reorderShortcut(sourceID: source, targetID: target, after: after)
+                    },
+                    onDragStateChanged: { _ in
+                        clearFileDrop()
+                        hoverTask?.cancel(); hoveredWorkspace = nil
+                        workspaceRevealPointer = NSEvent.mouseLocation
+                    }))
         }
         Menu {
             Toggle("固定收藏到右上角", isOn: Binding(

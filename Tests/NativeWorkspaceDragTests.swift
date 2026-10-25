@@ -5,6 +5,7 @@ import SwiftUI
 @main
 struct NativeWorkspaceDragTests {
     @MainActor static func main() {
+        _ = NSApplication.shared
         precondition(HubWorkspaceDragData.takesMouseDown(.leftMouseDown, modifiers: []))
         precondition(HubWorkspaceDragData.takesMouseDown(.leftMouseDown, modifiers: [.command, .shift]))
         precondition(!HubWorkspaceDragData.takesMouseDown(.leftMouseDown, modifiers: .control))
@@ -19,6 +20,9 @@ struct NativeWorkspaceDragTests {
             precondition(!HubWorkspaceDragData.takesHitTest(type, modifiers: [], localDragActive: true))
         }
         precondition(!HubWorkspaceDragData.takesHitTest(.leftMouseDown, modifiers: .control, localDragActive: true))
+        precondition(!HubWorkspaceDragData.takesHitTest(nil, modifiers: [], localDragActive: false),
+                     "Eventless file destination discovery must pass through reorder overlays")
+        precondition(HubWorkspaceDragData.takesHitTest(nil, modifiers: [], localDragActive: true))
         precondition(!HubWorkspaceDragData.shouldBegin(distance: 4.99, clickCount: 1))
         precondition(HubWorkspaceDragData.shouldBegin(distance: 5, clickCount: 1))
         precondition(!HubWorkspaceDragData.shouldBegin(distance: 8, clickCount: 2))
@@ -44,6 +48,9 @@ struct NativeWorkspaceDragTests {
         let parent = NSView(frame: NSRect(x: 0, y: 0, width: 200, height: 100))
         source.frame.origin = NSPoint(x: 20, y: 20)
         parent.addSubview(source)
+        precondition(source.hitTest(NSPoint(x: 50, y: 40)) == nil, "An idle overlay must not intercept an external file drag")
+        let geometrySession = HubWorkspaceDragPayload(id: UUID(), workspaceID: source.workspaceID)
+        HubWorkspaceDragState.begin(geometrySession, source: source)
         precondition(source.hitTest(NSPoint(x: 50, y: 40)) === source)
         precondition(source.hitTest(NSPoint(x: 10, y: 40)) == nil)
         precondition(source.hitTest(NSPoint(x: 150, y: 40)) == nil)
@@ -61,6 +68,7 @@ struct NativeWorkspaceDragTests {
         precondition(source.hitTest(NSPoint(x: 60, y: 20)) === source)
         precondition(source.hitTest(NSPoint(x: 95, y: 20)) == nil, "A tab clipped by its strip viewport cannot become a hidden target")
         source.cancelPendingInteraction()
+        HubWorkspaceDragState.end(geometrySession.id, source: source)
         precondition(!HubWorkspaceDragState.isDragging)
         precondition(source.insertionAfter == nil)
 
@@ -135,7 +143,135 @@ struct NativeWorkspaceDragTests {
         HubWorkspaceDragState.end(second.id, source: otherSource)
         precondition(!HubWorkspaceDragState.isDragging && notifications == 2)
 
-        print("PASS: workspace drag threshold, midpoint insertion, clipped native responder, private single-item pasteboard authentication, local source identity, cancellation and stale session callbacks")
+        testDomainsAndDestinations()
+        testClicksAndPreview()
+        print("PASS: workspace/shortcut domain isolation, native destination lifecycle, file drag pass-through, midpoint insertion, click-only selection, preview, private pasteboard authentication and stale session callbacks")
         print("LIMIT: Real pointer dragging, native destination routing, edge autoscroll and animated tab reorder require UI verification; tests create no visible windows or files")
     }
+
+    @MainActor private static func testDomainsAndDestinations() {
+        let bounds = NSRect(x: 0, y: 0, width: 30, height: 32)
+        for domain in [HubWorkspaceDragDomain.workspace, .shortcut] {
+            let source = HubWorkspaceDragBridge.WorkspaceDragView(frame: bounds)
+            let target = HubWorkspaceDragBridge.WorkspaceDragView(frame: bounds)
+            source.domain = domain; target.domain = domain
+            let targetID = target.workspaceID
+            var selects = 0
+            var reordered: [(UUID, UUID, Bool)] = []
+            source.onSelect = { selects += 1 }; target.onSelect = { selects += 1 }
+            target.onReorder = { reordered.append(($0, $1, $2)) }
+            let payload = HubWorkspaceDragPayload(id: UUID(), workspaceID: source.workspaceID, domain: domain)
+            let board = NSPasteboard.withUniqueName()
+            defer { HubWorkspaceDragState.end(payload.id, source: source); board.releaseGlobally() }
+            func write(_ item: HubWorkspaceDragPayload) {
+                board.clearContents()
+                precondition(board.writeObjects([HubWorkspaceDragData.pasteboardItem(for: item)]))
+                HubWorkspaceDragState.bind(pasteboard: board, source: source, for: payload.id)
+            }
+            HubWorkspaceDragState.begin(payload, source: source)
+            write(payload)
+            precondition(HubWorkspaceDragState.localPayload(source: source, pasteboard: board) == payload)
+            let info = WorkspaceDropInfoFixture(board: board, source: source)
+            info.draggingLocation = target.convert(NSPoint(x: 6, y: 16), to: nil)
+            precondition(target.hitTest(NSPoint(x: 6, y: 16)) === target)
+            precondition(target.draggingEntered(info) == .move && target.insertionAfter == false)
+            precondition(target.prepareForDragOperation(info) && selects == 0 && reordered.isEmpty)
+
+            target.domain = domain == .workspace ? .shortcut : .workspace
+            precondition(target.draggingUpdated(info).isEmpty && target.insertionAfter == nil)
+            precondition(!target.prepareForDragOperation(info) && !target.performDragOperation(info),
+                         "Workspace tabs and fixed shortcuts must never accept each other's reorder")
+            precondition(target.hitTest(NSPoint(x: 6, y: 16)) == nil)
+            target.domain = domain
+            let forgedDomain = HubWorkspaceDragPayload(id: payload.id, workspaceID: payload.workspaceID,
+                domain: domain == .workspace ? .shortcut : .workspace)
+            write(forgedDomain)
+            precondition(HubWorkspaceDragState.localPayload(source: source, pasteboard: board) == nil,
+                         "The domain must be authenticated together with the source/session/item identity")
+            precondition(target.draggingEntered(info).isEmpty && !target.performDragOperation(info))
+            write(payload)
+            target.workspaceID = payload.workspaceID
+            precondition(target.draggingEntered(info).isEmpty, "Self drops must not reorder")
+            target.workspaceID = targetID
+            info.draggingSourceOperationMask = .copy
+            precondition(target.draggingEntered(info).isEmpty, "Reordering cannot consume a copy-only file source")
+            info.draggingSourceOperationMask = .move
+            target.isHidden = true
+            precondition(target.draggingEntered(info).isEmpty)
+            target.isHidden = false
+            info.draggingLocation = target.convert(NSPoint(x: 29, y: 16), to: nil)
+            precondition(target.draggingUpdated(info) == .move && target.insertionAfter == true)
+            precondition(target.performDragOperation(info))
+            precondition(reordered.count == 1 && reordered[0].0 == payload.workspaceID && reordered[0].1 == targetID && reordered[0].2)
+            precondition(selects == 0 && target.insertionAfter == nil,
+                         "An icon reorder must never activate the underlying AirDrop or workspace click action")
+            precondition(target.draggingEntered(info) == .move)
+            target.draggingExited(info)
+            precondition(target.insertionAfter == nil)
+            precondition(target.draggingEntered(info) == .move)
+            target.concludeDragOperation(info)
+            precondition(target.insertionAfter == nil)
+            precondition(target.draggingEntered(info) == .move)
+            HubWorkspaceDragState.end(payload.id, source: source)
+            precondition(target.insertionAfter == nil && !target.performDragOperation(info), "Ending a session invalidates every outstanding target")
+
+            board.clearContents()
+            board.writeObjects([URL(fileURLWithPath: "/workspace-reorder-fixture.svg") as NSURL])
+            info.draggingSource = nil
+            precondition(target.hitTest(NSPoint(x: 6, y: 16)) == nil)
+            precondition(target.draggingEntered(info).isEmpty && !target.prepareForDragOperation(info) && !target.performDragOperation(info),
+                         "Finder files belong to the file receivers, not the shortcut reorder overlay")
+            precondition(reordered.count == 1 && selects == 0)
+        }
+    }
+
+    @MainActor private static func testClicksAndPreview() {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 100, height: 50),
+                              styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        let view = HubWorkspaceDragBridge.WorkspaceDragView(frame: NSRect(x: 0, y: 0, width: 30, height: 32))
+        let root = NSView(frame: NSRect(x: 0, y: 0, width: 100, height: 50))
+        window.contentView = root; root.addSubview(view)
+        view.domain = .shortcut; view.symbol = "star"; view.title = "收藏"
+        var selections = 0
+        view.onSelect = { selections += 1 }
+        func event(_ type: NSEvent.EventType) -> NSEvent {
+            NSEvent.mouseEvent(with: type, location: view.convert(NSPoint(x: 10, y: 12), to: nil), modifierFlags: [],
+                timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1)!
+        }
+        view.mouseDown(with: event(.leftMouseDown))
+        view.mouseUp(with: event(.leftMouseUp))
+        precondition(selections == 1 && !HubWorkspaceDragState.isDragging, "Ordinary clicks retain their original button action")
+        view.mouseDown(with: event(.leftMouseDown))
+        view.domain = .workspace
+        view.mouseUp(with: event(.leftMouseUp))
+        precondition(selections == 1, "A view changing domains during a press cannot invoke the replacement action")
+        view.domain = .shortcut
+        precondition(view.dragPreview().size == NSSize(width: 42, height: 42), "Shortcut drag previews use the supplied glyph")
+        view.symbol = nil
+        precondition(view.dragPreview().size.width == 100, "A missing glyph retains a readable title preview")
+        precondition(view.frame.size == NSSize(width: 30, height: 32), "Drag artwork must not change the actual control's hit area")
+        precondition(!window.isVisible, "Tests must not present a window")
+    }
+}
+
+@MainActor private final class WorkspaceDropInfoFixture: NSObject, NSDraggingInfo {
+    var draggingDestinationWindow: NSWindow?
+    var draggingSourceOperationMask: NSDragOperation = .move
+    var draggingLocation = NSPoint.zero
+    var draggedImageLocation = NSPoint.zero
+    nonisolated var draggedImage: NSImage? { nil }
+    let draggingPasteboard: NSPasteboard
+    var draggingSource: Any?
+    var draggingSequenceNumber = 1
+    var draggingFormation: NSDraggingFormation = .default
+    var animatesToDestination = false
+    var numberOfValidItemsForDrop = 1
+    var springLoadingHighlight: NSSpringLoadingHighlight { .none }
+    init(board: NSPasteboard, source: Any?) { draggingPasteboard = board; draggingSource = source }
+    func slideDraggedImage(to screenPoint: NSPoint) {}
+    nonisolated override func namesOfPromisedFilesDropped(atDestination dropDestination: URL) -> [String]? { nil }
+    func resetSpringLoading() {}
+    func enumerateDraggingItems(options enumOpts: NSDraggingItemEnumerationOptions = [], for view: NSView?, classes classArray: [AnyClass], searchOptions: [NSPasteboard.ReadingOptionKey: Any] = [:], using block: (NSDraggingItem, Int, UnsafeMutablePointer<ObjCBool>) -> Void) {}
 }

@@ -78,6 +78,7 @@ struct HubSettings: Codable, Equatable {
     var favoriteWorkspaceID: UUID? = nil
     var favoriteShortcutEnabled: Bool? = true
     var recentShortcutEnabled: Bool? = false
+    var shortcutOrder: [String]? = nil
     var blockedApplicationBundleIDs: [String]? = nil
     var suppressHoverInFullScreen: Bool? = nil
     var stagingWorkspaceID: UUID? = nil
@@ -111,6 +112,7 @@ struct HubSettings: Codable, Equatable {
     }
     var resolvedFavoriteShortcutEnabled: Bool { favoriteShortcutEnabled ?? true }
     var resolvedRecentShortcutEnabled: Bool { recentShortcutEnabled ?? false }
+    var resolvedShortcutOrder: [HubShortcutItem] { HubShortcutItem.normalized(shortcutOrder) }
     var resolvedBlockedApplicationBundleIDs: [String] {
         Array(Set((blockedApplicationBundleIDs ?? []).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty && $0.utf8.count <= 255 && !$0.contains("\u{0}") })).sorted()
@@ -125,6 +127,7 @@ struct HubSettings: Codable, Equatable {
     }
 
     mutating func normalize() {
+        if shortcutOrder != nil { shortcutOrder = resolvedShortcutOrder.map(\.rawValue) }
         if !["system", "dark", "light"].contains(appearance) { appearance = "dark" }
         if backgroundTheme != nil { backgroundTheme = resolvedBackgroundTheme }
         if !["both", "hover", "keyboard"].contains(triggerMode) { triggerMode = "both" }
@@ -504,15 +507,47 @@ enum HubFileOperations {
     private var availableWorkspaces: [Workspace] {
         let stagingID = stagingWorkspace?.id
         let recentID = fixedRecentWorkspace?.id
+        let favoriteID = favoriteWorkspace?.id
         return workspaces.filter {
             (settings.resolvedStagingEnabled || $0.id != stagingID) &&
+            (settings.resolvedFavoriteShortcutEnabled || $0.id != favoriteID) &&
             ($0.mode != .recents || $0.id == recentID)
         }
     }
     var tabWorkspaces: [Workspace] {
-        let fixedID = fixedFavoriteWorkspace?.id
+        let favoriteID = favoriteWorkspace?.id
         let stagingID = stagingWorkspace?.id
-        return workspaces.filter { $0.id != fixedID && $0.mode != .recents && $0.id != stagingID }
+        return workspaces.filter { $0.id != favoriteID && $0.mode != .recents && $0.id != stagingID }
+    }
+    var visibleShortcutItems: [HubShortcutItem] {
+        settings.resolvedShortcutOrder.filter { item in
+            switch item {
+            case .favorite: return fixedFavoriteWorkspace != nil
+            case .airDrop: return settings.resolvedAirDropEnabled
+            case .recents: return fixedRecentWorkspace != nil
+            case .staging: return settings.resolvedStagingEnabled
+            }
+        }
+    }
+
+    func reorderShortcut(sourceID: UUID, targetID: UUID, after: Bool) {
+        var visible = visibleShortcutItems
+        guard sourceID != targetID,
+              let source = visible.firstIndex(where: { $0.dragID == sourceID }),
+              visible.contains(where: { $0.dragID == targetID }) else { return }
+        let moved = visible.remove(at: source)
+        guard let target = visible.firstIndex(where: { $0.dragID == targetID }) else { return }
+        visible.insert(moved, at: target + (after ? 1 : 0))
+        let members = Set(visible), previous = settings.resolvedShortcutOrder
+        var position = 0
+        let reordered = previous.map { item -> HubShortcutItem in
+            guard members.contains(item) else { return item }
+            defer { position += 1 }
+            return visible[position]
+        }
+        // Hidden features keep their slots, and dragging only changes the
+        // toolbar order: no workspace selection, query, or file data changes.
+        if reordered != previous { settings.shortcutOrder = reordered.map(\.rawValue) }
     }
     var selectedURLs: [URL] { entries.filter { selectedIDs.contains($0.url) }.map(\.url) }
     var selectedEntries: [FileEntry] { entries.filter { selectedIDs.contains($0.url) } }
@@ -699,13 +734,20 @@ enum HubFileOperations {
     }
 
     func setFavoriteShortcutVisible(_ visible: Bool) {
+        guard settings.resolvedFavoriteShortcutEnabled != visible || (visible && favoriteWorkspace == nil) else { return }
         beginPersistenceTransaction()
         defer { endPersistenceTransaction() }
         if visible {
+            let creating = favoriteWorkspace == nil
             guard let favorite = favoriteWorkspace ?? addWorkspace(name: "收藏", symbol: "star", mode: .references, urls: []) else { return }
             settings.favoriteWorkspaceID = favorite.id
+            settings.favoriteShortcutEnabled = true
+            if creating || selectedWorkspaceID == nil { selectWorkspace(favorite.id) }
+        } else {
+            let wasSelected = selectedWorkspaceID == favoriteWorkspace?.id
+            settings.favoriteShortcutEnabled = false
+            if wasSelected { selectFallbackWorkspace() }
         }
-        settings.favoriteShortcutEnabled = visible
     }
 
     func setWorkspaceIconOnly(id: UUID, enabled: Bool) {

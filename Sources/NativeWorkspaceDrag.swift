@@ -4,9 +4,18 @@ import SwiftUI
 let hubWorkspaceDragType = NSPasteboard.PasteboardType("local.diexie.filedock.workspace-reorder")
 let hubWorkspaceDragDidEnd = Notification.Name("HubWorkspaceDragDidEnd")
 
+enum HubWorkspaceDragDomain: String {
+    case workspace, shortcut
+}
+
 struct HubWorkspaceDragPayload: Equatable {
     let id: UUID
     let workspaceID: UUID
+    let domain: HubWorkspaceDragDomain
+
+    init(id: UUID, workspaceID: UUID, domain: HubWorkspaceDragDomain = .workspace) {
+        self.id = id; self.workspaceID = workspaceID; self.domain = domain
+    }
 }
 
 enum HubWorkspaceDragData {
@@ -14,8 +23,8 @@ enum HubWorkspaceDragData {
         type == .leftMouseDown && !modifiers.contains(.control)
     }
 
-    static func takesHitTest(_ type: NSEvent.EventType, modifiers: NSEvent.ModifierFlags, localDragActive: Bool) -> Bool {
-        if takesMouseDown(type, modifiers: modifiers) { return true }
+    static func takesHitTest(_ type: NSEvent.EventType?, modifiers: NSEvent.ModifierFlags, localDragActive: Bool) -> Bool {
+        if let type, takesMouseDown(type, modifiers: modifiers) { return true }
         guard localDragActive else { return false }
         // Native destination discovery can run with an AppKit-defined event or
         // the final mouseUp, rather than the source's mouseDragged event.
@@ -39,8 +48,12 @@ enum HubWorkspaceDragData {
 
     static func pasteboardItem(for payload: HubWorkspaceDragPayload) -> NSPasteboardItem {
         let item = NSPasteboardItem()
-        item.setString("\(payload.id.uuidString)|\(payload.workspaceID.uuidString)", forType: hubWorkspaceDragType)
+        item.setString(token(for: payload), forType: hubWorkspaceDragType)
         return item
+    }
+
+    static func token(for payload: HubWorkspaceDragPayload) -> String {
+        "\(payload.domain.rawValue)|\(payload.id.uuidString)|\(payload.workspaceID.uuidString)"
     }
 }
 
@@ -73,7 +86,7 @@ enum HubWorkspaceDragState {
               pasteboard.changeCount == pasteboardChangeCount,
               let items = pasteboard.pasteboardItems, items.count == 1,
               items[0].types == [hubWorkspaceDragType],
-              items[0].string(forType: hubWorkspaceDragType) == "\(current.id.uuidString)|\(current.workspaceID.uuidString)" else { return nil }
+              items[0].string(forType: hubWorkspaceDragType) == HubWorkspaceDragData.token(for: current) else { return nil }
         return current
     }
 
@@ -93,6 +106,8 @@ enum HubWorkspaceDragState {
 struct HubWorkspaceDragBridge: NSViewRepresentable {
     var workspaceID: UUID
     var title: String
+    var domain: HubWorkspaceDragDomain = .workspace
+    var symbol: String? = nil
     var onSelect: @MainActor () -> Void
     var onReorder: @MainActor (_ sourceID: UUID, _ targetID: UUID, _ after: Bool) -> Void
     var onDragStateChanged: @MainActor (Bool) -> Void
@@ -106,6 +121,8 @@ struct HubWorkspaceDragBridge: NSViewRepresentable {
     func updateNSView(_ view: WorkspaceDragView, context: Context) {
         view.workspaceID = workspaceID
         view.title = title
+        view.domain = domain
+        view.symbol = symbol
         view.onSelect = onSelect
         view.onReorder = onReorder
         view.onDragStateChanged = onDragStateChanged
@@ -117,19 +134,22 @@ struct HubWorkspaceDragBridge: NSViewRepresentable {
     final class WorkspaceDragView: NSView, NSDraggingSource {
         var workspaceID = UUID()
         var title = ""
+        var domain: HubWorkspaceDragDomain = .workspace
+        var symbol: String?
         var onSelect: (@MainActor () -> Void)?
         var onReorder: (@MainActor (UUID, UUID, Bool) -> Void)?
         var onDragStateChanged: (@MainActor (Bool) -> Void)?
         private struct Press {
             let event: NSEvent
             let workspaceID: UUID
+            let domain: HubWorkspaceDragDomain
         }
         private var press: Press?
         private var activeID: UUID?
         private var activeSession: NSDraggingSession?
         private var activeCompletion: (@MainActor (Bool) -> Void)?
         private var bypassHitTesting = false
-        private(set) var insertionAfter: Bool? { didSet { needsDisplay = true } }
+        private(set) var insertionAfter: Bool? { didSet { if oldValue != insertionAfter { needsDisplay = true } } }
         // A reorder can dismantle its source before AppKit ends the session.
         private static var activeSource: WorkspaceDragView?
 
@@ -148,12 +168,12 @@ struct HubWorkspaceDragBridge: NSViewRepresentable {
 
         override func hitTest(_ point: NSPoint) -> NSView? {
             guard !bypassHitTesting, !isHiddenOrHasHiddenAncestor else { return nil }
-            if let event = NSApp?.currentEvent {
-                // A registered native destination must remain discoverable
-                // during our own drag. Ordinary scrolling/context clicks pass.
-                guard HubWorkspaceDragData.takesHitTest(event.type, modifiers: event.modifierFlags,
-                                                        localDragActive: HubWorkspaceDragState.isDragging) else { return nil }
-            }
+            // Remain discoverable only for this domain's internal reorder.
+            // File drags and eventless destination lookup pass through to the
+            // native file-drop bridge or the underlying SwiftUI destination.
+            let event = NSApp?.currentEvent
+            guard HubWorkspaceDragData.takesHitTest(event?.type, modifiers: event?.modifierFlags ?? [],
+                localDragActive: HubWorkspaceDragState.current?.domain == domain) else { return nil }
             let localPoint = convert(point, from: superview)
             return HubWorkspaceDragData.contains(localPoint, bounds: bounds, visibleRect: visibleRect) ? self : nil
         }
@@ -173,16 +193,16 @@ struct HubWorkspaceDragBridge: NSViewRepresentable {
                   window.attachedSheet == nil, Self.activeSource == nil,
                   HubWorkspaceDragData.contains(convert(event.locationInWindow, from: nil), bounds: bounds, visibleRect: visibleRect) else { return }
             window.makeFirstResponder(self)
-            press = Press(event: event, workspaceID: workspaceID)
+            press = Press(event: event, workspaceID: workspaceID, domain: domain)
         }
 
         override func mouseDragged(with event: NSEvent) {
-            guard let press, press.workspaceID == workspaceID, Self.activeSource == nil else { return }
+            guard let press, press.workspaceID == workspaceID, press.domain == domain, Self.activeSource == nil else { return }
             let distance = hypot(event.locationInWindow.x - press.event.locationInWindow.x, event.locationInWindow.y - press.event.locationInWindow.y)
             guard distance >= 5 else { return }
             self.press = nil
             guard HubWorkspaceDragData.shouldBegin(distance: distance, clickCount: press.event.clickCount) else { return }
-            let payload = HubWorkspaceDragPayload(id: UUID(), workspaceID: workspaceID)
+            let payload = HubWorkspaceDragPayload(id: UUID(), workspaceID: press.workspaceID, domain: press.domain)
             activeID = payload.id
             activeCompletion = onDragStateChanged
             Self.activeSource = self
@@ -204,7 +224,7 @@ struct HubWorkspaceDragBridge: NSViewRepresentable {
         override func mouseUp(with event: NSEvent) {
             guard let press else { super.mouseUp(with: event); return }
             self.press = nil
-            guard activeID == nil, press.workspaceID == workspaceID,
+            guard activeID == nil, press.workspaceID == workspaceID, press.domain == domain,
                   HubWorkspaceDragData.contains(convert(event.locationInWindow, from: nil), bounds: bounds, visibleRect: visibleRect) else { return }
             onSelect?()
         }
@@ -264,6 +284,7 @@ struct HubWorkspaceDragBridge: NSViewRepresentable {
             guard !isHiddenOrHasHiddenAncestor, sender.draggingSourceOperationMask.contains(.move),
                   let source = sender.draggingSource as? WorkspaceDragView,
                   let payload = HubWorkspaceDragState.localPayload(source: source, pasteboard: sender.draggingPasteboard),
+                  payload.domain == domain,
                   payload.workspaceID != workspaceID,
                   HubWorkspaceDragData.contains(convert(sender.draggingLocation, from: nil), bounds: bounds, visibleRect: visibleRect) else { return nil }
             return payload
@@ -286,19 +307,34 @@ struct HubWorkspaceDragBridge: NSViewRepresentable {
                                            height: max(0, bounds.height - 10)), xRadius: 1, yRadius: 1).fill()
         }
 
-        private func dragPreview() -> NSImage {
-            let size = NSSize(width: max(100, min(260, bounds.width)), height: 42)
+        func dragPreview() -> NSImage {
+            let icon = symbol.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: title) }?
+                .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 18, weight: .medium)
+                    .applying(NSImage.SymbolConfiguration(paletteColors: [.controlAccentColor])))
+            let iconOnly = domain == .shortcut && icon != nil
+            let size = NSSize(width: iconOnly ? 42 : max(100, min(260, bounds.width)), height: 42)
             let image = NSImage(size: size)
             image.lockFocus()
             NSColor.windowBackgroundColor.withAlphaComponent(0.96).setFill()
             NSBezierPath(roundedRect: NSRect(origin: .zero, size: size), xRadius: 10, yRadius: 10).fill()
             NSColor.controlAccentColor.withAlphaComponent(0.3).setStroke()
             NSBezierPath(roundedRect: NSRect(origin: .zero, size: size).insetBy(dx: 0.5, dy: 0.5), xRadius: 10, yRadius: 10).stroke()
-            let paragraph = NSMutableParagraphStyle()
-            paragraph.lineBreakMode = .byTruncatingTail
-            (title as NSString).draw(in: NSRect(x: 12, y: 11, width: size.width - 24, height: 20),
-                                    withAttributes: [.font: NSFont.systemFont(ofSize: 14, weight: .medium),
-                                                     .foregroundColor: NSColor.labelColor, .paragraphStyle: paragraph])
+            if let icon {
+                let maxSide: CGFloat = 20
+                let scale = min(maxSide / max(1, icon.size.width), maxSide / max(1, icon.size.height))
+                let iconSize = NSSize(width: icon.size.width * scale, height: icon.size.height * scale)
+                let centerX: CGFloat = iconOnly ? size.width / 2 : 22
+                icon.draw(in: NSRect(x: centerX - iconSize.width / 2, y: (size.height - iconSize.height) / 2,
+                                    width: iconSize.width, height: iconSize.height))
+            }
+            if !iconOnly {
+                let paragraph = NSMutableParagraphStyle()
+                paragraph.lineBreakMode = .byTruncatingTail
+                let inset: CGFloat = icon == nil ? 12 : 38
+                (title as NSString).draw(in: NSRect(x: inset, y: 11, width: max(0, size.width - inset - 12), height: 20),
+                                        withAttributes: [.font: NSFont.systemFont(ofSize: 14, weight: .medium),
+                                                         .foregroundColor: NSColor.labelColor, .paragraphStyle: paragraph])
+            }
             image.unlockFocus()
             return image
         }
