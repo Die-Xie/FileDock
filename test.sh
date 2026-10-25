@@ -86,6 +86,10 @@ swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache
     -framework AppKit -framework SwiftUI -framework UniformTypeIdentifiers
 .build/workspace-drag-tests
 swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
+    Sources/NativeWorkspaceDrag.swift Sources/ShortcutReorderDrop.swift Tests/ShortcutReorderDropTests.swift -o .build/shortcut-reorder-drop-tests \
+    -framework AppKit -framework SwiftUI
+.build/shortcut-reorder-drop-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
     Sources/WorkspaceHeaderLayout.swift Tests/WorkspaceHeaderLayoutTests.swift -o .build/workspace-header-tests
 .build/workspace-header-tests
 swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \

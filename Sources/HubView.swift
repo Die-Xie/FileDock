@@ -16,6 +16,20 @@ private struct HubWorkspaceControlsWidthKey: PreferenceKey {
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
 
+private struct HubShortcutReorderRegions {
+    var frames: [UUID: Anchor<CGRect>] = [:]
+    var viewports: [Anchor<CGRect>] = []
+}
+
+private struct HubShortcutReorderRegionKey: PreferenceKey {
+    static var defaultValue = HubShortcutReorderRegions()
+    static func reduce(value: inout HubShortcutReorderRegions, nextValue: () -> HubShortcutReorderRegions) {
+        let next = nextValue()
+        value.frames.merge(next.frames, uniquingKeysWith: { _, new in new })
+        value.viewports += next.viewports
+    }
+}
+
 @MainActor
 struct HubView: View {
     @ObservedObject var model: HubModel
@@ -92,7 +106,15 @@ struct HubView: View {
                 })
                 nativeFileDrop(regions: regions, frames: frames)
                     .frame(width: geometry.size.width, height: geometry.size.height)
+                nativeWorkspaceReorderDrop(regions: regions, size: geometry.size)
+                    .frame(width: geometry.size.width, height: geometry.size.height)
                 if let feedback = fileDropFeedback { feedback.overlay(in: geometry.size) }
+            }
+        }
+        .overlayPreferenceValue(HubShortcutReorderRegionKey.self) { regions in
+            GeometryReader { geometry in
+                nativeShortcutReorderDrop(regions: regions, geometry: geometry)
+                    .frame(width: geometry.size.width, height: geometry.size.height)
             }
         }
         .overlay(alignment: .bottom) {
@@ -218,6 +240,9 @@ struct HubView: View {
                             })
                             .frame(width: layout.controlsWidth, alignment: .trailing)
                             .contentShape(Rectangle()).clipped()
+                            .transformAnchorPreference(key: HubShortcutReorderRegionKey.self, value: .bounds) { regions, anchor in
+                                regions.viewports.append(anchor)
+                            }
                     }.frame(width: sideWidth).clipped()
                 }.padding(.horizontal, 12).frame(height: geometry.size.height)
                     .onPreferenceChange(HubWorkspaceControlsWidthKey.self) { width in
@@ -231,6 +256,9 @@ struct HubView: View {
                 workspaceLeading(model.tabWorkspaces)
                 HubWindowDragHandle().frame(minWidth: 32, maxWidth: .infinity, minHeight: 30, maxHeight: 30).help("拖动窗口")
                 HStack(spacing: 4) { workspaceControls }.fixedSize()
+                    .transformAnchorPreference(key: HubShortcutReorderRegionKey.self, value: .bounds) { regions, anchor in
+                        regions.viewports.append(anchor)
+                    }
             }.padding(.horizontal, 12).padding(.vertical, 10)
                 .padding(.top, presentation.header.embedded ? presentation.header.topInset : 0)
         }
@@ -430,6 +458,7 @@ struct HubView: View {
                 .overlay(HubWorkspaceDragBridge(
                     workspaceID: item.dragID, title: shortcutTitle(item),
                     domain: .shortcut, symbol: shortcutSymbol(item),
+                    acceptsReorderDrops: false,
                     onSelect: { activateShortcut(item) },
                     onReorder: { source, target, after in
                         model.reorderShortcut(sourceID: source, targetID: target, after: after)
@@ -439,6 +468,9 @@ struct HubView: View {
                         hoverTask?.cancel(); hoveredWorkspace = nil
                         workspaceRevealPointer = NSEvent.mouseLocation
                     }))
+                .anchorPreference(key: HubShortcutReorderRegionKey.self, value: .bounds) {
+                    HubShortcutReorderRegions(frames: [item.dragID: $0])
+                }
         }
         Menu {
             Toggle("固定收藏到右上角", isOn: Binding(
@@ -562,6 +594,7 @@ struct HubView: View {
         .overlay(HubWorkspaceDragBridge(
             workspaceID: workspace.id,
             title: workspace.name.isEmpty ? "工作区" : workspace.name,
+            acceptsReorderDrops: false,
             onSelect: { model.selectWorkspace(workspace.id) },
             onReorder: { source, target, after in model.reorderWorkspace(source, relativeTo: target, after: after) },
             onDragStateChanged: { _ in
@@ -574,6 +607,57 @@ struct HubView: View {
         .onDrop(of: HubWorkspaceFileDropDelegate.contentTypes, delegate: workspaceFileDrop(workspace))
         .anchorPreference(key: HubFileDropRegionKey.self, value: .bounds) { [.workspace(workspace.id): $0] }
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(workspaceSpringLoader.target == workspace.id ? Color.accentColor : .clear, lineWidth: 2).allowsHitTesting(false))
+    }
+
+    /// Each strip is clipped independently so the notch and hidden tabs never
+    /// become reorder targets. Blank space at either end remains usable.
+    private func reorderDropBounds(for viewport: CGRect, size: CGSize) -> CGRect {
+        var safe = CGRect(origin: .zero, size: size)
+        if presentation.header.embedded && presentation.header.split {
+            let exclusion = presentation.header.exclusionWidth
+            if viewport.midX < size.width / 2 {
+                safe.size.width = max(0, (size.width - exclusion) / 2)
+            } else {
+                safe.origin.x = min(size.width, (size.width + exclusion) / 2)
+                safe.size.width = max(0, size.width - safe.minX)
+            }
+        }
+        return viewport.insetBy(dx: -32, dy: -6).intersection(safe)
+    }
+
+    private func nativeWorkspaceReorderDrop(regions: [HubFileDropRegion: CGRect], size: CGSize) -> some View {
+        let tabs = model.tabWorkspaces
+        var frames: [UUID: CGRect] = [:]
+        var viewports: [CGRect] = []
+        for tab in tabs {
+            guard let frame = regions[.workspace(tab.id)], let viewport = regions[.tabViewport(tab.id)] else { continue }
+            let visible = frame.intersection(viewport)
+            if !visible.isNull && !visible.isEmpty { frames[tab.id] = visible }
+            if !viewports.contains(viewport) { viewports.append(viewport) }
+        }
+        return HubShortcutReorderDropBridge(frames: frames, domain: .workspace,
+            enabled: presentation.previewVisible,
+            dropBounds: viewports.map { reorderDropBounds(for: $0, size: size) },
+            orderedIDs: tabs.map(\.id),
+            onHover: { HubWorkspaceDragBridge.autoscrollWorkspace(id: $0) },
+            onReorder: { source, target, after in model.reorderWorkspace(source, relativeTo: target, after: after) })
+    }
+
+    private func nativeShortcutReorderDrop(regions: HubShortcutReorderRegions, geometry: GeometryProxy) -> some View {
+        let viewports = regions.viewports.map { geometry[$0] }
+        var frames: [UUID: CGRect] = [:]
+        for (id, anchor) in regions.frames {
+            let frame = geometry[anchor]
+            for viewport in viewports {
+                let visible = frame.intersection(viewport)
+                if !visible.isNull && !visible.isEmpty { frames[id] = visible; break }
+            }
+        }
+        return HubShortcutReorderDropBridge(frames: frames, domain: .shortcut,
+            enabled: presentation.previewVisible,
+            dropBounds: viewports.map { reorderDropBounds(for: $0, size: geometry.size) },
+            orderedIDs: model.visibleShortcutItems.map(\.dragID),
+            onReorder: { source, target, after in model.reorderShortcut(sourceID: source, targetID: target, after: after) })
     }
 
     /// A single native destination survives spring-loaded navigation. Header

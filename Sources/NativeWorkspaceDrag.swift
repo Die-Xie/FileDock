@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 
 let hubWorkspaceDragType = NSPasteboard.PasteboardType("local.diexie.filedock.workspace-reorder")
+let hubWorkspaceDragDidBegin = Notification.Name("HubWorkspaceDragDidBegin")
 let hubWorkspaceDragDidEnd = Notification.Name("HubWorkspaceDragDidEnd")
 
 enum HubWorkspaceDragDomain: String {
@@ -72,6 +73,7 @@ enum HubWorkspaceDragState {
         self.source = source
         pasteboard = nil
         pasteboardChangeCount = nil
+        NotificationCenter.default.post(name: hubWorkspaceDragDidBegin, object: nil)
     }
 
     static func bind(pasteboard: NSPasteboard, source: AnyObject, for id: UUID) {
@@ -108,6 +110,7 @@ struct HubWorkspaceDragBridge: NSViewRepresentable {
     var title: String
     var domain: HubWorkspaceDragDomain = .workspace
     var symbol: String? = nil
+    var acceptsReorderDrops = true
     var onSelect: @MainActor () -> Void
     var onReorder: @MainActor (_ sourceID: UUID, _ targetID: UUID, _ after: Bool) -> Void
     var onDragStateChanged: @MainActor (Bool) -> Void
@@ -123,9 +126,26 @@ struct HubWorkspaceDragBridge: NSViewRepresentable {
         view.title = title
         view.domain = domain
         view.symbol = symbol
+        view.acceptsReorderDrops = acceptsReorderDrops
         view.onSelect = onSelect
         view.onReorder = onReorder
         view.onDragStateChanged = onDragStateChanged
+        view.updateWorkspaceRegistration()
+    }
+
+    static func autoscrollWorkspace(id: UUID) {
+        guard HubWorkspaceDragState.current?.domain == .workspace,
+              let view = WorkspaceDragView.workspaceViews.object(forKey: id as NSUUID),
+              view.workspaceID == id, view.domain == .workspace,
+              !view.isHiddenOrHasHiddenAncestor, !view.bounds.intersection(view.visibleRect).isEmpty,
+              let window = view.window, let event = NSApp.currentEvent,
+              event.type == .leftMouseDragged,
+              let currentEvent = NSEvent.mouseEvent(with: .leftMouseDragged,
+                  location: window.convertPoint(fromScreen: NSEvent.mouseLocation),
+                  modifierFlags: event.modifierFlags, timestamp: event.timestamp,
+                  windowNumber: window.windowNumber, context: nil, eventNumber: event.eventNumber,
+                  clickCount: 1, pressure: event.pressure) else { return }
+        _ = view.autoscroll(with: currentEvent)
     }
 
     static func dismantleNSView(_ view: WorkspaceDragView, coordinator: ()) { view.cancelPendingInteraction() }
@@ -136,6 +156,13 @@ struct HubWorkspaceDragBridge: NSViewRepresentable {
         var title = ""
         var domain: HubWorkspaceDragDomain = .workspace
         var symbol: String?
+        var acceptsReorderDrops = true {
+            didSet {
+                guard oldValue != acceptsReorderDrops else { return }
+                if acceptsReorderDrops { registerForDraggedTypes([hubWorkspaceDragType]) }
+                else { unregisterDraggedTypes(); clearInsertion() }
+            }
+        }
         var onSelect: (@MainActor () -> Void)?
         var onReorder: (@MainActor (UUID, UUID, Bool) -> Void)?
         var onDragStateChanged: (@MainActor (Bool) -> Void)?
@@ -152,6 +179,8 @@ struct HubWorkspaceDragBridge: NSViewRepresentable {
         private(set) var insertionAfter: Bool? { didSet { if oldValue != insertionAfter { needsDisplay = true } } }
         // A reorder can dismantle its source before AppKit ends the session.
         private static var activeSource: WorkspaceDragView?
+        fileprivate static let workspaceViews = NSMapTable<NSUUID, WorkspaceDragView>(keyOptions: .strongMemory, valueOptions: .weakMemory)
+        private var registeredWorkspaceID: UUID?
 
         override init(frame frameRect: NSRect) {
             super.init(frame: frameRect)
@@ -168,6 +197,7 @@ struct HubWorkspaceDragBridge: NSViewRepresentable {
 
         override func hitTest(_ point: NSPoint) -> NSView? {
             guard !bypassHitTesting, !isHiddenOrHasHiddenAncestor else { return nil }
+            if HubWorkspaceDragState.isDragging, !acceptsReorderDrops { return nil }
             // Remain discoverable only for this domain's internal reorder.
             // File drags and eventless destination lookup pass through to the
             // native file-drop bridge or the underlying SwiftUI destination.
@@ -180,7 +210,22 @@ struct HubWorkspaceDragBridge: NSViewRepresentable {
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
+            updateWorkspaceRegistration()
             if window == nil { cancelPendingInteraction() }
+        }
+
+        fileprivate func updateWorkspaceRegistration() {
+            if let previous = registeredWorkspaceID,
+               (previous != workspaceID || domain != .workspace || window == nil) {
+                if Self.workspaceViews.object(forKey: previous as NSUUID) === self {
+                    Self.workspaceViews.removeObject(forKey: previous as NSUUID)
+                }
+                registeredWorkspaceID = nil
+            }
+            if domain == .workspace, window != nil {
+                Self.workspaceViews.setObject(self, forKey: workspaceID as NSUUID)
+                registeredWorkspaceID = workspaceID
+            }
         }
 
         override func mouseDown(with event: NSEvent) {
@@ -281,7 +326,7 @@ struct HubWorkspaceDragBridge: NSViewRepresentable {
         }
 
         private func destinationPayload(_ sender: NSDraggingInfo) -> HubWorkspaceDragPayload? {
-            guard !isHiddenOrHasHiddenAncestor, sender.draggingSourceOperationMask.contains(.move),
+            guard acceptsReorderDrops, !isHiddenOrHasHiddenAncestor, sender.draggingSourceOperationMask.contains(.move),
                   let source = sender.draggingSource as? WorkspaceDragView,
                   let payload = HubWorkspaceDragState.localPayload(source: source, pasteboard: sender.draggingPasteboard),
                   payload.domain == domain,

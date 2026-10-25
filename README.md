@@ -88,6 +88,8 @@ FileDock 使用 Swift、AppKit 与 SwiftUI 构建。源码、测试与发布工�
 - [质量与性能审查记录](docs/QUALITY_REVIEW.md)
 - [版本发布说明](docs/releases/)
 
+1.21.5 补齐固定图标及普通标签的间隙、首尾拖放接收区，并统一插入引导与实际落点。详见 [版本说明](docs/releases/v1.21.5.md)。
+
 1.21.4 补齐收藏取消固定后的隐藏行为，并支持拖动右上角功能图标、自动保存顺序。详见 [版本说明](docs/releases/v1.21.4.md)。
 
 1.21.3 让取消固定的最近使用完全隐藏，并在「＋」菜单加入与设置同步的 AirDrop 开关。详见 [版本说明](docs/releases/v1.21.3.md)。
