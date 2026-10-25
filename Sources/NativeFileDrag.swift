@@ -311,20 +311,44 @@ struct HubFileDragBridge: NSViewRepresentable {
     }
 }
 
-/// Placed only in genuine header blank space.
-/// Interactive tabs, toolbar buttons and file content never overlap this view.
+/// Claims only explicit header blank rectangles on an ordinary left press.
+/// Drag-destination probes, file drags and interactive controls pass through.
 struct HubWindowDragHandle: NSViewRepresentable {
-    func makeNSView(context: Context) -> DragHandleView { DragHandleView() }
-    func updateNSView(_ view: DragHandleView, context: Context) {}
+    var dragRects: [CGRect]?
+    func makeNSView(context: Context) -> DragHandleView {
+        let view = DragHandleView(); view.dragRects = dragRects; return view
+    }
+    func updateNSView(_ view: DragHandleView, context: Context) { view.dragRects = dragRects }
 
     final class DragHandleView: NSView {
+        var dragRects: [CGRect]? {
+            didSet { if oldValue != dragRects, let window { window.invalidateCursorRects(for: self) } }
+        }
         override var isOpaque: Bool { false }
+        override var isFlipped: Bool { true }
         override var mouseDownCanMoveWindow: Bool { false }
         override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-        override func resetCursorRects() { addCursorRect(bounds, cursor: .openHand) }
+        private func contains(_ point: CGPoint) -> Bool {
+            bounds.intersection(visibleRect).contains(point) && (dragRects ?? [bounds]).contains { $0.contains(point) }
+        }
+        override func hitTest(_ point: NSPoint) -> NSView? {
+            guard !isHiddenOrHasHiddenAncestor, NSApp?.currentEvent?.type == .leftMouseDown,
+                  NSApp?.currentEvent?.modifierFlags.contains(.control) != true,
+                  !HubFileDragState.isDragging, !HubWorkspaceDragState.isDragging,
+                  contains(convert(point, from: superview)) else { return nil }
+            return self
+        }
+        override func resetCursorRects() {
+            for rect in dragRects ?? [bounds] {
+                let visible = rect.intersection(bounds.intersection(visibleRect))
+                if !visible.isNull && !visible.isEmpty { addCursorRect(visible, cursor: .openHand) }
+            }
+        }
         override func mouseDown(with event: NSEvent) {
             guard event.type == .leftMouseDown, NSApp.modalWindow == nil,
-                  let window, window.attachedSheet == nil, !HubFileDragState.isDragging, !HubWorkspaceDragState.isDragging else { return }
+                  !event.modifierFlags.contains(.control), let window, event.window === window,
+                  window.attachedSheet == nil, !HubFileDragState.isDragging, !HubWorkspaceDragState.isDragging,
+                  contains(convert(event.locationInWindow, from: nil)) else { return }
             NotificationCenter.default.post(name: hubWindowDragWillBegin, object: window)
             window.performDrag(with: event)
         }

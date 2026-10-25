@@ -10,6 +10,7 @@ struct HubSettingsView: View {
     @ObservedObject var updater: FileDockUpdater
     @State private var selectedTab = 0
     @State private var blockedApplicationError: String?
+    @State private var switchDelayDraft: Double?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -22,6 +23,7 @@ struct HubSettingsView: View {
         .padding(20).frame(width: 550, height: 495)
         .environment(\.hubInterfaceMotion, HubInterfaceMotion(enabled: !reduceMotion, speed: model.settings.resolvedAnimationSpeed))
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("HubSelectMusicSettings"))) { _ in selectedTab = 3 }
+        .onDisappear { commitSwitchDelay() }
     }
 
     private var musicSettings: some View {
@@ -115,7 +117,16 @@ struct HubSettingsView: View {
                         Text(model.settings.resolvedAutoHideDelay == 0 ? "鼠标移出面板区域即收起；返回面板会取消收起。" : "当前 \(Int((model.settings.resolvedAutoHideDelay * 1000).rounded())) 毫秒；返回面板会取消收起倒计时。")
                             .font(.caption).foregroundStyle(.secondary)
                     }
-                    settingsRow("悬停切换工作区") { HStack { Slider(value: $model.settings.switchDelay, in: 0...1.5, step: 0.1).frame(width: 140); Text(model.settings.switchDelay == 0 ? "关闭" : String(format: "%.1f 秒", model.settings.switchDelay)).monospacedDigit().foregroundStyle(.secondary).frame(width: 59) } }
+                    settingsRow("悬停切换工作区") {
+                        HStack {
+                            Slider(value: switchDelay, in: 0...1.5, onEditingChanged: { editing in
+                                if editing { switchDelayDraft = model.settings.switchDelay }
+                                else { commitSwitchDelay() }
+                            }).frame(width: 140).accessibilityLabel("悬停切换工作区延迟")
+                            Text(switchDelay.wrappedValue == 0 ? "关闭" : "\(Int((switchDelay.wrappedValue * 1000).rounded())) ms")
+                                .monospacedDigit().foregroundStyle(.secondary).frame(width: 59)
+                        }
+                    }
                     Toggle("在副显示器上启用触发区域", isOn: $model.settings.secondaryScreens)
                 }
                 section("自动呼出例外") {
@@ -358,6 +369,19 @@ struct HubSettingsView: View {
             guard value.isFinite else { return }
             model.settings.hoverDelay = min(1500, max(0, value.rounded())) / 1000
         })
+    }
+    private var switchDelay: Binding<Double> {
+        Binding(get: { switchDelayDraft ?? model.settings.switchDelay }, set: { value in
+            guard value.isFinite else { return }
+            let delay = min(1.5, max(0, value))
+            if switchDelayDraft != nil { switchDelayDraft = delay }
+            else if model.settings.switchDelay != delay { model.settings.switchDelay = delay }
+        })
+    }
+    private func commitSwitchDelay() {
+        guard let draft = switchDelayDraft else { return }
+        switchDelayDraft = nil
+        if model.settings.switchDelay != draft { model.settings.switchDelay = draft }
     }
     private var animationSpeed: Binding<Double> {
         Binding(get: { model.settings.resolvedAnimationSpeed }, set: { value in

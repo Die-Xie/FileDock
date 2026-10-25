@@ -70,6 +70,7 @@ struct HubView: View {
     var body: some View {
         VStack(spacing: 0) {
             workspaceBar
+                .transformAnchorPreference(key: HubHeaderDragRegionKey.self, value: .bounds) { $0[.header] = $1 }
             Divider().opacity(0.55)
             browserBar
             Divider().opacity(0.45)
@@ -120,6 +121,13 @@ struct HubView: View {
         .overlayPreferenceValue(HubShortcutReorderRegionKey.self) { regions in
             GeometryReader { geometry in
                 nativeShortcutReorderDrop(regions: regions, geometry: geometry)
+                    .frame(width: geometry.size.width, height: geometry.size.height)
+            }
+        }
+        .overlayPreferenceValue(HubHeaderDragRegionKey.self) { anchors in
+            GeometryReader { geometry in
+                HubWindowDragHandle(dragRects: HubHeaderDragGeometry.rectangles(
+                    in: CGRect(origin: .zero, size: geometry.size), regions: anchors.mapValues { geometry[$0] }))
                     .frame(width: geometry.size.width, height: geometry.size.height)
             }
         }
@@ -239,6 +247,7 @@ struct HubView: View {
         HubQQMusicBar(controller: music, compact: true,
                       compactWidth: embeddedMusicLayout.displayWidth, isPresented: presentation.previewVisible,
                       onControlFocusChange: { musicControlsFocused = $0 })
+            .anchorPreference(key: HubHeaderDragRegionKey.self, value: .bounds) { [.music: $0] }
     }
 
     @ViewBuilder private var workspaceBar: some View {
@@ -293,6 +302,7 @@ struct HubView: View {
                             .transformAnchorPreference(key: HubShortcutReorderRegionKey.self, value: .bounds) { regions, anchor in
                                 regions.viewports.append(anchor)
                             }
+                            .transformAnchorPreference(key: HubHeaderDragRegionKey.self, value: .bounds) { $0[.controls] = $1 }
                     }.frame(width: sideWidth).clipped()
                 }.padding(.horizontal, 12).frame(height: geometry.size.height)
                     .onPreferenceChange(HubWorkspaceControlsWidthKey.self) { width in
@@ -311,6 +321,7 @@ struct HubView: View {
                     .transformAnchorPreference(key: HubShortcutReorderRegionKey.self, value: .bounds) { regions, anchor in
                         regions.viewports.append(anchor)
                     }
+                    .transformAnchorPreference(key: HubHeaderDragRegionKey.self, value: .bounds) { $0[.controls] = $1 }
             }.padding(.horizontal, 12).padding(.vertical, 10)
                 .padding(.top, presentation.header.embedded ? presentation.header.topInset : 0)
         }
@@ -331,6 +342,9 @@ struct HubView: View {
             .contentShape(Rectangle()).clipped()
             .transformAnchorPreference(key: HubFileDropRegionKey.self, value: .bounds) { regions, anchor in
                 for workspace in workspaces { regions[.tabViewport(workspace.id)] = anchor }
+            }
+            .transformAnchorPreference(key: HubHeaderDragRegionKey.self, value: .bounds) { regions, anchor in
+                for workspace in workspaces { regions[.viewport(workspace.id)] = anchor }
             }
             .onHover { if !$0 { workspaceRevealPointer = nil } }
             .onAppear { revealSelectedWorkspace(in: workspaces, using: proxy) }
@@ -676,6 +690,7 @@ struct HubView: View {
         ))
         .onDrop(of: HubWorkspaceFileDropDelegate.contentTypes, delegate: workspaceFileDrop(workspace))
         .anchorPreference(key: HubFileDropRegionKey.self, value: .bounds) { [.workspace(workspace.id): $0] }
+        .anchorPreference(key: HubHeaderDragRegionKey.self, value: .bounds) { [.tab(workspace.id): $0] }
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(workspaceSpringLoader.target == workspace.id ? Color.accentColor : .clear, lineWidth: 2).allowsHitTesting(false))
     }
 

@@ -181,3 +181,11 @@ swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache
     Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/WorkspaceShortcutOrder.swift Sources/HubModel.swift Sources/DirectoryLoader.swift Sources/FileThumbnail.swift Sources/ThumbnailWorkQueue.swift Sources/PresentationState.swift Sources/MenuBarIcon.swift Tests/RenderingContinuityTests.swift -o .build/rendering-continuity-tests \
     -framework AppKit -framework Carbon -framework Combine -framework UniformTypeIdentifiers -framework SwiftUI -framework QuickLookThumbnailing
 .build/rendering-continuity-tests
+TASK_VIEW_TEST_SOURCES=(Sources/*.swift)
+TASK_VIEW_TEST_SOURCES=("${TASK_VIEW_TEST_SOURCES[@]:#Sources/AppMain.swift}")
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache "${TASK_VIEW_TEST_SOURCES[@]}" \
+    Tests/HeaderWindowDragTests.swift -o .build/header-window-drag-tests \
+    -framework AppKit -framework SwiftUI -framework Combine -framework Carbon -framework Quartz \
+    -framework QuickLookThumbnailing -framework ImageIO -framework ServiceManagement -framework UniformTypeIdentifiers -framework ApplicationServices \
+    -F "$TASK_SPARKLE" -framework Sparkle -Xlinker -rpath -Xlinker "$TASK_SPARKLE"
+.build/header-window-drag-tests
