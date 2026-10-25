@@ -72,7 +72,9 @@ struct HubEmbeddedPlacement {
         let exclusion = hasHardwareCutout ? min(auxiliaryGap + 24, max(0, width - 24)) : 0
         let leftUsableWidth = (width - exclusion) / 2 - 12
         let rightUsableWidth = (width - exclusion) / 2 - 12
-        let splitHeader = hasHardwareCutout && leftUsableWidth >= 180 && rightUsableWidth >= 155
+        // Reserve the natural width of all six possible header shortcuts.
+        // Narrower shoulders use the complete toolbar below the safe inset.
+        let splitHeader = hasHardwareCutout && leftUsableWidth >= 200 && rightUsableWidth >= 200
         return HubEmbeddedPlacement(bodyFrame: body, sourceWidth: sourceWidth, topInset: topInset,
                                     headerExclusionWidth: exclusion, usesSplitHeader: splitHeader)
     }

@@ -39,7 +39,9 @@ import Foundation
         try persistenceAndSanitization(in: base, directory: directory, alpha: alpha)
         try orderingAndProtection(in: base, directory: directory, child: child, alpha: alpha, zulu: zulu)
         try navigationAndStaleCallbacks(in: base, directory: directory, child: child, alpha: alpha, zulu: zulu)
-        print("PASS: recent workspace persistence, ordering, navigation and write protection")
+        try pinnedShortcutLifecycle(in: base, directory: directory, alpha: alpha)
+        try pinnedShortcutAdmissionAndMigration(in: base)
+        print("PASS: recent workspace persistence, ordering, navigation, write protection and pinned shortcut lifecycle/admission/migration")
     }
 
     @MainActor private static func persistenceAndSanitization(in base: URL, directory: URL, alpha: URL) throws {
@@ -223,6 +225,121 @@ import Foundation
         precondition(model.isRecentsRoot && model.entries.map(\.url) == currentRootEntries,
                      "Switching away and back must not revive an old recent-query callback")
         precondition(provider.stopCount > 0, "Recent query sessions must stop when leaving their root")
+    }
+
+    @MainActor private static func pinnedShortcutLifecycle(in base: URL, directory: URL, alpha: URL) throws {
+        let storage = base.appendingPathComponent("pinned/config.json")
+        let provider = RecentFilesFixtureProvider()
+        let model = makeTestModel(storageURL: storage, recentFiles: provider)
+        precondition(!HubSettings().resolvedRecentShortcutEnabled && model.fixedRecentWorkspace == nil)
+        let favoriteID = model.favoriteWorkspace!.id
+        model.selectWorkspace(favoriteID)
+        model.appendReferences([alpha])
+        model.stageFiles([alpha])
+        let stagingID = model.stagingWorkspace!.id
+        let folder = model.addWorkspace(name: "Folder", mode: .folder, urls: [directory])!
+        let recent = model.addRecentWorkspace()!
+        _ = model.addWorkspace(name: "After Recents", mode: .folder, urls: [directory])
+        model.selectWorkspace(folder.id)
+        let stored = model.workspaces, originalTabs = model.tabWorkspaces, location = model.currentURL
+        precondition(originalTabs.contains(where: { $0.id == recent.id }))
+        model.setRecentShortcutVisible(true)
+        precondition(model.fixedRecentWorkspace?.id == recent.id && model.workspaces == stored,
+                     "Pinning an existing recent workspace must preserve its contents and stored order")
+        precondition(model.selectedWorkspaceID == folder.id && model.currentURL == location,
+                     "Pinning an existing shortcut must not navigate away from the current folder")
+        precondition(model.tabWorkspaces == originalTabs.filter { $0.id != recent.id })
+        let writes = model.configurationWriteCount
+        model.setRecentShortcutVisible(true)
+        precondition(model.workspaces == stored && model.configurationWriteCount == writes,
+                     "Repeated pinning must not duplicate workspaces or persist redundant changes")
+
+        let restored = makeTestModel(storageURL: storage, recentFiles: RecentFilesFixtureProvider())
+        precondition(restored.settings.resolvedRecentShortcutEnabled && restored.fixedRecentWorkspace?.id == recent.id
+                     && !restored.tabWorkspaces.contains(where: { $0.id == recent.id }),
+                     "The pinned shortcut and original workspace identity must survive restart")
+        model.selectWorkspace(recent.id)
+        provider.emit([HubRecentFile(url: alpha, lastUsed: Date(timeIntervalSince1970: 500))])
+        model.selectedIDs = [alpha]
+        model.search = "alpha"
+        let entries = model.entries, callbacks = provider.callbacks.count
+        model.setRecentShortcutVisible(false)
+        precondition(model.fixedRecentWorkspace == nil && model.tabWorkspaces == originalTabs
+                     && model.workspaces == stored && model.selectedWorkspaceID == recent.id,
+                     "Unpinning must return Recents to its exact original tab position without deleting it")
+        precondition(model.entries == entries && model.search == "alpha" && model.selectedIDs == [alpha]
+                     && provider.callbacks.count == callbacks,
+                     "Unpinning the selected shortcut must preserve its active query and selection")
+        precondition(model.fixedFavoriteWorkspace?.id == favoriteID && model.stagingWorkspace?.id == stagingID
+                     && model.favoriteWorkspace?.referencePaths == [alpha.path] && model.stagedURLs == [alpha],
+                     "Recent pinning cannot change favorites, staging or their references")
+        let unpinned = makeTestModel(storageURL: storage, recentFiles: RecentFilesFixtureProvider())
+        // Bookmark resolution may replace /var with the equivalent /private/var.
+        // The user's tab identities and order must still round-trip unchanged.
+        precondition(!unpinned.settings.resolvedRecentShortcutEnabled
+                     && unpinned.tabWorkspaces.map(\.id) == originalTabs.map(\.id)
+                     && unpinned.recentWorkspace == recent)
+
+        // Multiple legacy recent workspaces may exist. Removing the pinned one
+        // must not silently pin the next workspace in its place.
+        let second = model.addWorkspace(name: "Other Recents", mode: .recents, urls: [])!
+        model.setRecentShortcutVisible(true)
+        model.removeWorkspace(recent.id)
+        precondition(!model.settings.resolvedRecentShortcutEnabled && model.fixedRecentWorkspace == nil
+                     && model.recentWorkspace?.id == second.id && model.tabWorkspaces.contains(where: { $0.id == second.id }))
+        model.setRecentShortcutVisible(true)
+        var converted = second
+        converted.mode = .folder; converted.rootPath = directory.path
+        model.updateWorkspace(converted)
+        precondition(!model.settings.resolvedRecentShortcutEnabled && model.fixedRecentWorkspace == nil
+                     && model.tabWorkspaces.contains(where: { $0.id == second.id }),
+                     "Converting a pinned recent workspace to a folder must clear its pin")
+    }
+
+    @MainActor private static func pinnedShortcutAdmissionAndMigration(in base: URL) throws {
+        let storage = base.appendingPathComponent("pin-admission/config.json")
+        let model = makeTestModel(storageURL: storage, recentFiles: RecentFilesFixtureProvider())
+        precondition(model.recentWorkspace == nil)
+        let initialCount = model.workspaces.count
+        model.setRecentShortcutVisible(true)
+        let recent = model.fixedRecentWorkspace!
+        precondition(model.workspaces.count == initialCount + 1 && model.selectedWorkspaceID == recent.id)
+        model.setRecentShortcutVisible(false)
+        model.setRecentShortcutVisible(true)
+        precondition(model.fixedRecentWorkspace?.id == recent.id && model.workspaces.count == initialCount + 1,
+                     "Toggle cycles reuse the same lazy-created recent workspace")
+
+        var legacy = try configuration(at: storage)
+        var legacySettings = legacy["settings"] as! [String: Any]
+        legacySettings.removeValue(forKey: "recentShortcutEnabled")
+        legacy["settings"] = legacySettings
+        try model.importConfiguration(data: JSONSerialization.data(withJSONObject: legacy))
+        precondition(model.settings.recentShortcutEnabled == nil && !model.settings.resolvedRecentShortcutEnabled
+                     && model.fixedRecentWorkspace == nil && model.tabWorkspaces.contains(where: { $0.id == recent.id }),
+                     "Legacy configurations must keep Recents in the existing tab layout")
+        model.removeWorkspace(recent.id)
+        var dangling = try configuration(at: storage)
+        var danglingSettings = dangling["settings"] as! [String: Any]
+        danglingSettings["recentShortcutEnabled"] = true
+        dangling["settings"] = danglingSettings
+        try model.importConfiguration(data: JSONSerialization.data(withJSONObject: dangling))
+        precondition(!model.settings.resolvedRecentShortcutEnabled && model.recentWorkspace == nil,
+                     "Importing a pin without a recent workspace must not leave a dangling shortcut")
+
+        model.workspaces = (0..<HubModel.maximumWorkspaces).map { Workspace(name: "Workspace \($0)") }
+        let previous = model.workspaces, settings = model.settings, selection = model.selectedWorkspaceID
+        let bytes = try Data(contentsOf: storage), writes = model.configurationWriteCount
+        model.setRecentShortcutVisible(true)
+        let after = try Data(contentsOf: storage)
+        precondition(model.workspaces == previous && model.settings == settings && model.selectedWorkspaceID == selection
+                     && model.configurationWriteCount == writes && after == bytes && model.fixedRecentWorkspace == nil,
+                     "A rejected lazy creation at capacity must preserve settings, bookmarks and workspace order atomically")
+        precondition(model.errorMessage != nil)
+        // Pinning an existing recent workspace requires no spare capacity.
+        model.workspaces[0].mode = .recents
+        model.setRecentShortcutVisible(true)
+        precondition(model.settings.resolvedRecentShortcutEnabled && model.fixedRecentWorkspace?.id == previous[0].id
+                     && model.workspaces.count == HubModel.maximumWorkspaces)
     }
 
     private static func configuration(at url: URL) throws -> [String: Any] {

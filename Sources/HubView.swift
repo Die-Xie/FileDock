@@ -288,6 +288,32 @@ struct HubView: View {
                     HubMenuButton("隐藏收藏快捷入口", systemImage: "eye.slash") { model.setFavoriteShortcutVisible(false) }
                 }
         }
+        if model.settings.resolvedAirDropEnabled {
+            Button {
+                let selection = model.selectedURLs
+                let urls = selection.isEmpty && model.isStagingRoot ? model.stagedURLs : selection
+                NotificationCenter.default.post(name: Notification.Name("HubAirDrop"), object: nil, userInfo: ["urls": urls])
+            } label: { HubWorkspaceShortcutLabel(symbol: "airplayaudio") }
+                .buttonStyle(.plain)
+                .disabled(model.sharingInProgress || model.stagingTransferInProgress || model.fileOperationsInProgress > 0)
+                .accessibilityLabel("AirDrop")
+                .help("AirDrop · 发送所选文件，未选择时添加文件")
+        }
+        if let recent = model.fixedRecentWorkspace {
+            Button { model.selectWorkspace(recent.id) } label: {
+                HubWorkspaceShortcutLabel(symbol: "clock",
+                                          selected: model.selectedWorkspaceID == recent.id,
+                                          targeted: workspaceSpringLoader.target == recent.id)
+            }.buttonStyle(.plain)
+                .accessibilityLabel("最近使用：\(recent.name)")
+                .help("\(recent.name) · 右键可隐藏快捷入口")
+                .onHover { shortcutHover($0, key: recent.id, action: { model.selectWorkspace(recent.id) }) }
+                .onDrop(of: HubWorkspaceFileDropDelegate.contentTypes, delegate: workspaceFileDrop(recent))
+                .anchorPreference(key: HubFileDropRegionKey.self, value: .bounds) { [.workspace(recent.id): $0] }
+                .contextMenu {
+                    HubMenuButton("隐藏最近使用快捷入口", systemImage: "eye.slash") { model.setRecentShortcutVisible(false) }
+                }
+        }
         if model.settings.resolvedStagingEnabled {
             Button { model.openStagingWorkspace() } label: {
                 HubWorkspaceShortcutLabel(symbol: model.stagedURLs.isEmpty ? "tray" : "tray.full.fill",
@@ -328,6 +354,9 @@ struct HubView: View {
             Toggle("固定收藏到右上角", isOn: Binding(
                 get: { model.fixedFavoriteWorkspace != nil },
                 set: { model.setFavoriteShortcutVisible($0) }))
+            Toggle("固定最近使用到右上角", isOn: Binding(
+                get: { model.settings.resolvedRecentShortcutEnabled },
+                set: { model.setRecentShortcutVisible($0) }))
             Toggle("显示文件暂存区", isOn: Binding(
                 get: { model.settings.resolvedStagingEnabled },
                 set: { model.setStagingEnabled($0) }))
@@ -356,15 +385,6 @@ struct HubView: View {
                 .disabled(model.stagedURLs.isEmpty || model.stagingTransferInProgress)
             Button(model.selectedURLs.isEmpty ? "移动全部到…" : "移动所选到…") { model.chooseStagingTransfer(copy: false) }
                 .disabled(model.stagedURLs.isEmpty || model.stagingTransferInProgress)
-            if model.settings.resolvedAirDropEnabled {
-                Button {
-                    let urls = model.selectedURLs.isEmpty ? model.stagedURLs : model.selectedURLs
-                    NotificationCenter.default.post(name: Notification.Name("HubAirDrop"), object: nil, userInfo: ["urls": urls])
-                } label: { Image(systemName: "airplayaudio") }
-                    .disabled(model.stagedURLs.isEmpty || model.stagingTransferInProgress || model.sharingInProgress || model.fileOperationsInProgress > 0)
-                    .help(model.selectedURLs.isEmpty ? "通过 AirDrop 发送全部暂存文件" : "通过 AirDrop 发送所选文件")
-                    .accessibilityLabel("AirDrop")
-            }
             Button { model.clearStagedFiles() } label: { Image(systemName: "minus.circle") }
                 .disabled(model.stagedURLs.isEmpty || model.stagingTransferInProgress)
                 .help("清空暂存引用，保留原文件").accessibilityLabel("清空暂存引用")

@@ -1025,10 +1025,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
     }
 
     private func sendAirDrop(_ urls: [URL]) {
-        guard !hasActiveDialog, !urls.isEmpty else { return }
+        guard !hasActiveDialog else { return }
         guard model.settings.resolvedAirDropEnabled else { return }
         guard canStartSharing else { return }
-        sharing.send(urls, securityScopedURLs: model.securityScopesForSharing(urls), from: panel)
+        var files = urls
+        if files.isEmpty {
+            let picker = NSOpenPanel()
+            picker.title = "通过 AirDrop 发送"
+            picker.prompt = "选择"
+            picker.message = "选择要发送的文件或文件夹。"
+            picker.canChooseFiles = true
+            picker.canChooseDirectories = true
+            picker.allowsMultipleSelection = true
+            picker.treatsFilePackagesAsDirectories = false
+            guard HubWindowPresentation.runModal(picker) == .OK else { return }
+            files = picker.urls
+        }
+        guard !files.isEmpty else { return }
+        sharing.send(files, securityScopedURLs: model.securityScopesForSharing(files), from: panel)
     }
 
     private var canStartSharing: Bool {

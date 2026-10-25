@@ -77,6 +77,7 @@ struct HubSettings: Codable, Equatable {
     var musicPlayer: String? = "automatic"
     var favoriteWorkspaceID: UUID? = nil
     var favoriteShortcutEnabled: Bool? = true
+    var recentShortcutEnabled: Bool? = false
     var blockedApplicationBundleIDs: [String]? = nil
     var suppressHoverInFullScreen: Bool? = nil
     var stagingWorkspaceID: UUID? = nil
@@ -109,6 +110,7 @@ struct HubSettings: Codable, Equatable {
         return ["automatic", "qqMusic", "appleMusic", "neteaseMusic"].contains(musicPlayer) ? musicPlayer : "automatic"
     }
     var resolvedFavoriteShortcutEnabled: Bool { favoriteShortcutEnabled ?? true }
+    var resolvedRecentShortcutEnabled: Bool { recentShortcutEnabled ?? false }
     var resolvedBlockedApplicationBundleIDs: [String] {
         Array(Set((blockedApplicationBundleIDs ?? []).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty && $0.utf8.count <= 255 && !$0.contains("\u{0}") })).sorted()
@@ -484,6 +486,8 @@ enum HubFileOperations {
         return workspaces.first { $0.mode == .references && $0.name.trimmingCharacters(in: .whitespacesAndNewlines) == "收藏" }
     }
     var fixedFavoriteWorkspace: Workspace? { settings.resolvedFavoriteShortcutEnabled ? favoriteWorkspace : nil }
+    var recentWorkspace: Workspace? { workspaces.first { $0.mode == .recents } }
+    var fixedRecentWorkspace: Workspace? { settings.resolvedRecentShortcutEnabled ? recentWorkspace : nil }
     var stagingWorkspace: Workspace? {
         guard let id = settings.stagingWorkspaceID, id != settings.favoriteWorkspaceID else { return nil }
         return workspaces.first { $0.id == id && $0.mode == .references }
@@ -502,7 +506,9 @@ enum HubFileOperations {
     }
     var tabWorkspaces: [Workspace] {
         let fixedID = fixedFavoriteWorkspace?.id
-        return workspaces.filter { $0.id != fixedID && $0.id != stagingWorkspace?.id }
+        let recentID = fixedRecentWorkspace?.id
+        let stagingID = stagingWorkspace?.id
+        return workspaces.filter { $0.id != fixedID && $0.id != recentID && $0.id != stagingID }
     }
     var selectedURLs: [URL] { entries.filter { selectedIDs.contains($0.url) }.map(\.url) }
     var selectedEntries: [FileEntry] { entries.filter { selectedIDs.contains($0.url) } }
@@ -639,11 +645,23 @@ enum HubFileOperations {
 
     @discardableResult
     func addRecentWorkspace() -> Workspace? {
-        if let existing = workspaces.first(where: { $0.mode == .recents }) {
+        if let existing = recentWorkspace {
             selectWorkspace(existing.id)
             return existing
         }
         return addWorkspace(name: "最近使用", symbol: "clock", mode: .recents, urls: [])
+    }
+
+    /// Pinning changes presentation only. Keep the workspace's stored position
+    /// so turning the shortcut off restores the original tab order.
+    func setRecentShortcutVisible(_ visible: Bool) {
+        guard settings.resolvedRecentShortcutEnabled != visible || (visible && recentWorkspace == nil) else { return }
+        beginPersistenceTransaction()
+        defer { endPersistenceTransaction() }
+        if visible && recentWorkspace == nil {
+            guard addRecentWorkspace() != nil else { return }
+        }
+        settings.recentShortcutEnabled = visible
     }
 
     func setFavoriteShortcutVisible(_ visible: Bool) {
@@ -873,6 +891,9 @@ enum HubFileOperations {
         bindFavoriteWorkspaceIfNeeded()
         if let iconPath = updated.customIconPath { remember(URL(fileURLWithPath: iconPath)) }
         let rootChanged = workspaces[index].rootPath != updated.rootPath || workspaces[index].mode != updated.mode
+        if fixedRecentWorkspace?.id == workspace.id && updated.mode != .recents {
+            settings.recentShortcutEnabled = false
+        }
         workspaces[index] = updated
         if selectedWorkspaceID == workspace.id {
             if rootChanged { selectWorkspace(workspace.id) }
@@ -886,6 +907,7 @@ enum HubFileOperations {
         if id == stagingWorkspace?.id { setStagingEnabled(false); return }
         guard let index = workspaces.firstIndex(where: { $0.id == id }) else { return }
         let wasSelected = selectedWorkspaceID == id
+        if fixedRecentWorkspace?.id == id { settings.recentShortcutEnabled = false }
         workspaces.remove(at: index)
         if wasSelected {
             if !availableWorkspaces.isEmpty { selectWorkspace(availableWorkspaces[min(index, availableWorkspaces.count - 1)].id) }
@@ -1569,6 +1591,7 @@ enum HubFileOperations {
         selectedWorkspaceID = state.workspaces.contains(where: { $0.id == state.selectedWorkspaceID }) ? state.selectedWorkspaceID : state.workspaces.first?.id
         settings = state.settings
         settings.normalize()
+        if settings.resolvedRecentShortcutEnabled && recentWorkspace == nil { settings.recentShortcutEnabled = false }
         bindFavoriteWorkspaceIfNeeded()
         sortKey = state.sortKey; ascending = state.ascending; viewMode = state.viewMode
         referenceManualOrder = state.referenceManualOrder ?? true

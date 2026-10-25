@@ -6,7 +6,9 @@ struct HubWorkspaceHeaderLayout {
     static let tabSpacing: CGFloat = 5
     static let minimumTabWidth: CGFloat = 48
     static let minimumDragWidth: CGFloat = 32
-    static let fallbackControlsWidth: CGFloat = 148
+    // Six 30-point controls with five 4-point gaps: favorites, AirDrop,
+    // recents, staging, add and the optional pinned-panel close button.
+    static let fallbackControlsWidth: CGFloat = 200
 
     let splitIndex: Int
     let leftViewportWidth: CGFloat
@@ -19,8 +21,11 @@ struct HubWorkspaceHeaderLayout {
         let side = sideWidth.isFinite ? max(0, sideWidth) : 0
         let requestedControls = measuredControlsWidth.isFinite && measuredControlsWidth > 0
             ? measuredControlsWidth : fallbackControlsWidth
-        let controls = min(requestedControls, max(0, side - minimumDragWidth))
-        let rightCapacity = max(0, side - controls - minimumDragWidth)
+        // At the minimum panel width keep actionable controls whole before
+        // reserving optional right-side space to drag the window.
+        let controls = min(requestedControls, side)
+        let reservedDragWidth = min(minimumDragWidth, max(0, side - controls))
+        let rightCapacity = max(0, side - controls - reservedDragWidth)
         let widths = tabWidths.map { $0.isFinite ? max(minimumTabWidth, $0) : minimumTabWidth }
 
         // When the right side cannot fit even one usable tab, keep the full

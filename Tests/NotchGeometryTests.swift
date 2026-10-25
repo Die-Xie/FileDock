@@ -128,6 +128,16 @@ struct NotchGeometryTests {
         precondition(!compact.usesSplitHeader, "A narrow panel must move its complete toolbar below the cutout")
         near(compact.topInset, 38, "Narrow fallback must still protect the cutout depth")
 
+        for width in [CGFloat(659), 660, 661] {
+            let threshold = HubEmbeddedPlacement.make(screenFrame: screen, visibleFrame: visible, safeTop: 38,
+                                                       leftAuxiliary: left, rightAuxiliary: right,
+                                                       requestedSize: CGSize(width: width, height: 300))
+            checkEmbedded(threshold, screen: screen, visible: visible)
+            precondition(threshold.usesSplitHeader == (width >= 660),
+                         "Split headers require 200 points per shoulder for all six shortcuts")
+            near(threshold.topInset, 38, "Changing header layout must preserve hardware protection")
+        }
+
         let hiddenMenu = HubEmbeddedPlacement.make(screenFrame: screen, visibleFrame: screen, safeTop: 38,
                                                    leftAuxiliary: left, rightAuxiliary: right,
                                                    requestedSize: CGSize(width: 900, height: 480))
