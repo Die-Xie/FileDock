@@ -9,6 +9,7 @@ struct HubQQMusicBar: View {
     var onControlFocusChange: (Bool) -> Void = { _ in }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
+    @Environment(\.hubInterfaceMotion) private var motion
     @State private var hoveringCompact = false
     @FocusState private var focusedCompactControl: Int?
 
@@ -88,7 +89,8 @@ struct HubQQMusicBar: View {
             hoveringCompact = hovering
             if !hovering { focusedCompactControl = nil }
         }
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: showCompactControls)
+        .animation(reduceMotion ? nil : motion.feedback, value: showCompactControls)
+        .animation(nil, value: motion.enabled)
         .onChange(of: focusedCompactControl) { onControlFocusChange($0 != nil) }
         .onChange(of: controller.status) { if $0 != .ready { focusedCompactControl = nil } }
         .onDisappear { onControlFocusChange(false) }

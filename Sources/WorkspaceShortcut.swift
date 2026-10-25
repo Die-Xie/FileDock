@@ -10,6 +10,7 @@ struct HubWorkspaceShortcutLabel: View {
     var count = 0
     var selected = false
     var targeted = false
+    var selectionNamespace: Namespace.ID?
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
@@ -27,6 +28,11 @@ struct HubWorkspaceShortcutLabel: View {
             }
         }
         .frame(width: Self.width, height: Self.height)
+        .background {
+            if let selectionNamespace {
+                HubSelectionBackdrop(selected: selected, namespace: selectionNamespace, cornerRadius: 6)
+            }
+        }
         .background(targeted ? Color.accentColor.opacity(0.16) : Color.clear,
                     in: RoundedRectangle(cornerRadius: 6))
         .contentShape(Rectangle())

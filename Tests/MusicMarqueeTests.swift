@@ -77,10 +77,17 @@ struct MusicMarqueeTests {
             expect(strip.animation(forKey: key)?.beginTime == 123.25,
                    "Identical playback polling and layout must preserve the reading position")
 
+            let scrolling = animation.copy() as! CAKeyframeAnimation
+            scrolling.beginTime = strip.convertTime(CACurrentMediaTime(), from: nil) - 2
+            strip.add(scrolling, forKey: key)
             view.update(title: longTitle, artist: artist, active: false)
             expect(noAnimations(strip), "Hidden playback information must stop scrolling")
+            expect(strip.transform.m41 < -20, "Hovering controls must freeze the current text, not snap it to the beginning during the fade")
             view.update(title: longTitle, artist: artist, active: true)
             expect(!noAnimations(strip), "Visible overflowing information must restart scrolling")
+            let resumed = strip.animation(forKey: key)!
+            let elapsed = strip.convertTime(CACurrentMediaTime(), from: nil) - resumed.beginTime
+            expect(elapsed >= 2 && elapsed < 2.2, "Returning from controls must continue the same reading phase")
             window.contentView = nil
             expect(view.window == nil && noAnimations(strip),
                    "Detaching the view from its window must remove continuous animation")
@@ -91,6 +98,7 @@ struct MusicMarqueeTests {
             view.layout()
             expect(noAnimations(strip) && duplicate.isHidden,
                    "A wider viewport that fits the song must stop its previous overflow animation")
+            expect(strip.transform.m41 == 0, "A fitting or changed line must clear its old paused translation")
         }
 
         view.dispose()

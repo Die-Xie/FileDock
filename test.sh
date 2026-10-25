@@ -90,6 +90,10 @@ swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache
     -framework AppKit -framework SwiftUI
 .build/shortcut-reorder-drop-tests
 swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
+    Sources/InterfaceMotion.swift Sources/NativeFileDrag.swift Sources/NativeWorkspaceDrag.swift Sources/NativeFileDrop.swift Sources/FileDropFeedback.swift Tests/InterfaceMotionTests.swift -o .build/interface-motion-tests \
+    -framework AppKit -framework SwiftUI -framework UniformTypeIdentifiers
+.build/interface-motion-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
     Sources/WorkspaceHeaderLayout.swift Tests/WorkspaceHeaderLayoutTests.swift -o .build/workspace-header-tests
 .build/workspace-header-tests
 swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
@@ -97,7 +101,7 @@ swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache
     -framework AppKit -framework SwiftUI -framework UniformTypeIdentifiers
 .build/workspace-spring-tests
 swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
-    Sources/WorkspaceShortcut.swift Tests/WorkspaceShortcutTests.swift -o .build/workspace-shortcut-tests \
+    Sources/InterfaceMotion.swift Sources/WorkspaceShortcut.swift Tests/WorkspaceShortcutTests.swift -o .build/workspace-shortcut-tests \
     -framework AppKit -framework SwiftUI
 .build/workspace-shortcut-tests
 swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \

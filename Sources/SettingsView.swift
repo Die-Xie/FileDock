@@ -10,6 +10,7 @@ struct HubSettingsView: View {
     @ObservedObject var updater: FileDockUpdater
     @State private var selectedTab = 0
     @State private var blockedApplicationError: String?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
         TabView(selection: $selectedTab) {
             general.tabItem { Label("通用", systemImage: "gearshape") }.tag(0)
@@ -19,6 +20,7 @@ struct HubSettingsView: View {
             about.tabItem { Label("关于", systemImage: "info.circle") }.tag(4)
         }
         .padding(20).frame(width: 550, height: 495)
+        .environment(\.hubInterfaceMotion, HubInterfaceMotion(enabled: !reduceMotion, speed: model.settings.resolvedAnimationSpeed))
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("HubSelectMusicSettings"))) { _ in selectedTab = 3 }
     }
 
@@ -197,10 +199,10 @@ struct HubSettingsView: View {
                     Toggle("图标视图横向滚动", isOn: $model.settings.horizontalScroll)
                 }
                 section("动画") {
-                    settingsRow("展开与收起速度") {
+                    settingsRow("界面动画速度") {
                         HStack(spacing: 10) {
                             Slider(value: animationSpeed, in: 0.5...2, step: 0.1)
-                                .frame(width: 170).accessibilityLabel("展开与收起动画速度")
+                                .frame(width: 170).accessibilityLabel("界面动画速度")
                             Text(String(format: "%.1f×", model.settings.resolvedAnimationSpeed))
                                 .monospacedDigit().foregroundStyle(.secondary).frame(width: 42)
                         }
@@ -211,7 +213,7 @@ struct HubSettingsView: View {
                         animationPreset("轻快", speed: 1.5)
                         animationPreset("迅捷", speed: 2)
                     }
-                    Text("倍率越大越快，连接处与面板同步变化。系统开启“减少动态效果”时使用短淡入淡出。")
+                    Text("倍率越大越快，面板开合、标签切换与状态反馈同步调整。系统开启“减少动态效果”时减少位移动画。")
                         .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
                 section("窗口") {

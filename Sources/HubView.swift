@@ -36,6 +36,12 @@ struct HubView: View {
     @ObservedObject var presentation: HubPresentationState
     let music: HubQQMusicController
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Namespace private var leftTabSelection
+    @Namespace private var rightTabSelection
+    @Namespace private var floatingTabSelection
+    @Namespace private var shortcutSelection
+    @Namespace private var viewModeSelection
     var onSettings: () -> Void
     var onClose: () -> Void
     @State private var editingWorkspace: Workspace?
@@ -55,7 +61,9 @@ struct HubView: View {
     @State private var workspaceRevealPointer: NSPoint?
     @State private var workspaceControlsWidth: CGFloat = 0
     @State private var musicControlsFocused = false
-    @State private var showsLoading = false
+    @StateObject private var activityVisibility = HubActivityVisibility()
+    @State private var workspaceReordering = false
+    @State private var tabRevealTask: Task<Void, Never>?
     @State private var renameEntry: FileEntry?
     @State private var renameName = ""
 
@@ -75,15 +83,12 @@ struct HubView: View {
             }
             if model.isStagingRoot { stagingActions }
             content
+                // Keep the surrounding viewport's existing window-layout
+                // transition, without interpolating the file rows themselves.
+                .transaction { $0.animation = nil; $0.disablesAnimations = true }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .overlay(alignment: .topTrailing) {
-                    if showsLoading || model.fileOperationsInProgress > 0 {
-                        HStack(spacing: 7) {
-                            ProgressView().controlSize(.small)
-                            Text(model.fileOperationsInProgress > 0 ? "正在处理文件…" : model.entries.isEmpty ? "正在读取…" : "已读取 \(model.entries.count) 项…").font(.caption)
-                        }.padding(.horizontal, 10).padding(.vertical, 6)
-                            .background(.regularMaterial, in: Capsule()).padding(10).allowsHitTesting(false)
-                    }
+                    activityIndicator
                 }
                 .overlay(RoundedRectangle(cornerRadius: 10).stroke(dropTargeted && fileDropFeedback == nil && !model.isRecentsRoot ? Color.accentColor : .clear, lineWidth: 2).padding(4))
                 .onDrop(of: [hubFileDragType, .fileURL, .image, .url, .item], isTargeted: $dropTargeted) { receiveDrop($0, destination: model.currentURL) }
@@ -96,6 +101,7 @@ struct HubView: View {
             footer
         }
         .font(.system(size: model.settings.fontSize))
+        .environment(\.hubInterfaceMotion, interfaceMotion)
         .background(backgroundColor)
         .background(HubKeyMonitor(handler: handleKey))
         .overlayPreferenceValue(HubFileDropRegionKey.self) { anchors in
@@ -118,14 +124,18 @@ struct HubView: View {
             }
         }
         .overlay(alignment: .bottom) {
-            if showsAirDropHint || (airDropTargeted && fileDropFeedback == nil) {
-                Text(showsAirDropHint ? "将文件拖到 AirDrop 图标，或先选中文件再点按" : "松开以通过 AirDrop 发送")
-                    .font(.caption).multilineTextAlignment(.center)
-                    .padding(.horizontal, 14).padding(.vertical, 9)
-                    .background(.regularMaterial, in: Capsule())
-                    .padding(.horizontal, 12).padding(.bottom, 52)
-                    .allowsHitTesting(false)
+            ZStack {
+                if showsAirDropHint || (airDropTargeted && fileDropFeedback == nil) {
+                    Text(showsAirDropHint ? "将文件拖到 AirDrop 图标，或先选中文件再点按" : "松开以通过 AirDrop 发送")
+                        .font(.caption).multilineTextAlignment(.center)
+                        .padding(.horizontal, 14).padding(.vertical, 9)
+                        .background(.regularMaterial, in: Capsule())
+                        .padding(.horizontal, 12).padding(.bottom, 52)
+                        .transition(.opacity)
+                }
             }
+            .animation(interfaceMotion.feedback, value: showsAirDropHint || airDropTargeted)
+            .allowsHitTesting(false)
         }
         .task(id: showsAirDropHint) {
             guard showsAirDropHint else { return }
@@ -143,21 +153,32 @@ struct HubView: View {
             showsAirDropHint = false
         }
         .onReceive(NotificationCenter.default.publisher(for: hubWorkspaceDragDidEnd)) { _ in
+            workspaceReordering = false
             workspaceSpringLoader.cancel()
             hoverTask?.cancel()
             hoveredWorkspace = nil
             workspaceRevealPointer = NSEvent.mouseLocation
         }
-        .onChange(of: presentation.previewVisible) { if !$0 { clearFileDrop(); showsAirDropHint = false } }
-        .onChange(of: canReceiveAirDrop) { if !$0 { showsAirDropHint = false; if airDropTargeted { clearFileDrop() } } }
-        .onDisappear { clearFileDrop(); showsAirDropHint = false; hoverTask?.cancel() }
-        .task(id: model.directoryLoading) {
-            showsLoading = false
-            guard model.directoryLoading else { return }
-            do { try await Task.sleep(nanoseconds: 150_000_000) } catch { return }
-            guard !Task.isCancelled, model.directoryLoading else { return }
-            showsLoading = true
+        .onReceive(NotificationCenter.default.publisher(for: hubWorkspaceDragDidBegin)) { _ in
+            workspaceReordering = true
+            tabRevealTask?.cancel()
         }
+        .onChange(of: presentation.previewVisible) {
+            activityVisibility.update(active: activityActive, presented: $0)
+            prepareWorkspaceHover()
+            if !$0 { clearFileDrop(); showsAirDropHint = false; tabRevealTask?.cancel() }
+        }
+        .onChange(of: presentation.header) { _ in prepareWorkspaceHover() }
+        .onChange(of: canReceiveAirDrop) { if !$0 { showsAirDropHint = false; if airDropTargeted { clearFileDrop() } } }
+        .onDisappear {
+            clearFileDrop(); showsAirDropHint = false; hoverTask?.cancel(); tabRevealTask?.cancel()
+            activityVisibility.update(active: false, presented: false)
+        }
+        .onAppear {
+            prepareWorkspaceHover()
+            activityVisibility.update(active: activityActive, presented: presentation.previewVisible)
+        }
+        .onChange(of: activityActive) { activityVisibility.update(active: $0, presented: presentation.previewVisible) }
         .onChange(of: model.search) { _ in model.selectedIDs = [] }
         .onChange(of: dropTargeted) { if $0 { presentation.setFileDragActive(true) } }
         .sheet(item: $editingWorkspace) { WorkspaceEditor(model: model, workspace: $0) }
@@ -178,6 +199,33 @@ struct HubView: View {
         .alert("操作未完成", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {
             Button("好") { model.errorMessage = nil }
         } message: { Text(model.errorMessage ?? "") }
+    }
+
+    private var interfaceMotion: HubInterfaceMotion {
+        HubInterfaceMotion(enabled: !reduceMotion && !presentation.defersFileRendering && !workspaceReordering,
+                           speed: model.settings.resolvedAnimationSpeed)
+    }
+
+    private var activityActive: Bool { model.directoryLoading || model.fileOperationsInProgress > 0 }
+
+    private var activityIndicator: some View {
+        ZStack(alignment: .topTrailing) {
+            if activityVisibility.visible {
+                HStack(spacing: 7) {
+                    ZStack {
+                        ProgressView().controlSize(.small).opacity(activityActive ? 1 : 0)
+                        Image(systemName: "checkmark").font(.caption).opacity(activityActive ? 0 : 1)
+                    }.frame(width: 14, height: 14)
+                    Text(!activityActive ? "已完成" : model.fileOperationsInProgress > 0 ? "正在处理文件…" : model.entries.isEmpty ? "正在读取…" : "已读取 \(model.entries.count) 项…")
+                        .font(.caption)
+                }.padding(.horizontal, 10).padding(.vertical, 6)
+                    .background(.regularMaterial, in: Capsule()).padding(10)
+                    .transition(.opacity)
+            }
+        }
+        .animation(interfaceMotion.feedback, value: activityVisibility.visible)
+        .animation(interfaceMotion.feedback, value: activityActive)
+        .allowsHitTesting(false)
     }
 
     private var embeddedMusicLayout: HubEmbeddedMusicLayout {
@@ -214,7 +262,7 @@ struct HubView: View {
                 let leftWorkspaces = Array(model.tabWorkspaces.prefix(layout.splitIndex))
                 let rightWorkspaces = Array(model.tabWorkspaces.dropFirst(layout.splitIndex))
                 HStack(spacing: 0) {
-                    workspaceLeading(leftWorkspaces, availableWidth: sideWidth)
+                    workspaceLeading(leftWorkspaces, selectionNamespace: leftTabSelection, availableWidth: sideWidth)
                         .frame(width: sideWidth, alignment: .leading).clipped()
                     VStack(spacing: 0) {
                         if embeddedMusicLayout.placement == .notch {
@@ -228,11 +276,13 @@ struct HubView: View {
                     }.frame(width: presentation.header.exclusionWidth, height: geometry.size.height)
                     HStack(spacing: 0) {
                         if !rightWorkspaces.isEmpty {
-                            workspaceLeading(rightWorkspaces, availableWidth: layout.rightViewportWidth)
+                            workspaceLeading(rightWorkspaces, selectionNamespace: rightTabSelection, availableWidth: layout.rightViewportWidth)
                                 .frame(width: layout.rightViewportWidth, alignment: .leading).clipped()
                         }
                         HubWindowDragHandle().frame(width: layout.dragWidth, height: 30).help("拖动窗口")
                         HStack(spacing: 4) { workspaceControls }
+                            .animation(interfaceMotion.selection, value: model.selectedWorkspaceID)
+                            .animation(nil, value: interfaceMotion.enabled)
                             .fixedSize()
                             .background(GeometryReader { controlsGeometry in
                                 Color.clear.preference(key: HubWorkspaceControlsWidthKey.self,
@@ -253,9 +303,11 @@ struct HubView: View {
             }.frame(height: embeddedMusicLayout.headerHeight)
         } else {
             HStack(spacing: 8) {
-                workspaceLeading(model.tabWorkspaces)
+                workspaceLeading(model.tabWorkspaces, selectionNamespace: floatingTabSelection)
                 HubWindowDragHandle().frame(minWidth: 32, maxWidth: .infinity, minHeight: 30, maxHeight: 30).help("拖动窗口")
                 HStack(spacing: 4) { workspaceControls }.fixedSize()
+                    .animation(interfaceMotion.selection, value: model.selectedWorkspaceID)
+                    .animation(nil, value: interfaceMotion.enabled)
                     .transformAnchorPreference(key: HubShortcutReorderRegionKey.self, value: .bounds) { regions, anchor in
                         regions.viewports.append(anchor)
                     }
@@ -264,15 +316,17 @@ struct HubView: View {
         }
     }
 
-    private func workspaceLeading(_ workspaces: [Workspace], availableWidth: CGFloat? = nil) -> some View {
+    private func workspaceLeading(_ workspaces: [Workspace], selectionNamespace: Namespace.ID, availableWidth: CGFloat? = nil) -> some View {
         let tabWidthLimit = availableWidth.map { max(48, $0) }
         return ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 5) {
                     ForEach(workspaces) { workspace in
-                        workspaceTab(workspace, maximumWidth: tabWidthLimit).id(workspace.id)
+                        workspaceTab(workspace, selectionNamespace: selectionNamespace, maximumWidth: tabWidthLimit).id(workspace.id)
                     }
                 }.padding(.vertical, 3)
+                    .animation(interfaceMotion.selection, value: model.selectedWorkspaceID)
+                    .animation(nil, value: interfaceMotion.enabled)
             }
             .contentShape(Rectangle()).clipped()
             .transformAnchorPreference(key: HubFileDropRegionKey.self, value: .bounds) { regions, anchor in
@@ -292,27 +346,45 @@ struct HubView: View {
     private func revealSelectedWorkspace(in workspaces: [Workspace], using proxy: ScrollViewProxy) {
         hoverTask?.cancel()
         hoveredWorkspace = nil
-        guard let id = model.selectedWorkspaceID, workspaces.contains(where: { $0.id == id }) else { return }
+        guard !HubWorkspaceDragState.isDragging, !HubFileDragState.isDragging,
+              let id = model.selectedWorkspaceID, workspaces.contains(where: { $0.id == id }) else { return }
         // Position after SwiftUI has laid out new/renamed tabs. Use minimal
         // scrolling so a tab already under the pointer stays in place.
-        DispatchQueue.main.async {
-            guard model.selectedWorkspaceID == id else { return }
+        tabRevealTask?.cancel()
+        tabRevealTask = Task { @MainActor in
+            await Task.yield()
+            guard !Task.isCancelled, presentation.previewVisible, model.selectedWorkspaceID == id,
+                  !HubWorkspaceDragState.isDragging, !HubFileDragState.isDragging else { return }
             workspaceRevealPointer = NSEvent.mouseLocation
-            proxy.scrollTo(id)
+            withAnimation(interfaceMotion.feedback) { proxy.scrollTo(id) }
         }
     }
 
     @State private var stagingHoverID = UUID()
+    private func prepareWorkspaceHover() {
+        hoverTask?.cancel(); hoveredWorkspace = nil
+        workspaceRevealPointer = NSEvent.mouseLocation
+    }
+
+    private func canHoverWorkspace(_ target: UUID) -> Bool {
+        let ready = presentation.previewVisible && !presentation.windowMoving && !presentation.layoutChanging &&
+            !presentation.surfaceAnimating && !HubWorkspaceDragState.isDragging && !HubFileDragState.isDragging
+        guard HubWorkspaceHoverActivation.permits(target: target, current: model.selectedWorkspaceID, ready: ready,
+            pointer: NSEvent.mouseLocation, origin: workspaceRevealPointer) else { return false }
+        workspaceRevealPointer = nil
+        return true
+    }
+
     private func shortcutHover(_ entered: Bool, key: UUID, action: @escaping () -> Void) {
         guard entered else {
             if hoveredWorkspace == key { hoverTask?.cancel(); hoveredWorkspace = nil }
             return
         }
         hoverTask?.cancel()
-        guard !HubWorkspaceDragState.isDragging, !HubFileDragState.isDragging, model.settings.switchDelay > 0 else { return }
+        guard model.settings.switchDelay > 0, canHoverWorkspace(key) else { return }
         hoveredWorkspace = key
         let task = DispatchWorkItem {
-            guard hoveredWorkspace == key, !HubWorkspaceDragState.isDragging, !HubFileDragState.isDragging else { return }
+            guard hoveredWorkspace == key, canHoverWorkspace(key) else { return }
             action()
         }
         hoverTask = task
@@ -326,7 +398,8 @@ struct HubView: View {
                 Button { activateShortcut(.favorite) } label: {
                     HubWorkspaceShortcutLabel(symbol: model.selectedWorkspaceID == favorite.id ? "star.fill" : "star",
                                               selected: model.selectedWorkspaceID == favorite.id,
-                                              targeted: workspaceSpringLoader.target == favorite.id)
+                                              targeted: workspaceSpringLoader.target == favorite.id,
+                                              selectionNamespace: shortcutSelection)
                 }.buttonStyle(.plain)
                     .accessibilityLabel("收藏：\(favorite.name)")
                     .help("\(favorite.name) · 右键可隐藏快捷入口")
@@ -368,7 +441,8 @@ struct HubView: View {
                 Button { activateShortcut(.recents) } label: {
                     HubWorkspaceShortcutLabel(symbol: "clock",
                                               selected: model.selectedWorkspaceID == recent.id,
-                                              targeted: workspaceSpringLoader.target == recent.id)
+                                              targeted: workspaceSpringLoader.target == recent.id,
+                                              selectionNamespace: shortcutSelection)
                 }.buttonStyle(.plain)
                     .accessibilityLabel("最近使用：\(recent.name)")
                     .help("\(recent.name) · 右键可隐藏快捷入口")
@@ -384,7 +458,7 @@ struct HubView: View {
                 Button { activateShortcut(.staging) } label: {
                     HubWorkspaceShortcutLabel(symbol: model.stagedURLs.isEmpty ? "tray" : "tray.full.fill",
                                               count: model.stagedURLs.count, selected: model.isStagingWorkspace,
-                                              targeted: stagingDropTargeted)
+                                              targeted: stagingDropTargeted, selectionNamespace: shortcutSelection)
                 }.buttonStyle(.plain)
                     .accessibilityLabel("暂存区，\(model.stagedURLs.count) 个项目")
                     .help("暂存区 · 拖入文件暂存引用，点击查看，右键快速转移")
@@ -530,7 +604,7 @@ struct HubView: View {
         HubFileDragContext(workspaceID: model.selectedWorkspaceID, directory: model.currentURL)
     }
 
-    private func workspaceTab(_ workspace: Workspace, maximumWidth: CGFloat? = nil) -> some View {
+    private func workspaceTab(_ workspace: Workspace, selectionNamespace: Namespace.ID, maximumWidth: CGFloat? = nil) -> some View {
         Button { model.selectWorkspace(workspace.id) } label: {
             HStack(spacing: 6) {
                 workspaceIcon(workspace).frame(width: 16, height: 16)
@@ -538,7 +612,7 @@ struct HubView: View {
             }
             .frame(maxWidth: maximumWidth.map { max(24, $0 - 24) }, alignment: .leading)
             .padding(.horizontal, 12).padding(.vertical, 8)
-            .background(model.selectedWorkspaceID == workspace.id ? Color.primary.opacity(0.12) : Color.clear, in: RoundedRectangle(cornerRadius: 8))
+            .background(HubSelectionBackdrop(selected: model.selectedWorkspaceID == workspace.id, namespace: selectionNamespace))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -554,17 +628,13 @@ struct HubView: View {
                 if hoveredWorkspace == workspace.id { hoverTask?.cancel(); hoveredWorkspace = nil }
                 return
             }
-            if let origin = workspaceRevealPointer {
-                let pointer = NSEvent.mouseLocation
-                // Ignore tracking updates caused by scrolling beneath a still
-                // pointer; moving to another tab re-enables hover switching.
-                if abs(pointer.x - origin.x) < 2 && abs(pointer.y - origin.y) < 2 { return }
-                workspaceRevealPointer = nil
-            }
             hoverTask?.cancel()
+            guard canHoverWorkspace(workspace.id) else { hoveredWorkspace = nil; return }
             hoveredWorkspace = workspace.id
             if model.settings.switchDelay > 0 {
-                let task = DispatchWorkItem { if hoveredWorkspace == workspace.id && !HubWorkspaceDragState.isDragging && !HubFileDragState.isDragging { model.selectWorkspace(workspace.id) } }
+                let task = DispatchWorkItem {
+                    if hoveredWorkspace == workspace.id && canHoverWorkspace(workspace.id) { model.selectWorkspace(workspace.id) }
+                }
                 hoverTask = task
                 DispatchQueue.main.asyncAfter(deadline: .now() + model.settings.switchDelay, execute: task)
             }
@@ -821,6 +891,8 @@ struct HubView: View {
                 viewButton(.list, symbol: "list.bullet", label: "列表视图")
                 viewButton(.columns, symbol: "rectangle.split.3x1", label: "分栏视图")
             }.padding(2).background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
+                .animation(interfaceMotion.selection, value: model.viewMode)
+                .animation(nil, value: interfaceMotion.enabled)
             Menu {
                 Picker("排序方式", selection: $model.sortKey) {
                     Text("名称").tag(SortKey.name); Text("种类").tag(SortKey.kind); Text("大小").tag(SortKey.size)
@@ -855,7 +927,9 @@ struct HubView: View {
                 Text(emptyDetail).foregroundStyle(.secondary)
                 if model.search.isEmpty && model.selectedWorkspace?.mode == .references && model.currentURL == nil { Button("添加项目…") { model.addReferences() } }
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
-                .opacity(model.directoryLoading && !showsLoading ? 0 : 1).contextMenu { backgroundMenu }
+                .opacity(model.directoryLoading && !activityVisibility.visible ? 0 : 1)
+                .animation(interfaceMotion.feedback, value: activityVisibility.visible)
+                .contextMenu { backgroundMenu }
         } else {
             Group {
                 switch model.viewMode {
@@ -1273,10 +1347,14 @@ struct HubView: View {
         return Color(red: Double((number >> 16) & 255) / 255, green: Double((number >> 8) & 255) / 255, blue: Double(number & 255) / 255)
     }
     private func iconButton(_ symbol: String, _ help: String, disabled: Bool = false, action: @escaping () -> Void) -> some View {
-        Button(action: action) { Image(systemName: symbol).font(.system(size: 11, weight: .medium)).frame(width: 23, height: 23) }.buttonStyle(.plain).disabled(disabled).help(help)
+        Button(action: action) { Image(systemName: symbol).font(.system(size: 11, weight: .medium)).frame(width: 23, height: 23) }
+            .buttonStyle(HubToolbarButtonStyle()).disabled(disabled).help(help)
     }
     private func viewButton(_ mode: HubViewMode, symbol: String, label: String) -> some View {
-        Button { model.viewMode = mode } label: { Image(systemName: symbol).font(.system(size: 11)).frame(width: 24, height: 22).background(model.viewMode == mode ? Color.primary.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 4)) }.buttonStyle(.plain).help(label)
+        Button { if model.viewMode != mode { model.viewMode = mode } } label: {
+            Image(systemName: symbol).font(.system(size: 11)).frame(width: 24, height: 22)
+                .background(HubSelectionBackdrop(selected: model.viewMode == mode, namespace: viewModeSelection, cornerRadius: 4))
+        }.buttonStyle(HubToolbarButtonStyle()).help(label)
     }
     private func handleKey(_ event: NSEvent) -> Bool {
         if HubMarqueeSelectionState.isSelecting {

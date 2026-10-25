@@ -6,6 +6,8 @@ import SwiftUI
 struct HubPathBar: View {
     @ObservedObject var model: HubModel
     @State private var hoveredID: String?
+    @State private var revealTask: Task<Void, Never>?
+    @Environment(\.hubInterfaceMotion) private var motion
 
     var body: some View {
         let components = model.pathComponents
@@ -30,6 +32,7 @@ struct HubPathBar: View {
                                 .padding(.vertical, 6)
                                 .foregroundStyle(current ? .primary : .secondary)
                                 .background(Color.primary.opacity(hoveredID == component.id && !current ? 0.08 : 0), in: RoundedRectangle(cornerRadius: 5))
+                                .animation(motion.feedback, value: hoveredID == component.id)
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
@@ -50,13 +53,19 @@ struct HubPathBar: View {
             })
             .onAppear { revealCurrent(components, using: proxy) }
             .onChange(of: components) { revealCurrent($0, using: proxy) }
+            .onDisappear { revealTask?.cancel() }
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("当前位置路径")
     }
 
     private func revealCurrent(_ components: [HubPathComponent], using proxy: ScrollViewProxy) {
+        revealTask?.cancel()
         guard let current = components.last else { return }
-        DispatchQueue.main.async { proxy.scrollTo(current.id, anchor: .trailing) }
+        revealTask = Task { @MainActor in
+            await Task.yield()
+            guard !Task.isCancelled, model.pathComponents.last?.id == current.id else { return }
+            withAnimation(motion.feedback) { proxy.scrollTo(current.id, anchor: .trailing) }
+        }
     }
 }

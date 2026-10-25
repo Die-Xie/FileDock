@@ -38,6 +38,7 @@ final class HubMusicMarqueeView: NSView {
     private var isDisposed = false
     private let spacing: CGFloat = 28
     private let animationKey = "hub.song-marquee"
+    private var pausedElapsed: TimeInterval = 0
 
     override var isFlipped: Bool { true }
     override var mouseDownCanMoveWindow: Bool { false }
@@ -150,7 +151,11 @@ final class HubMusicMarqueeView: NSView {
             duplicate.frame = NSRect(origin: NSPoint(x: textSize.width + spacing, y: originY), size: textSize)
             duplicate.isHidden = !overflowing || reduceMotion
         }
-        if restartAnimation { strip.removeAnimation(forKey: animationKey) }
+        if restartAnimation {
+            strip.removeAnimation(forKey: animationKey)
+            pausedElapsed = 0
+            withoutImplicitAnimations { strip.transform = CATransform3DIdentity }
+        }
         updateAnimation()
     }
 
@@ -159,7 +164,18 @@ final class HubMusicMarqueeView: NSView {
         let shouldMove = active && window != nil && !reduceMotion
             && bounds.width > 0 && bounds.height > 0 && textSize.width > bounds.width
         guard shouldMove else {
-            strip.removeAnimation(forKey: animationKey)
+            if let animation = strip.animation(forKey: animationKey), animation.duration > 0 {
+                let now = strip.convertTime(CACurrentMediaTime(), from: nil)
+                pausedElapsed = max(0, now - animation.beginTime).truncatingRemainder(dividingBy: animation.duration)
+                let pause: TimeInterval = 0.8
+                let fraction = max(0, min(1, (pausedElapsed - pause) / max(0.001, animation.duration - pause)))
+                let offset = strip.presentation()?.value(forKeyPath: "transform.translation.x") as? NSNumber
+                let x = offset?.doubleValue ?? -Double(textSize.width + spacing) * fraction
+                withoutImplicitAnimations {
+                    strip.transform = CATransform3DMakeTranslation(CGFloat(x), 0, 0)
+                    strip.removeAnimation(forKey: animationKey)
+                }
+            }
             return
         }
         guard strip.animation(forKey: animationKey) == nil else { return }
@@ -172,7 +188,11 @@ final class HubMusicMarqueeView: NSView {
         animation.duration = duration
         animation.calculationMode = .linear
         animation.repeatCount = .infinity
-        strip.add(animation, forKey: animationKey)
+        animation.beginTime = strip.convertTime(CACurrentMediaTime(), from: nil) - pausedElapsed
+        withoutImplicitAnimations {
+            strip.transform = CATransform3DIdentity
+            strip.add(animation, forKey: animationKey)
+        }
     }
 
     @objc private func displayOptionsChanged() {
