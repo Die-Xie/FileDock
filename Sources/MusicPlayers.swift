@@ -95,14 +95,25 @@ final class HubAppleMusicBackend: HubQQMusicBackend {
             }
             let track = try Self.property(Self.code("pTrk"))
             var title = "", artist = ""
+            var progress: HubMusicProgress?
             // A stopped/empty library has no current track. That is a usable
             // connected state, not a permission failure or a reason to launch it.
             if state != Self.code("kPSS") {
                 title = try get(Self.property(Self.code("pnam"), container: track), pid: pid, deadline: deadline).stringValue ?? ""
                 artist = try get(Self.property(Self.code("pArt"), container: track), pid: pid, deadline: deadline).stringValue ?? ""
+                // Progress is optional: a stream or unsupported property cannot
+                // turn a usable playback connection into an error.
+                let progressDeadline = min(deadline, ProcessInfo.processInfo.systemUptime + 0.3)
+                if [Self.code("kPSP"), Self.code("kPSp")].contains(state),
+                   let elapsed = try? get(Self.property(Self.code("pPos")), pid: pid, deadline: progressDeadline).doubleValue {
+                    let sampledAt = ProcessInfo.processInfo.systemUptime
+                    if let duration = try? get(Self.property(Self.code("pDur"), container: track), pid: pid, deadline: progressDeadline).doubleValue {
+                        progress = HubMusicProgress(elapsed: elapsed, duration: duration, rate: playing ? 1 : 0, sampledAt: sampledAt)
+                    }
+                }
             }
             try validate(pid)
-            return .success(HubQQMusicSnapshot(pid: pid, title: title, artist: artist, isPlaying: playing))
+            return .success(HubQQMusicSnapshot(pid: pid, title: title, artist: artist, isPlaying: playing, progress: progress))
         } catch let error as HubQQMusicFailure { return .failure(error) }
         catch { return .failure(.unavailable("音乐暂时没有响应，请稍后重试。")) }
     }

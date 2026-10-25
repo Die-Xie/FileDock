@@ -119,13 +119,17 @@ swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache
     Sources/InlinePreviewPolicy.swift Tests/InlinePreviewTests.swift -o .build/inline-preview-tests
 .build/inline-preview-tests
 swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
-    Sources/MusicPlayers.swift Sources/NetEaseMusicBackend.swift Sources/QQMusicController.swift Tests/QQMusicTests.swift -o .build/qqmusic-tests \
+    Sources/MusicProgress.swift Sources/MusicPlayers.swift Sources/NetEaseMusicBackend.swift Sources/QQMusicController.swift Tests/QQMusicTests.swift -o .build/qqmusic-tests \
     -framework AppKit -framework Combine -framework ApplicationServices -framework Carbon
 .build/qqmusic-tests
 swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
-    Sources/MusicPlayers.swift Sources/NetEaseMusicBackend.swift Sources/QQMusicController.swift Tests/MultiPlayerTests.swift -o .build/multi-player-tests \
+    Sources/MusicProgress.swift Sources/MusicPlayers.swift Sources/NetEaseMusicBackend.swift Sources/QQMusicController.swift Tests/MultiPlayerTests.swift -o .build/multi-player-tests \
     -framework AppKit -framework Combine -framework ApplicationServices -framework Carbon
 .build/multi-player-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
+    Sources/InterfaceMotion.swift Sources/EmbeddedMusicLayout.swift Sources/MusicMarquee.swift Sources/QQMusicBar.swift Sources/MusicProgress.swift Sources/MusicProgressTrack.swift Sources/MusicPlayers.swift Sources/NetEaseMusicBackend.swift Sources/QQMusicController.swift Tests/MusicProgressTests.swift -o .build/music-progress-tests \
+    -framework AppKit -framework SwiftUI -framework QuartzCore -framework Combine -framework ApplicationServices -framework Carbon
+.build/music-progress-tests
 swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
     Sources/AirDrop.swift Tests/AirDropTests.swift -o .build/airdrop-tests \
     -framework AppKit -framework Combine

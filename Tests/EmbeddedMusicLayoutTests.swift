@@ -19,7 +19,7 @@ struct EmbeddedMusicLayoutTests {
         precondition(result.displayWidth.isFinite && result.displayWidth >= HubEmbeddedMusicLayout.controlWidth,
                      "The music display must stay finite and fit its playback controls")
         if result.placement == .notch {
-            precondition(result.controlTop + HubEmbeddedMusicLayout.controlHeight
+            precondition(result.controlTop + HubEmbeddedMusicLayout.barHeight
                          <= result.headerHeight - 4,
                          "The entire control row must fit below the cutout with bottom clearance")
             precondition(result.displayWidth <= width,
@@ -38,7 +38,7 @@ struct EmbeddedMusicLayoutTests {
         let notch = layout()
         precondition(notch.placement == .notch)
         near(notch.controlTop, 40, "Controls must start below the 38-point hardware inset")
-        near(notch.headerHeight, 64, "The header must grow enough to expose the whole control row")
+        near(notch.headerHeight, 69, "The header must grow enough to expose the whole control row")
         near(notch.displayWidth, 228, "The display fills the center with four-point side clearances")
 
         let disabled = layout(enabled: false)
@@ -76,7 +76,7 @@ struct EmbeddedMusicLayoutTests {
         near(largerFont.headerHeight, 76, "Music must not shrink a header enlarged by text")
         near(layout(enabled: false, inset: 60).headerHeight, 72,
              "Disabled music preserves the existing inset-based header height")
-        near(layout(inset: 60).headerHeight, 86,
+        near(layout(inset: 60).headerHeight, 91,
              "Taller hardware cutouts must push controls and the header down together")
         near(layout(inset: 0).headerHeight, 52,
              "A zero-depth cutout does not create an unnecessary taller header")

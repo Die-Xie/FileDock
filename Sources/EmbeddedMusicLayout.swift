@@ -8,6 +8,7 @@ enum HubEmbeddedMusicPlacement: Equatable {
 /// bottom bar for panels that are not embedded in the screen's top edge.
 struct HubEmbeddedMusicLayout {
     static let controlHeight: CGFloat = 20
+    static let barHeight: CGFloat = 25
     static let controlWidth: CGFloat = 110
     static let rowHeight: CGFloat = 28
 
@@ -37,7 +38,7 @@ struct HubEmbeddedMusicLayout {
         }
 
         let height = placement == .notch
-            ? max(baseHeight, controlTop + controlHeight + 4)
+            ? max(baseHeight, controlTop + barHeight + 4)
             : baseHeight
         let displayWidth = placement == .notch ? max(controlWidth, width - 8) : 240
         return HubEmbeddedMusicLayout(placement: placement, headerHeight: height,

@@ -14,6 +14,7 @@ struct HubQQMusicSnapshot: Sendable {
     let title: String
     let artist: String
     let isPlaying: Bool?
+    var progress: HubMusicProgress? = nil
 }
 
 enum HubQQMusicAction: Sendable { case toggle, previous, next }
@@ -128,6 +129,7 @@ final class HubQQMusicController: ObservableObject {
 
     @Published private(set) var title = ""
     @Published private(set) var artist = ""
+    @Published private(set) var progress: HubMusicProgress?
     @Published private(set) var isPlaying: Bool?
     @Published private(set) var status: Status = .notRunning
     @Published private(set) var message: String?
@@ -371,6 +373,9 @@ final class HubQQMusicController: ObservableObject {
             if title != snapshot.title { title = snapshot.title }
             if artist != snapshot.artist { artist = snapshot.artist }
             if isPlaying != snapshot.isPlaying { isPlaying = snapshot.isPlaying }
+            if let next = snapshot.progress {
+                if progress?.matches(next) != true { progress = next }
+            } else if progress != nil { progress = nil }
             if status != .ready { status = .ready }
             if message != nil { message = nil }
         case .failure(let error):
@@ -393,6 +398,7 @@ final class HubQQMusicController: ObservableObject {
 
     private func clear(status: Status, message: String) {
         targetPID = nil
+        if progress != nil { progress = nil }
         if !title.isEmpty { title = "" }
         if !artist.isEmpty { artist = "" }
         if isPlaying != nil { isPlaying = nil }

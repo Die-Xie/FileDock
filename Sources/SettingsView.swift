@@ -44,7 +44,9 @@ enum HubSettingsPage: String, CaseIterable, Identifiable {
 @MainActor
 struct HubSettingsView: View {
     @ObservedObject var model: HubModel
-    @ObservedObject var music: HubQQMusicController
+    // The music page observes its controller locally. Progress polls must not
+    // invalidate unrelated settings pages or the sidebar.
+    let music: HubQQMusicController
     @ObservedObject var updater: FileDockUpdater
     @State private var selectedPage: HubSettingsPage?
     @State private var blockedApplicationError: String?
@@ -66,6 +68,17 @@ struct HubSettingsView: View {
                     Label(item.title, systemImage: item.symbol)
                         .padding(.vertical, 5).tag(item)
                 }.listStyle(.sidebar).accessibilityLabel("设置分类")
+                Divider()
+                Button {
+                    commitDelayEdits()
+                    NSApp.terminate(nil)
+                } label: {
+                    Label("退出 FileDock", systemImage: "power")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 7)
+                }.buttonStyle(.plain).padding(.horizontal, 18).padding(.bottom, 14)
+                    .accessibilityIdentifier("filedock.settings.quit")
+                    .help("退出应用；进行中的文件传输完成后退出")
             }.frame(width: 166)
                 .background(Color.primary.opacity(0.025))
             Divider()

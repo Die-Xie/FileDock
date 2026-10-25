@@ -96,7 +96,7 @@ struct HubView: View {
                 .transformAnchorPreference(key: HubFileDropRegionKey.self, value: .bounds) { regions, anchor in regions[.content] = anchor }
             Divider().opacity(0.45)
             if embeddedMusicLayout.placement == .bottom {
-                HubQQMusicBar(controller: music)
+                HubQQMusicBar(controller: music, isPresented: presentation.previewVisible)
                 Divider().opacity(0.45)
             }
             footer

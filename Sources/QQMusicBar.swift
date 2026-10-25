@@ -28,7 +28,8 @@ struct HubQQMusicBar: View {
                 Text(controller.title.isEmpty ? controller.playerName : controller.title)
                     .font(.system(size: 12, weight: .medium)).lineLimit(1)
                 Text(subtitle).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
-            }.frame(maxWidth: .infinity, alignment: .leading)
+                progressSlot.padding(.top, 3)
+            }.help(progressDescription).frame(maxWidth: .infinity, alignment: .leading)
             if controller.status != .ready {
                 Button(controller.setupActionTitle) { controller.performSetupAction() }.controlSize(.small)
                     .disabled(controller.setupAction == nil)
@@ -50,39 +51,44 @@ struct HubQQMusicBar: View {
     }
 
     private var compactBar: some View {
-        Group {
-            if controller.status == .ready {
-                ZStack {
-                    HubMusicMarquee(title: controller.title.isEmpty ? controller.playerName : controller.title,
-                                    artist: controller.artist,
-                                    active: isPresented && !showCompactControls)
-                        .padding(.horizontal, 6)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .opacity(showCompactControls ? 0 : 1)
-                        .allowsHitTesting(false)
-                        .accessibilityHidden(showCompactControls)
-                    HStack(spacing: 4) {
-                        compactControl("backward.end.fill", label: "\(controller.playerName)上一首", focus: 0) { controller.previousTrack() }
-                        compactControl(playSymbol, label: playLabel, prominent: true, focus: 1) { controller.togglePlayback() }
-                        compactControl("forward.end.fill", label: "\(controller.playerName)下一首", focus: 2) { controller.nextTrack() }
-                    }.opacity(showCompactControls ? 1 : 0)
-                        .allowsHitTesting(showCompactControls)
-                        .accessibilityHidden(!showCompactControls)
+        VStack(spacing: 3) {
+            Group {
+                if controller.status == .ready {
+                    ZStack {
+                        HubMusicMarquee(title: controller.title.isEmpty ? controller.playerName : controller.title,
+                                        artist: controller.artist,
+                                        active: isPresented && !showCompactControls)
+                            .padding(.horizontal, 6)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .opacity(showCompactControls ? 0 : 1)
+                            .allowsHitTesting(false)
+                            .accessibilityHidden(showCompactControls)
+                        HStack(spacing: 4) {
+                            compactControl("backward.end.fill", label: "\(controller.playerName)上一首", focus: 0) { controller.previousTrack() }
+                            compactControl(playSymbol, label: playLabel, prominent: true, focus: 1) { controller.togglePlayback() }
+                            compactControl("forward.end.fill", label: "\(controller.playerName)下一首", focus: 2) { controller.nextTrack() }
+                        }.opacity(showCompactControls ? 1 : 0)
+                            .allowsHitTesting(showCompactControls)
+                            .accessibilityHidden(!showCompactControls)
+                    }
+                } else {
+                    Button(action: connect) {
+                        HStack(spacing: 5) {
+                            Image(systemName: "music.note")
+                            Text(connectionLabel).lineLimit(1)
+                        }.font(.system(size: 10, weight: .medium))
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }.buttonStyle(.plain)
+                        .disabled(controller.status == .connecting)
+                        .accessibilityLabel(connectionLabel)
+                        .focused($focusedCompactControl, equals: 3)
                 }
-            } else {
-                Button(action: connect) {
-                    HStack(spacing: 5) {
-                        Image(systemName: "music.note")
-                        Text(connectionLabel).lineLimit(1)
-                    }.font(.system(size: 10, weight: .medium))
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                }.buttonStyle(.plain)
-                    .disabled(controller.status == .connecting)
-                    .accessibilityLabel(connectionLabel)
-                    .focused($focusedCompactControl, equals: 3)
-            }
+            }.frame(height: HubEmbeddedMusicLayout.controlHeight)
+            // Reserve a stable height across polling/player changes. A player
+            // without real timing data has no track or placeholder.
+            progressSlot.padding(.horizontal, 6)
         }
-        .frame(width: compactWidth, height: HubEmbeddedMusicLayout.controlHeight)
+        .frame(width: compactWidth, height: HubEmbeddedMusicLayout.barHeight)
         .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 7))
         .contentShape(RoundedRectangle(cornerRadius: 7))
         .onHover { hovering in
@@ -94,7 +100,7 @@ struct HubQQMusicBar: View {
         .onChange(of: focusedCompactControl) { onControlFocusChange($0 != nil) }
         .onChange(of: controller.status) { if $0 != .ready { focusedCompactControl = nil } }
         .onDisappear { onControlFocusChange(false) }
-        .help("\(controller.title.isEmpty ? controller.playerName : controller.title)\n\(subtitle)")
+        .help("\(controller.title.isEmpty ? controller.playerName : controller.title)\n\(subtitle)" + (visibleProgress.map { "\n\($0.description)" } ?? ""))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(controller.title.isEmpty ? controller.playerName : controller.title)，\(subtitle)")
         .contextMenu {
@@ -109,6 +115,18 @@ struct HubQQMusicBar: View {
                 Button("重新连接") { controller.reconnect() }
             }
         }
+    }
+
+    private var visibleProgress: HubMusicProgress? { controller.status == .ready ? controller.progress : nil }
+    private var progressSlot: some View {
+        Color.clear.frame(height: 2).overlay {
+            if let progress = visibleProgress {
+                HubMusicProgressTrack(progress: progress, active: isPresented)
+            }
+        }.allowsHitTesting(false)
+    }
+    private var progressDescription: String {
+        visibleProgress?.description ?? ""
     }
 
     private var showCompactControls: Bool {
