@@ -502,13 +502,17 @@ enum HubFileOperations {
     var isStagingWorkspace: Bool { stagingWorkspace?.id == selectedWorkspaceID && selectedWorkspaceID != nil }
     var isStagingRoot: Bool { isStagingWorkspace && currentURL == nil }
     private var availableWorkspaces: [Workspace] {
-        workspaces.filter { settings.resolvedStagingEnabled || $0.id != stagingWorkspace?.id }
+        let stagingID = stagingWorkspace?.id
+        let recentID = fixedRecentWorkspace?.id
+        return workspaces.filter {
+            (settings.resolvedStagingEnabled || $0.id != stagingID) &&
+            ($0.mode != .recents || $0.id == recentID)
+        }
     }
     var tabWorkspaces: [Workspace] {
         let fixedID = fixedFavoriteWorkspace?.id
-        let recentID = fixedRecentWorkspace?.id
         let stagingID = stagingWorkspace?.id
-        return workspaces.filter { $0.id != fixedID && $0.id != recentID && $0.id != stagingID }
+        return workspaces.filter { $0.id != fixedID && $0.mode != .recents && $0.id != stagingID }
     }
     var selectedURLs: [URL] { entries.filter { selectedIDs.contains($0.url) }.map(\.url) }
     var selectedEntries: [FileEntry] { entries.filter { selectedIDs.contains($0.url) } }
@@ -624,8 +628,30 @@ enum HubFileOperations {
         selectWorkspace(choices[(index + delta % choices.count + choices.count) % choices.count].id)
     }
 
+    /// A disabled virtual workspace keeps its saved data, but cannot keep a
+    /// query, pending directory navigation, or stale selection alive offscreen.
+    private func selectFallbackWorkspace(at index: Int = 0) {
+        let choices = availableWorkspaces
+        if !choices.isEmpty { selectWorkspace(choices[min(max(0, index), choices.count - 1)].id) }
+        else { clearWorkspaceSelection() }
+    }
+
+    private func clearWorkspaceSelection() {
+        invalidateBackgroundRefresh()
+        stopRecentFiles()
+        retryDirectoryNavigation = nil
+        displayedDirectoryContext = nil
+        canonicalDirectoryPath = nil
+        directoryLoadMessage = nil
+        recentRecords = []
+        selectedWorkspaceID = nil; currentURL = nil
+        entries = []; selectedIDs = []; search = ""
+        history = []; historyIndex = -1
+    }
+
     @discardableResult
     func addWorkspace(name: String, symbol: String = "folder", mode: WorkspaceMode, urls: [URL]) -> Workspace? {
+        if mode == .recents, recentWorkspace != nil { return addRecentWorkspace() }
         guard canAddWorkspace() else { return nil }
         let selected = mode == .recents ? [] : urls.filter(\.isFileURL).map(\.standardizedFileURL)
         let paths = mode == .references ? uniquePaths(selected.map(\.path)) : []
@@ -638,6 +664,9 @@ enum HubFileOperations {
                                   rootPath: mode == .folder ? selected.first?.path : nil,
                                   referencePaths: paths)
         workspaces.append(workspace)
+        // Make the newly admitted feature selectable before opening it. A
+        // rejected creation must never persist an enabled, missing shortcut.
+        if mode == .recents { settings.recentShortcutEnabled = true }
         bindFavoriteWorkspaceIfNeeded()
         selectWorkspace(workspace.id)
         return workspace
@@ -646,14 +675,17 @@ enum HubFileOperations {
     @discardableResult
     func addRecentWorkspace() -> Workspace? {
         if let existing = recentWorkspace {
+            beginPersistenceTransaction()
+            defer { endPersistenceTransaction() }
+            settings.recentShortcutEnabled = true
             selectWorkspace(existing.id)
             return existing
         }
         return addWorkspace(name: "最近使用", symbol: "clock", mode: .recents, urls: [])
     }
 
-    /// Pinning changes presentation only. Keep the workspace's stored position
-    /// so turning the shortcut off restores the original tab order.
+    /// The recent collection is a toggleable feature, never a regular tab.
+    /// Turning it off preserves its identity and settings for the next enable.
     func setRecentShortcutVisible(_ visible: Bool) {
         guard settings.resolvedRecentShortcutEnabled != visible || (visible && recentWorkspace == nil) else { return }
         beginPersistenceTransaction()
@@ -662,6 +694,8 @@ enum HubFileOperations {
             guard addRecentWorkspace() != nil else { return }
         }
         settings.recentShortcutEnabled = visible
+        if !visible && selectedWorkspace?.mode == .recents { selectFallbackWorkspace() }
+        else if visible && selectedWorkspaceID == nil, let recent = fixedRecentWorkspace { selectWorkspace(recent.id) }
     }
 
     func setFavoriteShortcutVisible(_ visible: Bool) {
@@ -704,13 +738,7 @@ enum HubFileOperations {
         defer { endPersistenceTransaction() }
         let wasSelected = isStagingWorkspace
         settings.stagingEnabled = enabled
-        if !enabled && wasSelected {
-            if let next = availableWorkspaces.first { selectWorkspace(next.id) }
-            else {
-                stopRecentFiles(); selectedWorkspaceID = nil; currentURL = nil
-                entries = []; selectedIDs = []; history = []; historyIndex = -1
-            }
-        }
+        if !enabled && wasSelected { selectFallbackWorkspace() }
     }
 
     /// Staging only records paths/bookmarks. It never relocates or copies source data.
@@ -895,7 +923,9 @@ enum HubFileOperations {
             settings.recentShortcutEnabled = false
         }
         workspaces[index] = updated
-        if selectedWorkspaceID == workspace.id {
+        if let selectedWorkspaceID, !availableWorkspaces.contains(where: { $0.id == selectedWorkspaceID }) {
+            selectFallbackWorkspace(at: index)
+        } else if selectedWorkspaceID == workspace.id {
             if rootChanged { selectWorkspace(workspace.id) }
             else { refresh() }
         }
@@ -909,10 +939,7 @@ enum HubFileOperations {
         let wasSelected = selectedWorkspaceID == id
         if fixedRecentWorkspace?.id == id { settings.recentShortcutEnabled = false }
         workspaces.remove(at: index)
-        if wasSelected {
-            if !availableWorkspaces.isEmpty { selectWorkspace(availableWorkspaces[min(index, availableWorkspaces.count - 1)].id) }
-            else { stopRecentFiles(); selectedWorkspaceID = nil; currentURL = nil; entries = []; selectedIDs = []; history = []; historyIndex = -1 }
-        }
+        if wasSelected { selectFallbackWorkspace(at: index) }
     }
 
     func moveWorkspace(from source: IndexSet, to destination: Int) {
@@ -1138,6 +1165,7 @@ enum HubFileOperations {
     }
 
     func refreshInBackground(ifDue: Bool = false) {
+        guard selectedWorkspace != nil else { return }
         if isRecentsRoot {
             if ifDue { recentFiles.refreshIfNeeded() } else { recentFiles.refresh() }
             return
@@ -1228,6 +1256,7 @@ enum HubFileOperations {
     }
 
     func refresh(reportErrors: Bool = true) {
+        guard selectedWorkspace != nil else { clearWorkspaceSelection(); return }
         invalidateBackgroundRefresh()
         retryDirectoryNavigation = nil
         if isRecentsRoot {
@@ -1713,10 +1742,7 @@ enum HubFileOperations {
         try apply(data: data)
         invalidateBackgroundRefresh()
         if let id = selectedWorkspaceID { selectWorkspace(id) }
-        else {
-            stopRecentFiles(); currentURL = nil; entries = []; selectedIDs = []
-            history = []; historyIndex = -1
-        }
+        else { clearWorkspaceSelection() }
         readyToSave = wasReady
         persistIfReady()
     }

@@ -182,3 +182,11 @@ AirDrop 加入现有原生拖放桥的独立优先区域，使用 copy 提议，
 SwiftUI 备用接收器复用完整批次收集与 AirDrop URL 策略，最多1000项，原子拒绝混合无效输入，保留来源顺序并去重。provider 调用在后台，真实同步阻塞调用最多2个；超时或关闭后丢弃迟到结果，释放自己的活动票据后重新检查启用和忙碌状态，再发送捕获的文件。默认不接受原始图片或网页地址，不创建临时文件。
 
 NativeFileDropTests 新增真实 DestinationView 回调验证 Finder/local 生命周期、区域优先级、SVG与目录 URL、copy-only、禁用/忙碌、移出/结束/拆卸清理及混合输入拒绝；AirDropFileDropTests 覆盖异步/重复回调、完整批次、超时/迟到、最终状态复检与实际阻塞 worker 上限。两套及 NativeDropHostingTests、MarqueeSelectionTests 在最终源码上通过。测试仅使用临时文件与私有剪贴板，不向设备发送内容；双架构完整编译与签名验证另行完成。
+
+### 1.21.3 最近使用关闭语义与 AirDrop 配置
+
+最近使用从“更换标签位置”改为可开关的内置功能：所有 `.recents` 都不进入普通标签，导航仅接纳已开启的首个最近使用工作区。关闭时保留持久化数据，但停止当前 Spotlight 查询、取消目录读取并切换其他可用工作区；没有其他工作区时清空导航和选择。启动、导入和快捷键循环使用同一可用列表，旧重复项保留但不会变成额外标签。新建通过容量准入后才启用，旧添加入口也复用既有工作区。
+
+「＋」新增 AirDrop 勾选项，直接绑定设置页使用的同一配置字段。原生拖放、provider 完成、主线程排队通知及最终发送入口仍复检开关；关闭后清除高亮并拒绝新请求，已受理的发送保留其完整生命周期。
+
+RecentWorkspaceTests 增加关闭根目录/子目录、仅剩隐藏工作区、旧配置/导入、重启、迟到回包、快捷键循环、重复工作区与满容量复用回归。该套、ModelTests、ConfigurationAdmissionTests、StagingWorkspaceTests、NativeFileDropTests 和 AirDropFileDropTests 均通过；逐文件 diff 审阅与空白检查通过。只使用隔离临时文件，不发送 AirDrop 内容。

@@ -20,6 +20,22 @@ import Foundation
     }
 }
 
+@MainActor private final class RecentDirectoryFixture: HubDirectoryLoading {
+    struct Pending {
+        var id: UUID
+        var completion: (Result<HubDirectorySnapshot, Error>) -> Void
+    }
+    var pending: [Pending] = []
+    var cancelled: [UUID] = []
+    var loadCount = 0
+    func load(id: UUID, request: HubDirectoryRequest, completion: @escaping (Result<HubDirectorySnapshot, Error>) -> Void) {
+        loadCount += 1
+        if request.references.isEmpty { completion(.success(.init(entries: [], canonicalDirectoryPath: nil))) }
+        else { pending.append(.init(id: id, completion: completion)) }
+    }
+    func cancel(id: UUID) { cancelled.append(id) }
+}
+
 @main struct RecentWorkspaceTests {
     @MainActor static func main() throws {
         let fm = FileManager.default
@@ -41,7 +57,8 @@ import Foundation
         try navigationAndStaleCallbacks(in: base, directory: directory, child: child, alpha: alpha, zulu: zulu)
         try pinnedShortcutLifecycle(in: base, directory: directory, alpha: alpha)
         try pinnedShortcutAdmissionAndMigration(in: base)
-        print("PASS: recent workspace persistence, ordering, navigation, write protection and pinned shortcut lifecycle/admission/migration")
+        try hiddenRecentOnlyWorkspace(in: base, alpha: alpha)
+        print("PASS: recent workspace persistence, ordering, navigation, write protection and feature visibility/cancellation/admission/migration")
     }
 
     @MainActor private static func persistenceAndSanitization(in base: URL, directory: URL, alpha: URL) throws {
@@ -242,13 +259,15 @@ import Foundation
         _ = model.addWorkspace(name: "After Recents", mode: .folder, urls: [directory])
         model.selectWorkspace(folder.id)
         let stored = model.workspaces, originalTabs = model.tabWorkspaces, location = model.currentURL
-        precondition(originalTabs.contains(where: { $0.id == recent.id }))
+        precondition(!originalTabs.contains(where: { $0.mode == .recents }), "Recents is never an ordinary tab")
+        model.setRecentShortcutVisible(false)
+        model.search = "keep folder search"
         model.setRecentShortcutVisible(true)
         precondition(model.fixedRecentWorkspace?.id == recent.id && model.workspaces == stored,
                      "Pinning an existing recent workspace must preserve its contents and stored order")
-        precondition(model.selectedWorkspaceID == folder.id && model.currentURL == location,
+        precondition(model.selectedWorkspaceID == folder.id && model.currentURL == location && model.search == "keep folder search",
                      "Pinning an existing shortcut must not navigate away from the current folder")
-        precondition(model.tabWorkspaces == originalTabs.filter { $0.id != recent.id })
+        precondition(model.tabWorkspaces == originalTabs)
         let writes = model.configurationWriteCount
         model.setRecentShortcutVisible(true)
         precondition(model.workspaces == stored && model.configurationWriteCount == writes,
@@ -262,14 +281,23 @@ import Foundation
         provider.emit([HubRecentFile(url: alpha, lastUsed: Date(timeIntervalSince1970: 500))])
         model.selectedIDs = [alpha]
         model.search = "alpha"
-        let entries = model.entries, callbacks = provider.callbacks.count
+        let oldCallback = provider.latestCallback, stops = provider.stopCount
         model.setRecentShortcutVisible(false)
         precondition(model.fixedRecentWorkspace == nil && model.tabWorkspaces == originalTabs
-                     && model.workspaces == stored && model.selectedWorkspaceID == recent.id,
-                     "Unpinning must return Recents to its exact original tab position without deleting it")
-        precondition(model.entries == entries && model.search == "alpha" && model.selectedIDs == [alpha]
-                     && provider.callbacks.count == callbacks,
-                     "Unpinning the selected shortcut must preserve its active query and selection")
+                     && model.workspaces == stored && model.selectedWorkspaceID != recent.id,
+                     "Disabling Recents must hide it completely while preserving its saved workspace")
+        precondition(!model.isRecentsRoot && model.search.isEmpty && model.selectedIDs.isEmpty
+                     && provider.stopCount == stops + 1 && !model.recentFilesLoading,
+                     "Disabling the selected feature must stop its query and clear selection/search")
+        let fallback = model.selectedWorkspaceID, entries = model.entries
+        model.selectWorkspace(recent.id)
+        provider.emit([HubRecentFile(url: alpha, lastUsed: Date())], callback: oldCallback)
+        precondition(model.selectedWorkspaceID == fallback && model.entries == entries,
+                     "A stale selection or query callback cannot reopen a disabled feature")
+        for _ in 0..<(model.workspaces.count * 2) {
+            model.nextWorkspace()
+            precondition(model.selectedWorkspace?.mode != .recents, "Workspace cycling must skip hidden Recents")
+        }
         precondition(model.fixedFavoriteWorkspace?.id == favoriteID && model.stagingWorkspace?.id == stagingID
                      && model.favoriteWorkspace?.referencePaths == [alpha.path] && model.stagedURLs == [alpha],
                      "Recent pinning cannot change favorites, staging or their references")
@@ -278,22 +306,42 @@ import Foundation
         // The user's tab identities and order must still round-trip unchanged.
         precondition(!unpinned.settings.resolvedRecentShortcutEnabled
                      && unpinned.tabWorkspaces.map(\.id) == originalTabs.map(\.id)
-                     && unpinned.recentWorkspace == recent)
+                     && unpinned.recentWorkspace == recent && unpinned.selectedWorkspace?.mode != .recents)
+
+        // Disabling while browsing a folder under Recents also clears its
+        // virtual-root history, even though the Spotlight query already stopped.
+        model.setRecentShortcutVisible(true)
+        model.selectWorkspace(recent.id)
+        model.navigate(to: directory)
+        precondition(model.canGoBack)
+        model.setRecentShortcutVisible(false)
+        precondition(model.selectedWorkspace?.mode != .recents && !model.canGoBack && !model.canGoForward)
 
         // Multiple legacy recent workspaces may exist. Removing the pinned one
         // must not silently pin the next workspace in its place.
-        let second = model.addWorkspace(name: "Other Recents", mode: .recents, urls: [])!
+        let second = Workspace(name: "Other Recents", symbol: "clock", mode: .recents)
+        model.workspaces.append(second)
         model.setRecentShortcutVisible(true)
+        model.selectWorkspace(recent.id)
+        model.selectWorkspace(second.id)
+        precondition(model.selectedWorkspaceID == recent.id && !model.tabWorkspaces.contains(where: { $0.mode == .recents }),
+                     "Legacy duplicate recent workspaces stay stored but cannot become extra visible tabs")
         model.removeWorkspace(recent.id)
         precondition(!model.settings.resolvedRecentShortcutEnabled && model.fixedRecentWorkspace == nil
-                     && model.recentWorkspace?.id == second.id && model.tabWorkspaces.contains(where: { $0.id == second.id }))
+                     && model.recentWorkspace?.id == second.id && !model.tabWorkspaces.contains(where: { $0.id == second.id })
+                     && model.selectedWorkspace?.mode != .recents)
         model.setRecentShortcutVisible(true)
+        model.selectWorkspace(second.id)
         var converted = second
         converted.mode = .folder; converted.rootPath = directory.path
         model.updateWorkspace(converted)
         precondition(!model.settings.resolvedRecentShortcutEnabled && model.fixedRecentWorkspace == nil
                      && model.tabWorkspaces.contains(where: { $0.id == second.id }),
                      "Converting a pinned recent workspace to a folder must clear its pin")
+        converted.mode = .recents
+        model.updateWorkspace(converted)
+        precondition(model.selectedWorkspaceID != converted.id && !model.tabWorkspaces.contains(where: { $0.id == converted.id }),
+                     "Converting the selected folder into a disabled feature cannot leave hidden content selected")
     }
 
     @MainActor private static func pinnedShortcutAdmissionAndMigration(in base: URL) throws {
@@ -308,6 +356,7 @@ import Foundation
         model.setRecentShortcutVisible(true)
         precondition(model.fixedRecentWorkspace?.id == recent.id && model.workspaces.count == initialCount + 1,
                      "Toggle cycles reuse the same lazy-created recent workspace")
+        model.selectWorkspace(recent.id)
 
         var legacy = try configuration(at: storage)
         var legacySettings = legacy["settings"] as! [String: Any]
@@ -315,8 +364,12 @@ import Foundation
         legacy["settings"] = legacySettings
         try model.importConfiguration(data: JSONSerialization.data(withJSONObject: legacy))
         precondition(model.settings.recentShortcutEnabled == nil && !model.settings.resolvedRecentShortcutEnabled
-                     && model.fixedRecentWorkspace == nil && model.tabWorkspaces.contains(where: { $0.id == recent.id }),
-                     "Legacy configurations must keep Recents in the existing tab layout")
+                     && model.fixedRecentWorkspace == nil && !model.tabWorkspaces.contains(where: { $0.id == recent.id })
+                     && model.selectedWorkspaceID != recent.id,
+                     "Importing a legacy disabled feature must retain its data without exposing or selecting a tab")
+        let restored = makeTestModel(storageURL: storage, recentFiles: RecentFilesFixtureProvider())
+        precondition(restored.recentWorkspace?.id == recent.id && restored.selectedWorkspace?.mode != .recents
+                     && !restored.tabWorkspaces.contains(where: { $0.mode == .recents }))
         model.removeWorkspace(recent.id)
         var dangling = try configuration(at: storage)
         var danglingSettings = dangling["settings"] as! [String: Any]
@@ -340,6 +393,49 @@ import Foundation
         model.setRecentShortcutVisible(true)
         precondition(model.settings.resolvedRecentShortcutEnabled && model.fixedRecentWorkspace?.id == previous[0].id
                      && model.workspaces.count == HubModel.maximumWorkspaces)
+        model.setRecentShortcutVisible(false)
+        precondition(model.addWorkspace(name: "Duplicate", mode: .recents, urls: [])?.id == previous[0].id
+                     && model.workspaces.count == HubModel.maximumWorkspaces && model.selectedWorkspaceID == previous[0].id,
+                     "Explicit legacy add commands must re-enable and reuse Recents even at capacity")
+    }
+
+    @MainActor private static func hiddenRecentOnlyWorkspace(in base: URL, alpha: URL) throws {
+        let storage = base.appendingPathComponent("hidden-only/config.json")
+        let provider = RecentFilesFixtureProvider(), loader = RecentDirectoryFixture()
+        let model = HubModel(storageURL: storage, recentFiles: provider, directoryLoader: loader)
+        let recent = model.addRecentWorkspace()!
+        for workspace in model.workspaces where workspace.id != recent.id { model.removeWorkspace(workspace.id) }
+        provider.emit([HubRecentFile(url: alpha, lastUsed: Date())], gathering: true)
+        let oldCallback = provider.latestCallback, pending = loader.pending.last!
+        precondition(model.directoryLoading && model.recentFilesLoading)
+        model.selectedIDs = [alpha]; model.search = "stale"
+        model.setRecentShortcutVisible(false)
+        precondition(model.workspaces == [recent] && model.selectedWorkspaceID == nil && model.entries.isEmpty
+                     && model.selectedIDs.isEmpty && model.search.isEmpty && model.currentURL == nil
+                     && !model.directoryLoading && !model.recentFilesLoading && !model.canGoBack && !model.canGoForward
+                     && loader.cancelled.contains(pending.id),
+                     "Disabling the only visible workspace must cancel metadata and clear all transient content")
+        let callbacks = provider.callbacks.count, loads = loader.loadCount
+        provider.emit([HubRecentFile(url: alpha, lastUsed: Date())], callback: oldCallback)
+        pending.completion(.success(.init(entries: [FileEntry(url: alpha)], canonicalDirectoryPath: nil)))
+        model.refreshInBackground(); model.refresh(); model.nextWorkspace(); model.selectWorkspace(recent.id)
+        precondition(model.selectedWorkspaceID == nil && model.entries.isEmpty && provider.callbacks.count == callbacks
+                     && loader.loadCount == loads && model.tabWorkspaces.isEmpty,
+                     "Late results, periodic refresh and stale selection cannot revive an inactive collection")
+
+        var saved = try configuration(at: storage)
+        saved["selectedWorkspaceID"] = recent.id.uuidString
+        try model.importConfiguration(data: JSONSerialization.data(withJSONObject: saved))
+        precondition(model.selectedWorkspaceID == nil && model.workspaces == [recent] && provider.callbacks.count == callbacks)
+        let restoredProvider = RecentFilesFixtureProvider()
+        let restored = makeTestModel(storageURL: storage, recentFiles: restoredProvider)
+        precondition(restored.selectedWorkspaceID == nil && restored.recentWorkspace == recent
+                     && restoredProvider.callbacks.isEmpty && restored.tabWorkspaces.isEmpty,
+                     "Startup and import normalize saved selections that point to a disabled feature")
+        model.setRecentShortcutVisible(true)
+        precondition(model.fixedRecentWorkspace?.id == recent.id && model.selectedWorkspaceID == recent.id
+                     && model.workspaces == [recent] && provider.callbacks.count == callbacks + 1,
+                     "Re-enabling the only stored collection must reuse and select it before starting a fresh query")
     }
 
     private static func configuration(at url: URL) throws -> [String: Any] {

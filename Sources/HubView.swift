@@ -397,6 +397,9 @@ struct HubView: View {
             Toggle("显示文件暂存区", isOn: Binding(
                 get: { model.settings.resolvedStagingEnabled },
                 set: { model.setStagingEnabled($0) }))
+            Toggle("启用 AirDrop", isOn: Binding(
+                get: { model.settings.resolvedAirDropEnabled },
+                set: { model.settings.airDropEnabled = $0 }))
             Divider()
             HubMenuButton("文件夹工作区…", systemImage: "folder.badge.plus") { model.chooseWorkspace(mode: .folder) }
             HubMenuButton("文件与文件夹合集…", systemImage: "square.stack.3d.up") { model.chooseWorkspace(mode: .references) }
