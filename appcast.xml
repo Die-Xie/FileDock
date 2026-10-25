@@ -1,0 +1,29 @@
+<?xml version="1.0" standalone="yes"?><!-- sparkle-sign-warning:
+IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+    <channel>
+        <title>FileDock</title>
+        <item>
+            <title>1.23.0</title>
+            <pubDate>Sun, 25 Oct 2026 19:13:47 +0800</pubDate>
+            <link>https://github.com/Die-Xie/FileDock</link>
+            <sparkle:version>50</sparkle:version>
+            <sparkle:shortVersionString>1.23.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown"><![CDATA[# FileDock 1.23.0
+
+- 移除趣味爪印动画、独立浮窗及相关配置项；旧版配置和导出文件仍可正常读取。
+- 设置改用侧栏导航，分为通用、呼出与交互、文件与工作区、外观、快捷键、音乐、关于。
+- 将呼出方式、延迟和例外集中管理；统一延迟滑块与毫秒输入，鼠标调节结束后合并保存。黑名单可按需展开。
+- 收藏、最近使用、暂存和 AirDrop 集中在文件设置，与面板「＋」菜单同步；主题、布局及正常界面动效集中在外观设置。
+- 保留现有工作区、授权、更新签名身份及面板拖出自动固定行为。
+
+支持 macOS 13 及以上，提供 Apple Silicon / Intel 通用版本。
+]]></description>
+            <enclosure url="https://github.com/Die-Xie/FileDock/releases/download/v1.23.0/FileDock.zip" length="6355085" type="application/octet-stream" sparkle:edSignature="L7QCkzJbKWTmUWjuuNV9gLnGONQmyQHBovKZBGbMARoEH9LBfumUX96J4wfwQnhXL8O4hVZjxI/tFTA/ascvCg=="></enclosure>
+        </item>
+    </channel>
+</rss><!-- sparkle-signatures:
+edSignature: RW2X1BANkEnoocyfDvGtQy+MWyFj5UfjpPoNIrkMPjDAVlaFqVixn7+EZ6wlBr6pGy2fqbm41zoEJWAFz2ItBg==
+length: 1906
+-->
