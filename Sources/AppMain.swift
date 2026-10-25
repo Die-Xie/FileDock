@@ -62,7 +62,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
     private var previewURLs: [URL] = []
     private var shownFromHover = false
     private var restoringSize = false
-    private var funBadge: NSPanel?
     private var registeredTriggerMode: String?
     private var registeredShortcuts: HubGlobalShortcuts?
     private var shortcutRecordingActive = false
@@ -195,7 +194,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
             guard let self else { return [] }
             let preview = QLPreviewPanel.sharedPreviewPanelExists() ? QLPreviewPanel.shared() : nil
             let color = NSColorPanel.sharedColorPanelExists ? NSColorPanel.shared : nil
-            return [self.panel, self.bridgePanel, self.settingsWindow, self.funBadge, preview, color]
+            return [self.panel, self.bridgePanel, self.settingsWindow, preview, color]
                 .compactMap { $0 }.filter(\.isVisible)
         }
         HubWindowPresentation.modalStateDidChange = { [weak self] active in
@@ -518,7 +517,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         NSApp.activate(ignoringOtherApps: true)
         hoverDismissal.reset()
         panelPointerEntered = false
-        if model.settings.funAnimation { showFunBadge(screen: screen) }
     }
 
     func hidePanel() {
@@ -542,7 +540,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         }
         surface.setPresented(false, animated: true, completion: finish)
         bridgeView.setPresented(false, animated: attachedToNotch && !embeddedAtNotch, completion: finish)
-        funBadge?.orderOut(nil)
         shownFromHover = false
         hoverDismissal.reset()
         hoverActivation.dismiss(regionID: hoveredRegionID, now: ProcessInfo.processInfo.systemUptime)
@@ -669,11 +666,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         windows.append(contentsOf: [NSApp.modalWindow, panel.attachedSheet, settingsWindow?.attachedSheet].compactMap { $0 })
         if updater?.sessionInProgress == true {
             windows.append(contentsOf: NSApp.windows.filter {
-                $0.isVisible && $0 !== panel && $0 !== bridgePanel && $0 !== funBadge &&
+                $0.isVisible && $0 !== panel && $0 !== bridgePanel &&
                     !($0 is QLPreviewPanel)
             })
         }
-        let excluded = [panel, bridgePanel, funBadge, statusItem?.button?.window].compactMap { $0 }
+        let excluded = [panel, bridgePanel, statusItem?.button?.window].compactMap { $0 }
         auxiliaryWindowLevels.synchronize(windows, excluding: excluded, above: panel.level)
     }
 
@@ -955,7 +952,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
     @objc func showSettings() {
         guard !hasActiveDialog else { return }
         if settingsWindow == nil {
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 660, height: 550),
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 780, height: 600),
                                   styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
             window.title = "FileDock 设置"
             window.level = .floating
@@ -1061,7 +1058,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
             var windows = [panel, bridgePanel, settingsWindow].compactMap { $0 }
             if NSColorPanel.sharedColorPanelExists { windows.append(NSColorPanel.shared) }
             sharingWindows.begin(windows)
-            funBadge?.orderOut(nil)
         } else {
             let restore = !NSApp.isHidden && pendingTermination == nil
             sharingWindows.end(restoring: restore)
@@ -1084,7 +1080,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
 
         文件夹工作区实时浏览目录；收藏工作区只保留文件引用。拖入文件夹默认移动，按住 Option 则复制；拖入收藏仅添加引用。通过「＋ → 固定最近使用到右上角」开启最近使用时钟入口，最近打开的文件排在前面。
 
-        收藏旁的暂存区保存文件引用，可拖入、拖出，或批量复制／移动到指定文件夹；清空仅移除引用。设置 → 通用可关闭暂存入口，并添加触发黑名单，或在全屏时暂停鼠标自动呼出；手动快捷键不受影响。
+        收藏旁的暂存区保存文件引用，可拖入、拖出，或批量复制／移动到指定文件夹；清空仅移除引用。设置 → 文件与工作区可关闭暂存入口；设置 → 呼出与交互可添加黑名单，或在全屏时暂停鼠标自动呼出；手动快捷键不受影响。
 
         右上角的收藏星标可右键隐藏，并可从「＋」菜单恢复。右键工作区标签可切换「仅显示图标」。
 
@@ -1096,26 +1092,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         """
         alert.addButton(withTitle: "知道了")
         if panel.isVisible { alert.beginSheetModal(for: panel) } else { _ = HubWindowPresentation.runModal(alert) }
-    }
-
-    private func showFunBadge(screen: NSScreen) {
-        if funBadge == nil {
-            let badge = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 44, height: 30), styleMask: [.borderless], backing: .buffered, defer: false)
-            badge.backgroundColor = .clear; badge.isOpaque = false; badge.level = .statusBar
-            badge.ignoresMouseEvents = true; badge.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-            let label = NSTextField(labelWithString: "🐾")
-            label.font = .systemFont(ofSize: 24); label.alignment = .center
-            badge.contentView = label
-            funBadge = badge
-        }
-        funBadge?.setFrameOrigin(NSPoint(x: panel.frame.midX - 22, y: panel.frame.maxY - 4))
-        funBadge?.orderFront(nil)
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.6
-            funBadge?.animator().alphaValue = 0.15
-        } completionHandler: { [weak self] in
-            DispatchQueue.main.async { self?.funBadge?.orderOut(nil); self?.funBadge?.alphaValue = 1 }
-        }
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {

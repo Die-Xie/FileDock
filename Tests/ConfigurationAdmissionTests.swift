@@ -21,6 +21,7 @@ import Foundation
         try optionalMetadataFailure(root)
         try serializedConfigurationLimit(root)
         try musicPlayerMigration(root)
+        try removedAnimationMigration(root)
         sharingScopeAncestry(root)
         try await configurationImportDuringFileWork(root)
         print("PASS: workspace/reference admission bounds, serialized size protection and recovery, player migrations, metadata fallbacks and configuration import guards during writes/sharing/providers")
@@ -160,6 +161,25 @@ import Foundation
         let recovered = HubModel(storageURL: storage, directoryLoader: AdmissionDirectoryLoader())
         precondition(recovered.workspaces.first?.referencePaths == [paths[0], paths[paths.count - 1]],
                      "Reducing an oversized in-memory collection must restore normal saving without lost references")
+    }
+
+    @MainActor private static func removedAnimationMigration(_ root: URL) throws {
+        let storage = root.appendingPathComponent("removed-animation.json")
+        let model = HubModel(storageURL: storage, directoryLoader: AdmissionDirectoryLoader())
+        model.settings.switchDelay = 0.15736
+        let settings = model.settings, workspaces = model.workspaces
+        var legacy = try JSONSerialization.jsonObject(with: Data(contentsOf: storage)) as! [String: Any]
+        var oldSettings = legacy["settings"] as! [String: Any]
+        oldSettings["funAnimation"] = true
+        legacy["settings"] = oldSettings
+        try model.importConfiguration(data: JSONSerialization.data(withJSONObject: legacy))
+        precondition(model.settings == settings && model.workspaces == workspaces,
+                     "Removed animation flags cannot reject or reset an older configuration")
+        let saved = try JSONSerialization.jsonObject(with: Data(contentsOf: storage)) as! [String: Any]
+        precondition((saved["settings"] as! [String: Any])["funAnimation"] == nil,
+                     "Removed animation flags must not be re-exported")
+        let restored = HubModel(storageURL: storage, directoryLoader: AdmissionDirectoryLoader())
+        precondition(restored.settings == settings && restored.workspaces == workspaces)
     }
 
     @MainActor private static func musicPlayerMigration(_ root: URL) throws {

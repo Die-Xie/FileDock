@@ -90,7 +90,6 @@ struct HubSettings: Codable, Equatable {
     var hotCorner: String = "notch"
     var secondaryScreens = true
     var showMenuBarIcon = true
-    var funAnimation = false
     var width: Double = 683
     var height: Double = 400
     var launchAtLogin = true

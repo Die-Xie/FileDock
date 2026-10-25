@@ -189,3 +189,9 @@ swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache
     -framework QuickLookThumbnailing -framework ImageIO -framework ServiceManagement -framework UniformTypeIdentifiers -framework ApplicationServices \
     -F "$TASK_SPARKLE" -framework Sparkle -Xlinker -rpath -Xlinker "$TASK_SPARKLE"
 .build/header-window-drag-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache "${TASK_VIEW_TEST_SOURCES[@]}" \
+    Tests/SettingsLayoutTests.swift -o .build/settings-layout-tests \
+    -framework AppKit -framework SwiftUI -framework Combine -framework Carbon -framework Quartz \
+    -framework QuickLookThumbnailing -framework ImageIO -framework ServiceManagement -framework UniformTypeIdentifiers -framework ApplicationServices \
+    -F "$TASK_SPARKLE" -framework Sparkle -Xlinker -rpath -Xlinker "$TASK_SPARKLE"
+.build/settings-layout-tests

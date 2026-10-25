@@ -59,9 +59,11 @@ struct FileDockUpdateOutcome {
     var filesBusy: () -> Bool = { false }
     var presentationBusy: () -> Bool = { false }
 
-    override init() {
+    override convenience init() { self.init(startingUpdater: true) }
+
+    init(startingUpdater: Bool) {
         super.init()
-        controller = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: self, userDriverDelegate: nil)
+        controller = SPUStandardUpdaterController(startingUpdater: startingUpdater, updaterDelegate: self, userDriverDelegate: nil)
         let updater = controller.updater
         observations = [
             updater.observe(\.canCheckForUpdates, options: [.initial, .new]) { [weak self] updater, _ in
