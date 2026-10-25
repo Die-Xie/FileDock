@@ -30,6 +30,8 @@ struct HubView: View {
     @State private var pendingTrash: [URL] = []
     @State private var dropTargeted = false
     @State private var stagingDropTargeted = false
+    @State private var airDropTargeted = false
+    @State private var showsAirDropHint = false
     @State private var fileDropTarget: URL?
     @State private var fileDropFeedback: HubFileDropFeedback?
     @State private var hoveredWorkspace: UUID?
@@ -93,6 +95,21 @@ struct HubView: View {
                 if let feedback = fileDropFeedback { feedback.overlay(in: geometry.size) }
             }
         }
+        .overlay(alignment: .bottom) {
+            if showsAirDropHint || (airDropTargeted && fileDropFeedback == nil) {
+                Text(showsAirDropHint ? "将文件拖到 AirDrop 图标，或先选中文件再点按" : "松开以通过 AirDrop 发送")
+                    .font(.caption).multilineTextAlignment(.center)
+                    .padding(.horizontal, 14).padding(.vertical, 9)
+                    .background(.regularMaterial, in: Capsule())
+                    .padding(.horizontal, 12).padding(.bottom, 52)
+                    .allowsHitTesting(false)
+            }
+        }
+        .task(id: showsAirDropHint) {
+            guard showsAirDropHint else { return }
+            do { try await Task.sleep(nanoseconds: 3_000_000_000) } catch { return }
+            showsAirDropHint = false
+        }
         .onReceive(NotificationCenter.default.publisher(for: hubFileDragDidEnd)) { _ in
             presentation.setFileDragActive(false)
             workspaceSpringLoader.cancel()
@@ -100,6 +117,8 @@ struct HubView: View {
             fileDropFeedback = nil
             dropTargeted = false
             stagingDropTargeted = false
+            airDropTargeted = false
+            showsAirDropHint = false
         }
         .onReceive(NotificationCenter.default.publisher(for: hubWorkspaceDragDidEnd)) { _ in
             workspaceSpringLoader.cancel()
@@ -107,8 +126,9 @@ struct HubView: View {
             hoveredWorkspace = nil
             workspaceRevealPointer = NSEvent.mouseLocation
         }
-        .onChange(of: presentation.previewVisible) { if !$0 { workspaceSpringLoader.cancel() } }
-        .onDisappear { workspaceSpringLoader.cancel(); hoverTask?.cancel() }
+        .onChange(of: presentation.previewVisible) { if !$0 { clearFileDrop(); showsAirDropHint = false } }
+        .onChange(of: canReceiveAirDrop) { if !$0 { showsAirDropHint = false; if airDropTargeted { clearFileDrop() } } }
+        .onDisappear { clearFileDrop(); showsAirDropHint = false; hoverTask?.cancel() }
         .task(id: model.directoryLoading) {
             showsLoading = false
             guard model.directoryLoading else { return }
@@ -290,14 +310,33 @@ struct HubView: View {
         }
         if model.settings.resolvedAirDropEnabled {
             Button {
+                guard canReceiveAirDrop else { return }
                 let selection = model.selectedURLs
                 let urls = selection.isEmpty && model.isStagingRoot ? model.stagedURLs : selection
-                NotificationCenter.default.post(name: Notification.Name("HubAirDrop"), object: nil, userInfo: ["urls": urls])
-            } label: { HubWorkspaceShortcutLabel(symbol: "airplayaudio") }
+                guard !urls.isEmpty else { showsAirDropHint = true; return }
+                queueAirDropFiles(urls)
+            } label: { HubWorkspaceShortcutLabel(symbol: "airplayaudio", targeted: airDropTargeted) }
                 .buttonStyle(.plain)
-                .disabled(model.sharingInProgress || model.stagingTransferInProgress || model.fileOperationsInProgress > 0)
+                .disabled(!canReceiveAirDrop)
                 .accessibilityLabel("AirDrop")
-                .help("AirDrop · 发送所选文件，未选择时添加文件")
+                .help("AirDrop · 拖入文件，或先选择文件后点按")
+                .onDrop(of: HubAirDropFileDropDelegate.contentTypes, delegate: HubAirDropFileDropDelegate(
+                    canReceive: { presentation.previewVisible && canReceiveAirDrop && !HubWorkspaceDragState.isDragging },
+                    targeted: { active in
+                        if active {
+                            if !airDropTargeted {
+                                clearFileDrop()
+                                airDropTargeted = true
+                                showsAirDropHint = false
+                                hoverTask?.cancel(); hoveredWorkspace = nil
+                                presentation.setFileDragActive(true)
+                            }
+                        } else {
+                            airDropTargeted = false
+                            if fileDropFeedback?.action == .airDrop { fileDropFeedback = nil }
+                        }
+                    }, receive: receiveAirDropFiles))
+                .anchorPreference(key: HubFileDropRegionKey.self, value: .bounds) { [.airDrop: $0] }
         }
         if let recent = model.fixedRecentWorkspace {
             Button { model.selectWorkspace(recent.id) } label: {
@@ -349,8 +388,6 @@ struct HubView: View {
                 }
         }
         Menu {
-            HubMenuButton("最近使用", systemImage: "clock") { model.addRecentWorkspace() }
-            Divider()
             Toggle("固定收藏到右上角", isOn: Binding(
                 get: { model.fixedFavoriteWorkspace != nil },
                 set: { model.setFavoriteShortcutVisible($0) }))
@@ -494,7 +531,7 @@ struct HubView: View {
             operation: { point, urls, payload, copy in
                 guard let region = HubFileDropRegion.at(point, in: regions) else { clearFileDrop(); return [] }
                 presentation.setFileDragActive(true)
-                let plan = fileDropPlan(region: region, point: point, frames: frames, content: regions[.content] ?? .zero, order: order, payload: payload, copy: copy)
+                let plan = fileDropPlan(region: region, point: point, frames: frames, content: regions[.content] ?? .zero, order: order, payload: payload, copy: copy, urls: urls)
                 if case .workspace(let id) = region {
                     workspaceSpringLoader.enter(id, delay: model.settings.switchDelay,
                         canActivate: { presentation.previewVisible && model.workspaces.contains(where: { $0.id == id }) },
@@ -505,7 +542,10 @@ struct HubView: View {
                         canActivate: { model.settings.resolvedStagingEnabled },
                         activate: { if !model.isStagingWorkspace { model.openStagingWorkspace() } })
                 } else { workspaceSpringLoader.cancel() }
+                if region == .airDrop { hoverTask?.cancel(); hoveredWorkspace = nil; showsAirDropHint = false }
                 if stagingDropTargeted != (region == .staging) { stagingDropTargeted = region == .staging }
+                let airDropActive = plan?.action == .airDrop
+                if airDropTargeted != airDropActive { airDropTargeted = airDropActive }
                 let item = region == .content ? plan?.item : nil
                 if fileDropTarget != item { fileDropTarget = item }
                 let targeted = region == .content && plan != nil
@@ -517,7 +557,8 @@ struct HubView: View {
             }, exited: clearFileDrop,
             receive: { urls, payload, point, copy in
                 guard let region = HubFileDropRegion.at(point, in: regions),
-                      let plan = fileDropPlan(region: region, point: point, frames: frames, content: regions[.content] ?? .zero, order: order, payload: payload, copy: copy) else { return false }
+                      let plan = fileDropPlan(region: region, point: point, frames: frames, content: regions[.content] ?? .zero, order: order, payload: payload, copy: copy, urls: urls) else { return false }
+                if plan.action == .airDrop { return queueAirDropFiles(urls) }
                 if plan.action == .reorder { model.reorderEntries(urls, before: plan.slot?.before); return true }
                 if region == .staging { return model.stageFiles(urls) }
                 let accepted = model.acceptFileDrop(urls, workspaceID: plan.workspaceID, directory: plan.directory, copy: copy,
@@ -528,13 +569,47 @@ struct HubView: View {
     }
 
     private func clearFileDrop() {
-        fileDropTarget = nil; fileDropFeedback = nil; dropTargeted = false; stagingDropTargeted = false
+        fileDropTarget = nil; fileDropFeedback = nil; dropTargeted = false; stagingDropTargeted = false; airDropTargeted = false
         workspaceSpringLoader.cancel()
     }
 
+    private var canReceiveAirDrop: Bool {
+        model.settings.resolvedAirDropEnabled && !model.sharingInProgress &&
+            !model.stagingTransferInProgress && model.fileOperationsInProgress == 0 && !HubImportActivity.isBusy
+    }
+
+    private func receiveAirDropFiles(_ providers: [NSItemProvider]) -> Bool {
+        clearFileDrop()
+        return HubAirDropFileDropReceiver.receive(providers: providers,
+            canReceive: { canReceiveAirDrop },
+            completion: { _ = queueAirDropFiles($0) },
+            onError: { model.errorMessage = $0 })
+    }
+
+    @discardableResult private func queueAirDropFiles(_ urls: [URL]) -> Bool {
+        guard canReceiveAirDrop else { return false }
+        let files: [URL]
+        do { files = try HubAirDropPolicy.uniqueFiles(urls) }
+        catch { model.errorMessage = error.localizedDescription; return false }
+        clearFileDrop()
+        showsAirDropHint = false
+        // Let AppKit finish the native drag and provider batches release their
+        // activity tickets before presenting the system sharing window.
+        DispatchQueue.main.async {
+            guard canReceiveAirDrop else {
+                model.errorMessage = "AirDrop 暂时不可用，请等待文件操作完成后重试。"
+                return
+            }
+            NotificationCenter.default.post(name: Notification.Name("HubAirDropFiles"), object: nil, userInfo: ["urls": files])
+        }
+        return true
+    }
+
     private func fileDropPlan(region: HubFileDropRegion, point: CGPoint, frames: [URL: CGRect], content: CGRect, order: [URL],
-                              payload: HubFileDragPayload?, copy: Bool) -> HubFileDropPlan? {
+                              payload: HubFileDragPayload?, copy: Bool, urls: [URL]) -> HubFileDropPlan? {
         switch region {
+        case .airDrop:
+            return HubFileDropPlan.airDrop(urls: urls, allowed: presentation.previewVisible && canReceiveAirDrop)
         case .workspace(let id):
             guard let workspace = model.workspaces.first(where: { $0.id == id }), workspace.mode != .recents else { return nil }
             return HubFileDropPlan(workspaceID: id, directory: workspace.rootURL, item: nil,

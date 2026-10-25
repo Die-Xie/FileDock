@@ -36,6 +36,12 @@ import UniformTypeIdentifiers
         let item = NSPasteboardItem(); item.setString("https://example.invalid/A.svg", forType: .fileURL)
         board.writeObjects([item])
         precondition(HubNativeFileDropData.urls(from: board).isEmpty)
+        board.clearContents()
+        let invalidMixedItem = NSPasteboardItem()
+        invalidMixedItem.setString("https://example.invalid/A.svg", forType: .fileURL)
+        board.writeObjects([HubFileDragData.pasteboardItem(for: a, sessionID: id), invalidMixedItem])
+        precondition(HubNativeFileDropData.urls(from: board).isEmpty,
+                     "A mixed invalid selection must be rejected rather than silently sharing its valid subset")
         for event in [NSEvent.EventType.leftMouseDown, .rightMouseDown, .scrollWheel] {
             precondition(!HubNativeFileDropData.takesHitTest(type: event, mousePressed: true, fileDrag: true, workspaceDrag: false))
         }
@@ -98,7 +104,106 @@ import UniformTypeIdentifiers
         let list = [a: CGRect(x: 0, y: 60, width: 600, height: 30), b: CGRect(x: 0, y: 91, width: 600, height: 30)]
         let row = HubFileInsertionSlot.resolve(at: CGPoint(x: 40, y: 92), frames: list, order: [a, b], content: content, horizontal: true)!
         precondition(row.before == b && row.rect.height == 2)
-        print("PASS: native multi-URL/SVG/Finder data, exact source authentication, stale release recovery, late callback isolation and click/scroll/workspace pass-through")
+        testAirDropDestinations()
+        print("PASS: native multi-URL/SVG/Finder data, exact source authentication, stale release recovery, AirDrop target lifecycle and click/scroll/workspace pass-through")
+    }
+
+    @MainActor private static func testAirDropDestinations() {
+        let svg = URL(fileURLWithPath: "/native-drop/original.svg")
+        let folder = URL(fileURLWithPath: "/native-drop/original-folder", isDirectory: true)
+        let files = [svg, folder]
+        precondition(HubFileDropPlan.airDrop(urls: [], allowed: true) == nil)
+        precondition(HubFileDropPlan.airDrop(urls: files, allowed: false) == nil)
+        precondition(HubFileDropPlan.airDrop(urls: [URL(string: "https://example.invalid/file.svg")!], allowed: true) == nil)
+        precondition(HubFileDropPlan.airDrop(urls: [URL(string: "file://remote-host/shared/file.svg")!], allowed: true) == nil)
+        let limit = (0..<1000).map { URL(fileURLWithPath: "/native-drop/item-\($0)") }
+        precondition(HubFileDropPlan.airDrop(urls: limit, allowed: true)?.action == .airDrop)
+        precondition(HubFileDropPlan.airDrop(urls: limit + [svg], allowed: true) == nil)
+
+        let airDropFrame = CGRect(x: 440, y: 0, width: 30, height: 32)
+        let workspace = UUID()
+        let regions: [HubFileDropRegion: CGRect] = [
+            .airDrop: airDropFrame,
+            .workspace(workspace): CGRect(x: 400, y: 0, width: 100, height: 40),
+            .staging: CGRect(x: 460, y: 0, width: 30, height: 32),
+            .content: CGRect(x: 0, y: 20, width: 600, height: 330)]
+        precondition(HubFileDropRegion.at(CGPoint(x: 465, y: 25), in: regions) == .airDrop,
+                     "AirDrop must win even when a stale tab/staging/content frame overlaps its control")
+        precondition(HubFileDropRegion.at(CGPoint(x: 455, y: 10), in: regions.filter { $0.key != .airDrop }) != .airDrop,
+                     "A disabled, removed AirDrop control cannot retain an active hit region")
+
+        for isLocal in [false, true] {
+            let board = NSPasteboard.withUniqueName()
+            let source = NSObject(), id = UUID()
+            if isLocal {
+                let payload = HubFileDragPayload(id: id, context: .init(workspaceID: workspace, directory: folder), urls: files)
+                board.writeObjects(files.map { HubFileDragData.pasteboardItem(for: $0, sessionID: id) })
+                HubFileDragState.begin(payload, source: source)
+                HubFileDragState.bind(pasteboard: board, for: id)
+            } else { board.writeObjects(files.map { $0 as NSURL }) }
+            defer { HubFileDragState.end(id); board.releaseGlobally() }
+
+            let destination = HubNativeFileDropBridge.DestinationView(frame: CGRect(x: 0, y: 0, width: 600, height: 350))
+            let info = DropInfoFixture(board: board, source: isLocal ? source : nil)
+            info.draggingLocation = destination.convert(CGPoint(x: 455, y: 10), to: nil)
+            var allowed = true
+            var feedback: HubFileDropFeedback?
+            var received: [[URL]] = []
+            var exits = 0
+            destination.contains = { HubFileDropRegion.at($0, in: regions) != nil }
+            destination.operation = { point, urls, payload, _ in
+                precondition((payload != nil) == isLocal)
+                guard HubFileDropRegion.at(point, in: regions) == .airDrop,
+                      let plan = HubFileDropPlan.airDrop(urls: urls, allowed: allowed) else {
+                    feedback = nil; return []
+                }
+                precondition(plan.action == .airDrop && plan.directory == nil && plan.workspaceID == nil && plan.slot == nil,
+                             "AirDrop must not supply a reorder, staging, folder move or insertion destination")
+                feedback = HubFileDropFeedback(rect: airDropFrame, title: plan.title, count: urls.count,
+                                               action: plan.action, insertion: false)
+                return .copy
+            }
+            destination.exited = { feedback = nil; exits += 1 }
+            destination.receive = { urls, payload, point, _ in
+                guard HubFileDropRegion.at(point, in: regions) == .airDrop,
+                      HubFileDropPlan.airDrop(urls: urls, allowed: allowed) != nil else { return false }
+                precondition((payload != nil) == isLocal)
+                received.append(urls)
+                return true
+            }
+            precondition(destination.draggingEntered(info) == .copy)
+            precondition(feedback?.rect == airDropFrame && feedback?.insertion == false)
+            precondition(feedback?.prompt == "松开以通过 AirDrop 发送 2 项")
+            precondition(destination.draggingUpdated(info) == .copy && received.isEmpty,
+                         "Hovering an AirDrop target must never submit files or open sharing UI")
+            precondition(destination.prepareForDragOperation(info) && received.isEmpty)
+            precondition(destination.performDragOperation(info) && received == [files],
+                         "Finder and local SVG/directory drops must retain their original file URLs")
+            precondition(feedback == nil && exits > 0, "Successful drops clear highlighting before presentation")
+
+            allowed = false
+            precondition(destination.draggingUpdated(info).isEmpty && feedback == nil)
+            precondition(!destination.prepareForDragOperation(info) && !destination.performDragOperation(info))
+            precondition(received.count == 1, "Disabling AirDrop or starting file work must reject a pending drop")
+            allowed = true
+            info.draggingSourceOperationMask = .move
+            precondition(destination.draggingUpdated(info).isEmpty && !destination.performDragOperation(info),
+                         "An AirDrop receiver must never accept a move-only source or remove source files")
+            info.draggingSourceOperationMask = .copy
+            precondition(destination.draggingUpdated(info) == .copy)
+            info.draggingLocation = destination.convert(CGPoint(x: 550, y: 10), to: nil)
+            precondition(destination.draggingUpdated(info).isEmpty && feedback == nil)
+            info.draggingLocation = destination.convert(CGPoint(x: 455, y: 10), to: nil)
+            precondition(destination.draggingEntered(info) == .copy)
+            destination.draggingExited(info)
+            precondition(feedback == nil)
+            precondition(destination.draggingEntered(info) == .copy)
+            destination.draggingEnded(info)
+            precondition(feedback == nil)
+            precondition(destination.draggingEntered(info) == .copy)
+            HubNativeFileDropBridge.dismantleNSView(destination, coordinator: ())
+            precondition(feedback == nil && received.count == 1)
+        }
     }
 }
 

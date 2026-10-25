@@ -366,7 +366,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
                 self.windowDragReleased = false
             }
         })
-        for name in ["HubPreview", "HubShare", "HubAirDrop", "HubSettings", "HubMusicSettings", "HubLaunchAtLogin", "HubHelp", "HubShortcutRecording"] {
+        for name in ["HubPreview", "HubShare", "HubAirDrop", "HubAirDropFiles", "HubSettings", "HubMusicSettings", "HubLaunchAtLogin", "HubHelp", "HubShortcutRecording"] {
             let token = NotificationCenter.default.addObserver(forName: Notification.Name(name), object: nil, queue: .main) { [weak self] note in
                 MainActor.assumeIsolated {
                     guard let self else { return }
@@ -374,6 +374,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
                     case "HubPreview": self.showPreview(note.userInfo?["urls"] as? [URL] ?? self.model.selectedURLs)
                     case "HubShare": self.share(note.userInfo?["urls"] as? [URL] ?? self.model.selectedURLs)
                     case "HubAirDrop": self.sendAirDrop(note.userInfo?["urls"] as? [URL] ?? self.model.selectedURLs)
+                    case "HubAirDropFiles":
+                        // A drop captures its own URLs. Never replace an empty
+                        // or stale batch with the current selection or a picker.
+                        guard let urls = note.userInfo?["urls"] as? [URL], !urls.isEmpty else { return }
+                        self.sendAirDrop(urls)
                     case "HubSettings": self.showSettings()
                     case "HubMusicSettings":
                         self.showSettings()
@@ -1025,24 +1030,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
     }
 
     private func sendAirDrop(_ urls: [URL]) {
-        guard !hasActiveDialog else { return }
+        guard !urls.isEmpty else { return }
+        guard !hasActiveDialog else {
+            model.errorMessage = "请先完成或取消当前共享或对话框，再使用 AirDrop。"
+            return
+        }
         guard model.settings.resolvedAirDropEnabled else { return }
         guard canStartSharing else { return }
-        var files = urls
-        if files.isEmpty {
-            let picker = NSOpenPanel()
-            picker.title = "通过 AirDrop 发送"
-            picker.prompt = "选择"
-            picker.message = "选择要发送的文件或文件夹。"
-            picker.canChooseFiles = true
-            picker.canChooseDirectories = true
-            picker.allowsMultipleSelection = true
-            picker.treatsFilePackagesAsDirectories = false
-            guard HubWindowPresentation.runModal(picker) == .OK else { return }
-            files = picker.urls
-        }
-        guard !files.isEmpty else { return }
-        sharing.send(files, securityScopedURLs: model.securityScopesForSharing(files), from: panel)
+        sharing.send(urls, securityScopedURLs: model.securityScopesForSharing(urls), from: panel)
     }
 
     private var canStartSharing: Bool {
@@ -1087,7 +1082,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         alert.informativeText = """
         将鼠标移至设置中选择的触发位置，或使用全局快捷键。在触发位置呼出：\(topKey)；光标旁呼出：\(cursorKey)。可在「设置 → 快捷键」中点击录制。
 
-        文件夹工作区实时浏览目录；收藏工作区只保留文件引用。拖入文件夹默认移动，按住 Option 则复制；拖入收藏仅添加引用。通过「＋ → 最近使用」可添加自动按最近打开时间排序的工作区。
+        文件夹工作区实时浏览目录；收藏工作区只保留文件引用。拖入文件夹默认移动，按住 Option 则复制；拖入收藏仅添加引用。通过「＋ → 固定最近使用到右上角」开启最近使用时钟入口，最近打开的文件排在前面。
 
         收藏旁的暂存区保存文件引用，可拖入、拖出，或批量复制／移动到指定文件夹；清空仅移除引用。设置 → 通用可关闭暂存入口，并添加触发黑名单，或在全屏时暂停鼠标自动呼出；手动快捷键不受影响。
 

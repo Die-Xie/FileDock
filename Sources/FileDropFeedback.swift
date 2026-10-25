@@ -3,7 +3,7 @@ import SwiftUI
 /// Geometry, rather than separate drop receivers, identifies the destination.
 /// Clip scrolled tabs to their own viewport so hidden tabs cannot accept a drop.
 enum HubFileDropRegion: Hashable {
-    case content, workspace(UUID), staging, item(URL), tabViewport(UUID)
+    case content, workspace(UUID), staging, airDrop, item(URL), tabViewport(UUID)
 
     func visibleFrame(in regions: [Self: CGRect]) -> CGRect {
         let frame = regions[self] ?? .zero
@@ -12,6 +12,9 @@ enum HubFileDropRegion: Hashable {
     }
 
     static func at(_ point: CGPoint, in regions: [Self: CGRect]) -> Self? {
+        // Sharing is independent of tab/content semantics, including at any
+        // transient overlap while header geometry is being remeasured.
+        if regions[.airDrop]?.contains(point) == true { return .airDrop }
         // Header destinations take priority over the content only at boundaries.
         for region in regions.keys {
             switch region {
@@ -32,7 +35,7 @@ struct HubFileDropRegionKey: PreferenceKey {
 }
 
 struct HubFileDropPlan {
-    enum Action { case move, copy, reference, reorder }
+    enum Action { case move, copy, reference, reorder, airDrop }
     var workspaceID: UUID?
     var directory: URL?
     var item: URL?
@@ -54,6 +57,7 @@ struct HubFileDropFeedback: Equatable {
         case .copy: return "复制"
         case .reference: return "添加引用"
         case .reorder: return "调整顺序"
+        case .airDrop: return "通过 AirDrop 发送"
         }
     }
     private var symbol: String {
@@ -62,7 +66,11 @@ struct HubFileDropFeedback: Equatable {
         case .copy: return "plus.square.on.square"
         case .reference: return "link"
         case .reorder: return "arrow.up.arrow.down"
+        case .airDrop: return "airplayaudio"
         }
+    }
+    var prompt: String {
+        action == .airDrop ? "松开以通过 AirDrop 发送 \(count) 项" : "松开以\(verb) \(count) 项 · \(title)"
     }
     func overlay(in size: CGSize) -> some View {
         ZStack(alignment: .topLeading) {
@@ -80,7 +88,7 @@ struct HubFileDropFeedback: Equatable {
             }
             HStack(spacing: 7) {
                 Image(systemName: symbol)
-                Text("松开以\(verb) \(count) 项 · \(title)").lineLimit(1).truncationMode(.middle)
+                Text(prompt).lineLimit(1).truncationMode(.middle)
                 if action == .move { Text("⌥ 复制").foregroundStyle(.secondary) }
             }
             .font(.system(size: 11, weight: .medium))

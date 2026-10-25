@@ -119,6 +119,10 @@ swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache
     -framework AppKit -framework Combine
 .build/airdrop-tests
 swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
+    Sources/AirDrop.swift Sources/AirDropFileDrop.swift Sources/FileDropBatch.swift Sources/ImportActivity.swift Tests/AirDropFileDropTests.swift -o .build/airdrop-file-drop-tests \
+    -framework AppKit -framework SwiftUI -framework UniformTypeIdentifiers -framework Combine
+.build/airdrop-file-drop-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
     Sources/SharingWindowSuspension.swift Tests/SharingWindowTests.swift -o .build/sharing-window-tests \
     -framework AppKit
 .build/sharing-window-tests
@@ -143,8 +147,8 @@ swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache
     -framework AppKit -framework Carbon -framework Combine -framework UniformTypeIdentifiers
 .build/background-file-work-tests
 swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
-    Sources/NativeFileDrag.swift Sources/NativeWorkspaceDrag.swift Sources/NativeFileDrop.swift Sources/FileDropFeedback.swift Tests/NativeFileDropTests.swift -o .build/native-drop-tests \
-    -framework AppKit -framework SwiftUI -framework UniformTypeIdentifiers
+    Sources/NativeFileDrag.swift Sources/NativeWorkspaceDrag.swift Sources/NativeFileDrop.swift Sources/FileDropFeedback.swift Sources/AirDropDropPlan.swift Sources/AirDrop.swift Tests/NativeFileDropTests.swift -o .build/native-drop-tests \
+    -framework AppKit -framework SwiftUI -framework UniformTypeIdentifiers -framework Combine
 .build/native-drop-tests
 swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
     Sources/FileDropBatch.swift Tests/FileDropBatchTests.swift -o .build/file-drop-batch-tests
