@@ -1263,7 +1263,7 @@ struct HubView: View {
                           onClick: { flags in
                               select(entry, flags: flags)
                               if navigateOnClick && entry.isDirectory && !entry.isPackage { model.navigate(to: entry.url) }
-                          }, onOpen: { model.open(entry) })
+                          }, onOpen: { model.open(entry) }, onTrash: { model.trashDraggedFiles($0) })
     }
 
     private func select(_ entry: FileEntry, flags: NSEvent.ModifierFlags) {

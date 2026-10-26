@@ -10,6 +10,22 @@ struct NativeFileDragTests {
         let second = URL(fileURLWithPath: "/drag-fixture/B.pdf")
         let folder = URL(fileURLWithPath: "/drag-fixture/folder")
         let remote = URL(string: "https://example.invalid/file.txt")!
+        precondition(HubFileDragData.sourceOperations(for: .outsideApplication, canTrash: true).contains(.delete))
+        precondition(!HubFileDragData.sourceOperations(for: .withinApplication, canTrash: true).contains(.delete))
+        precondition(!HubFileDragData.sourceOperations(for: .outsideApplication, canTrash: false).contains(.delete))
+        var trashed: [[URL]] = []
+        for operation: NSDragOperation in [[], .copy, .move, .link, [.copy, .delete]] {
+            let completion = HubFileDragCompletion(urls: [first, second], onTrash: { trashed.append($0) })
+            completion.finish(operation: operation)
+            completion.finish(operation: .delete)
+            precondition(trashed.isEmpty, "Cancellation, successful moves/copies and ambiguous flags must never delete the source")
+        }
+        let completion = HubFileDragCompletion(urls: [first, second], onTrash: { trashed.append($0) })
+        completion.finish(operation: .delete); completion.finish(operation: .delete)
+        precondition(trashed == [[first, second]], "Trash completion must use the captured full batch and run exactly once")
+        let cancelled = HubFileDragCompletion(urls: [folder], onTrash: { trashed.append($0) })
+        cancelled.cancel(); cancelled.finish(operation: .delete)
+        precondition(trashed.count == 1, "Abandoned native sessions cannot act on a late deletion callback")
         precondition(HubFileDragData.urls(for: first, selection: []) == [first])
         precondition(HubFileDragData.urls(for: first, selection: [second, folder]) == [first],
                      "Dragging an unselected entry must not drag an unrelated selection")

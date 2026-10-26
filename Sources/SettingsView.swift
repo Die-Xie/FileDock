@@ -220,6 +220,7 @@ struct HubSettingsView: View {
                 Label("拖入文件夹：移动；按住 ⌥：复制", systemImage: "folder")
                 Label("拖入收藏或暂存：添加引用", systemImage: "link")
                 Label("拖到 AirDrop：选择接收设备并发送", systemImage: "airplayaudio")
+                Label("拖到系统废纸篓：移除原文件", systemImage: "trash")
                 note("从顶栏空白处拖出面板会自动固定；文件区用于选择与拖放文件。")
             }
         }

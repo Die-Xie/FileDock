@@ -167,6 +167,10 @@ swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache
     -framework AppKit -framework Carbon -framework Combine -framework UniformTypeIdentifiers -framework ImageIO
 .build/background-file-work-tests
 swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
+    Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/WorkspaceShortcutOrder.swift Sources/HubModel.swift Sources/DirectoryLoader.swift Tests/ModelTestSupport.swift Tests/TrashDropTests.swift -o .build/trash-drop-tests \
+    -framework AppKit -framework Carbon -framework Combine -framework UniformTypeIdentifiers
+.build/trash-drop-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
     Sources/NativeFileDrag.swift Sources/NativeWorkspaceDrag.swift Sources/NativeFileDrop.swift Sources/FileDropFeedback.swift Sources/AirDropDropPlan.swift Sources/AirDrop.swift Tests/NativeFileDropTests.swift -o .build/native-drop-tests \
     -framework AppKit -framework SwiftUI -framework UniformTypeIdentifiers -framework Combine
 .build/native-drop-tests

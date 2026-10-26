@@ -27,6 +27,10 @@ struct HubFileDragPayload {
 }
 
 enum HubFileDragData {
+    static func sourceOperations(for context: NSDraggingContext, canTrash: Bool) -> NSDragOperation {
+        let regular: NSDragOperation = [.copy, .move, .link]
+        return context == .outsideApplication && canTrash ? regular.union(.delete) : regular
+    }
     static func takesMouseDown(_ type: NSEvent.EventType, modifiers: NSEvent.ModifierFlags) -> Bool {
         type == .leftMouseDown && !modifiers.contains(.control)
     }
@@ -56,6 +60,21 @@ enum HubFileDragData {
     static func shouldReorder(_ payload: HubFileDragPayload, in context: HubFileDragContext) -> Bool {
         context.workspaceID != nil && payload.context == context
     }
+}
+
+/// Capture the actual dragged URLs and handler before spring navigation can
+/// reuse the source cell. Only a successful native delete result invokes it.
+@MainActor final class HubFileDragCompletion {
+    private let urls: [URL]
+    private var onTrash: (([URL]) -> Void)?
+    var canTrash: Bool { onTrash != nil }
+    init(urls: [URL], onTrash: (([URL]) -> Void)?) { self.urls = urls; self.onTrash = onTrash }
+    func finish(operation: NSDragOperation) {
+        let action = onTrash
+        onTrash = nil
+        if operation == .delete { action?(urls) }
+    }
+    func cancel() { onTrash = nil }
 }
 
 @MainActor
@@ -156,6 +175,7 @@ struct HubFileDragBridge: NSViewRepresentable {
     var selectEntry: @MainActor () -> Void
     var onClick: @MainActor (NSEvent.ModifierFlags) -> Void
     var onOpen: @MainActor () -> Void
+    var onTrash: (@MainActor ([URL]) -> Void)? = nil
 
     func makeNSView(context: Context) -> FileDragView {
         let view = FileDragView()
@@ -172,6 +192,7 @@ struct HubFileDragBridge: NSViewRepresentable {
         view.selectEntry = selectEntry
         view.onClick = onClick
         view.onOpen = onOpen
+        view.onTrash = onTrash
     }
 
     static func dismantleNSView(_ view: FileDragView, coordinator: ()) { view.cancelPendingInteraction() }
@@ -185,6 +206,7 @@ struct HubFileDragBridge: NSViewRepresentable {
         var selectEntry: (@MainActor () -> Void)?
         var onClick: (@MainActor (NSEvent.ModifierFlags) -> Void)?
         var onOpen: (@MainActor () -> Void)?
+        var onTrash: (@MainActor ([URL]) -> Void)?
         private struct Press {
             let event: NSEvent
             let entryURL: URL
@@ -193,6 +215,7 @@ struct HubFileDragBridge: NSViewRepresentable {
         private var press: Press?
         private var activeID: UUID?
         private var activeSession: NSDraggingSession?
+        private var activeCompletion: HubFileDragCompletion?
         private var bypassHitTesting = false
         // Keep the source alive if a successful internal reorder recreates its
         // SwiftUI cell before AppKit sends the dragging-session completion.
@@ -245,6 +268,7 @@ struct HubFileDragBridge: NSViewRepresentable {
             selectEntry?()
             let payload = press.payload
             activeID = payload.id
+            activeCompletion = HubFileDragCompletion(urls: payload.urls, onTrash: onTrash)
             Self.activeSource = self
             HubFileDragState.begin(payload, source: self)
             let point = convert(press.event.locationInWindow, from: nil)
@@ -288,22 +312,29 @@ struct HubFileDragBridge: NSViewRepresentable {
             else if event.type == .leftMouseDown { target.mouseDown(with: event) }
         }
 
-        func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation { [.copy, .move, .link] }
+        func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
+            HubFileDragData.sourceOperations(for: context, canTrash: activeCompletion?.canTrash ?? (onTrash != nil))
+        }
         func draggingSession(_ session: NSDraggingSession, willBeginAt screenPoint: NSPoint) {
             guard activeSession == nil || activeSession === session else { return }
             if let activeID { HubFileDragState.bind(pasteboard: session.draggingPasteboard, for: activeID) }
         }
         func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
             guard activeSession === session, let activeID else { return }
+            let completion = activeCompletion
+            activeCompletion = nil
             HubFileDragState.end(activeID)
             self.activeID = nil
             activeSession = nil
             press = nil
             if Self.activeSource === self { Self.activeSource = nil }
+            completion?.finish(operation: operation)
         }
 
         static func clearAbandoned(_ id: UUID) {
             guard let source = activeSource, source.activeID == id else { return }
+            source.activeCompletion?.cancel()
+            source.activeCompletion = nil
             source.activeID = nil
             source.activeSession = nil
             source.press = nil

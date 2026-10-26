@@ -1472,21 +1472,66 @@ enum HubFileOperations {
 
     func trash(_ urls: [URL]) {
         if isStagingRoot { removeStagedFiles(urls); return }
+        trashDraggedFiles(urls)
+    }
+
+    /// The system Trash destination refers to the real files even if the
+    /// source was a staging/favorite reference or navigation changed mid-drag.
+    func trashDraggedFiles(_ urls: [URL]) {
+        guard !stagingTransferInProgress else { errorMessage = "请等待暂存文件传输完成后再移到废纸篓。"; return }
         let files = urls.filter(\.isFileURL)
         guard !files.isEmpty else { return }
         performFileWork(scopes: files, work: {
+            var completed: [(URL, Bool)] = []
             var failures: [String] = []
             for url in HubFileOperations.topLevelURLs(files) {
-                do { try FileManager.default.trashItem(at: url, resultingItemURL: nil) }
+                do {
+                    let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+                    let directory = values?.isDirectory == true && values?.isSymbolicLink != true
+                    try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+                    completed.append((url, directory))
+                }
                 catch { failures.append("\(url.lastPathComponent)：\(error.localizedDescription)") }
             }
-            return failures
+            return (completed, failures)
         }) { [weak self] result in
             guard let self else { return }
-            self.refresh()
-            if case .success(let failures) = result, !failures.isEmpty { self.errorMessage = HubFileError.partial(failures).localizedDescription }
-            if case .failure(let error) = result { self.errorMessage = error.localizedDescription }
+            switch result {
+            case .success(let (completed, failures)):
+                self.finishTrashing(completed)
+                if !failures.isEmpty { self.errorMessage = HubFileError.partial(failures).localizedDescription }
+            case .failure(let error): self.errorMessage = error.localizedDescription
+            }
         }
+    }
+
+    private func finishTrashing(_ completed: [(URL, Bool)]) {
+        let paths = Set(completed.map { $0.0.standardizedFileURL.path })
+        let directories = Set(completed.filter { $0.1 }.map { $0.0.standardizedFileURL.path })
+        func removed(_ raw: String) -> Bool {
+            var path = URL(fileURLWithPath: raw).standardizedFileURL.path
+            if paths.contains(path) { return true }
+            while path != "/" {
+                path = (path as NSString).deletingLastPathComponent
+                if directories.contains(path) { return true }
+            }
+            return false
+        }
+        let selection = selectedIDs.filter { !removed($0.path) }
+        if !paths.isEmpty {
+            var updated = workspaces
+            for index in updated.indices { updated[index].referencePaths.removeAll(where: removed) }
+            if workspaces != updated { workspaces = updated }
+            // Do not let saved bookmarks silently follow deleted references
+            // into Trash at the next launch.
+            bookmarkData = bookmarkData.filter { !removed($0.key) }
+            recentRecords.removeAll { removed($0.url.path) }
+            publishEntries(entries.filter { !removed($0.url.path) })
+        }
+        refresh()
+        // Refresh may replace a reference context. Preserve the user's current
+        // unrelated selection rather than a selection captured at drag start.
+        if selectedIDs != selection { selectedIDs = selection }
     }
 
     /// A drop captures its destination at release. Subsequent spring navigation
