@@ -1,0 +1,28 @@
+<?xml version="1.0" standalone="yes"?><!-- sparkle-sign-warning:
+IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+    <channel>
+        <title>FileDock</title>
+        <item>
+            <title>1.26.0</title>
+            <pubDate>Mon, 26 Oct 2026 22:30:01 +0800</pubDate>
+            <link>https://github.com/Die-Xie/FileDock</link>
+            <sparkle:version>54</sparkle:version>
+            <sparkle:shortVersionString>1.26.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown"><![CDATA[# FileDock 1.26.0
+
+- 新增「设置 → 文件与工作区 → 拖放文件 → 拖出文件时自动收起面板」，默认开启，可随时关闭。
+- 从 FileDock 拖出文件后，面板按现有收起延迟隐藏，拖动继续保持，方便把文件放到原先被遮挡的区域。固定面板同样适用，固定状态保留。
+- 计时期间返回面板会取消收起；普通点击、框选、标签排序、调整大小及 Finder 拖入不触发这项功能。设置、预览和对话框显示期间继续保护面板。
+- 修正原生拖动使用的事件循环被当作菜单展开、阻止收起的判断；保持现有跨标签拖放、暂存与收藏、原位改名及拖放会话生命周期。
+
+支持 macOS 13 及以上，提供 Apple Silicon / Intel 通用版本。当前发行包已签名，尚未经过 Apple 公证。
+]]></description>
+            <enclosure url="https://github.com/Die-Xie/FileDock/releases/download/v1.26.0/FileDock.zip" length="6537133" type="application/octet-stream" sparkle:edSignature="KObmu2rdzS87HW+dJ8iMXONgQhjB9MZn0bq8v/2QJP1VcFTbgVXtSTsyixGppmzixYFd5rAMIwt+APY51AxxDA=="></enclosure>
+        </item>
+    </channel>
+</rss><!-- sparkle-signatures:
+edSignature: JrD/5oKNZygXJO/hxIn/0mNRyR1lm5e07Jp/KWGuO989btc/9VXgLdx41egyVbiZprvQagoh6i/fbfB/pxYwDA==
+length: 2024
+-->
