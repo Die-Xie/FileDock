@@ -82,6 +82,7 @@ struct HubSettings: Codable, Equatable {
     var shortcutOrder: [String]? = nil
     var blockedApplicationBundleIDs: [String]? = nil
     var suppressHoverInFullScreen: Bool? = nil
+    var clickWakeWhenSuppressed: Bool? = false
     var stagingWorkspaceID: UUID? = nil
     var stagingEnabled: Bool? = true
     var airDropEnabled: Bool? = true
@@ -118,6 +119,7 @@ struct HubSettings: Codable, Equatable {
             .filter { !$0.isEmpty && $0.utf8.count <= 255 && !$0.contains("\u{0}") })).sorted()
     }
     var resolvedSuppressHoverInFullScreen: Bool { suppressHoverInFullScreen ?? true }
+    var resolvedClickWakeWhenSuppressed: Bool { clickWakeWhenSuppressed ?? false }
     var resolvedStagingEnabled: Bool { stagingEnabled ?? true }
     var resolvedFoldersFirst: Bool { foldersFirst ?? true }
     var resolvedNotchIntegrationStyle: String { notchIntegrationStyle == "embedded" ? "embedded" : "connected" }

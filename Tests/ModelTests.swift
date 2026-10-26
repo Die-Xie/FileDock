@@ -19,6 +19,7 @@ import Foundation
         precondition(!wakeSettings.resolvedFoldersFirst && wakeSettings.favoriteWorkspaceID == nil && wakeSettings.stagingWorkspaceID == nil,
                      "Factory preferences must not contain a user's workspace identity")
         precondition(!wakeSettings.usesNotchClickToWake)
+        precondition(!wakeSettings.resolvedClickWakeWhenSuppressed)
         wakeSettings.notchClickToWake = true
         precondition(wakeSettings.usesNotchClickToWake)
         for corner in ["topLeft", "topRight", "bottomLeft", "bottomRight"] {
@@ -84,6 +85,7 @@ import Foundation
         model.settings.qqMusicEnabled = false
         model.settings.autoHideDelay = 1.25
         model.settings.hideOnFileDragExit = false
+        model.settings.clickWakeWhenSuppressed = true
         precondition(model.settings.resolvedBackgroundTheme == "liquidGlass")
         model.settings.backgroundTheme = "liquidGlass"
         model.settings.appearance = "system"
@@ -190,6 +192,7 @@ import Foundation
                      "Animation speed and music visibility must survive a restart")
         precondition(reloaded.settings.resolvedAutoHideDelay == 1.25, "Mouse-exit delay must survive a restart")
         precondition(!reloaded.settings.resolvedHideOnFileDragExit, "Disabling source-drag dismissal must survive a restart")
+        precondition(reloaded.settings.resolvedClickWakeWhenSuppressed, "Exception click fallback must survive a restart")
         precondition(reloaded.settings.resolvedNotchIntegrationStyle == "embedded", "Embedded notch integration must survive a restart")
         precondition(reloaded.workspaces.contains { $0.id == favorites.id && $0.referencePaths.map { HubFileOperations.canonical(URL(fileURLWithPath: $0)) } == [HubFileOperations.canonical(child)] })
         precondition(reloaded.selectedWorkspaceID == workspace.id)
@@ -205,6 +208,7 @@ import Foundation
         legacy.removeValue(forKey: "qqMusicEnabled")
         legacy.removeValue(forKey: "autoHideDelay")
         legacy.removeValue(forKey: "hideOnFileDragExit")
+        legacy.removeValue(forKey: "clickWakeWhenSuppressed")
         legacy.removeValue(forKey: "notchIntegrationStyle")
         legacy.removeValue(forKey: "backgroundTheme")
         legacy.removeValue(forKey: "foldersFirst")
@@ -214,6 +218,8 @@ import Foundation
         precondition(oldSettings.resolvedAutoHideDelay == 0.55, "Older configs must retain the previous 550ms exit delay")
         precondition(oldSettings.hideOnFileDragExit == nil && oldSettings.resolvedHideOnFileDragExit,
                      "Older configs gain the optional drag-exit preference without discarding their settings")
+        precondition(oldSettings.clickWakeWhenSuppressed == nil && !oldSettings.resolvedClickWakeWhenSuppressed,
+                     "Existing fullscreen/blacklist suppression remains unchanged until the user enables click fallback")
         precondition(oldSettings.notchIntegrationStyle == nil && oldSettings.resolvedNotchIntegrationStyle == "connected", "Older configs must retain the existing connected notch style")
         precondition(oldSettings.resolvedBackgroundTheme == "solid" && oldSettings.resolvedFoldersFirst,
                      "New factory defaults must not change missing legacy settings")

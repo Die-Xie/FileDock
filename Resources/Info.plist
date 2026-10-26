@@ -13,9 +13,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.26.2</string>
+	<string>1.27.0</string>
 	<key>CFBundleVersion</key>
-	<string>56</string>
+	<string>57</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>Copyright © 2026 Diexie.</string>
 	<key>CFBundleIconFile</key>

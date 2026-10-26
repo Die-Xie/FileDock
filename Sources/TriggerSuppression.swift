@@ -1,6 +1,26 @@
 import AppKit
 import ApplicationServices
 
+/// A temporary input policy; never overwrite the user's normal wake setting
+/// when the foreground application or fullscreen state changes.
+enum HubMouseWakeMode: Equatable {
+    case disabled, hover, click
+    static func resolve(mouseEnabled: Bool, normalClick: Bool, suppressed: Bool, clickFallback: Bool) -> Self {
+        guard mouseEnabled else { return .disabled }
+        if suppressed { return clickFallback ? .click : .disabled }
+        return normalClick ? .click : .hover
+    }
+}
+
+enum HubTriggerClick {
+    static func accepts(type: NSEvent.EventType, modifiers: NSEvent.ModifierFlags) -> Bool {
+        type == .leftMouseDown && modifiers.intersection([.command, .control, .option, .shift]).isEmpty
+    }
+    @MainActor static func screenPoint(for event: NSEvent) -> NSPoint {
+        event.window?.convertPoint(toScreen: event.locationInWindow) ?? event.locationInWindow
+    }
+}
+
 struct HubTriggerForeground: Equatable, Sendable {
     var bundleID: String?
     var pid: pid_t?

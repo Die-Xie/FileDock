@@ -6,13 +6,64 @@ struct TriggerSuppressionTests {
     static let primary = CGRect(x: 0, y: 0, width: 1512, height: 982)
     static let secondary = CGRect(x: -1920, y: 100, width: 1920, height: 1080)
 
-    static func main() {
+    @MainActor static func main() {
         testBlacklist()
         testFullscreenEvidence()
         testScreensAndCoordinates()
         testAccessoryForegroundRetention()
         testProbeConfigurationAndStaleResults()
+        testMouseWakeFallback()
+        testClickInput()
         print("PASS: trigger suppression (blacklist, optional fullscreen evidence, screen isolation, disabled polling and stale probe results)")
+    }
+
+    static func testMouseWakeFallback() {
+        let game = HubTriggerForeground(bundleID: "com.example.game", pid: 123)
+        let fullscreen = HubTriggerForeground(bundleID: "com.example.player", pid: 321, windowFullScreen: true, windowFrame: primary)
+        let normal = HubTriggerForeground(bundleID: "com.example.editor", pid: 456)
+        for foreground in [game, fullscreen] {
+            let blocked = suppress(foreground, blocked: ["com.example.game"])
+            precondition(blocked)
+            for normalClick in [false, true] {
+                precondition(HubMouseWakeMode.resolve(mouseEnabled: true, normalClick: normalClick, suppressed: blocked, clickFallback: false) == .disabled,
+                             "Existing exceptions continue to disable both hover and normal notch click by default")
+                precondition(HubMouseWakeMode.resolve(mouseEnabled: true, normalClick: normalClick, suppressed: blocked, clickFallback: true) == .click,
+                             "Fullscreen and blacklist may independently fall back to click without enabling hover")
+            }
+        }
+        precondition(HubMouseWakeMode.resolve(mouseEnabled: true, normalClick: false, suppressed: suppress(normal), clickFallback: true) == .hover,
+                     "Returning to a normal environment restores hover, not a permanently changed setting")
+        precondition(HubMouseWakeMode.resolve(mouseEnabled: true, normalClick: true, suppressed: false, clickFallback: true) == .click,
+                     "Normal notch click preference remains intact")
+        precondition(HubMouseWakeMode.resolve(mouseEnabled: false, normalClick: true, suppressed: true, clickFallback: true) == .disabled,
+                     "Keyboard-only mode cannot be bypassed by the exception fallback")
+        let onOtherDisplay = suppress(fullscreen, pointer: CGPoint(x: -900, y: 1179))
+        precondition(!onOtherDisplay && HubMouseWakeMode.resolve(mouseEnabled: true, normalClick: false, suppressed: onOtherDisplay, clickFallback: true) == .hover,
+                     "Fullscreen on another display cannot turn this display's normal hover into click")
+    }
+
+    @MainActor static func testClickInput() {
+        precondition(HubTriggerClick.accepts(type: .leftMouseDown, modifiers: []))
+        for modifier in [NSEvent.ModifierFlags.control, .command, .option, .shift] {
+            precondition(!HubTriggerClick.accepts(type: .leftMouseDown, modifiers: modifier), "Modified clicks remain with the foreground app")
+        }
+        for type in [NSEvent.EventType.leftMouseDragged, .leftMouseUp, .rightMouseDown] {
+            precondition(!HubTriggerClick.accepts(type: type, modifiers: []))
+        }
+        _ = NSApplication.shared
+        let window = NSWindow(contentRect: CGRect(x: -700, y: 180, width: 100, height: 100), styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        let local = NSEvent.mouseEvent(with: .leftMouseDown, location: CGPoint(x: 12, y: 34), modifierFlags: [], timestamp: 0,
+            windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1)!
+        precondition(HubTriggerClick.screenPoint(for: local) == window.convertPoint(toScreen: local.locationInWindow))
+        let point = CGPoint(x: -1870, y: 1150)
+        let external = NSEvent.mouseEvent(with: .leftMouseDown, location: point, modifierFlags: [], timestamp: 0,
+            windowNumber: 0, context: nil, eventNumber: 1, clickCount: 1, pressure: 1)!
+        precondition(external.window == nil && HubTriggerClick.screenPoint(for: external) == point,
+                     "Global click coordinates must come from the event, never a later moved pointer")
+        precondition(!window.isVisible)
+        print("PASS: exception click fallback/restoration, keyboard-only and screen isolation, modified-click exclusions and real hidden-window/global event coordinate conversion")
     }
 
     static func suppress(_ foreground: HubTriggerForeground, blocked: [String] = [], enabled: Bool = true,

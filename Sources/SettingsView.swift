@@ -174,8 +174,16 @@ struct HubSettingsView: View {
                             })
             }
             section("自动呼出例外") {
-                Toggle("全屏时暂停鼠标呼出", isOn: Binding(get: { model.settings.resolvedSuppressHoverInFullScreen }, set: { model.settings.suppressHoverInFullScreen = $0 }))
-                note("例外只影响鼠标自动呼出；快捷键和菜单栏仍可手动打开。")
+                Toggle("全屏时启用呼出例外", isOn: Binding(get: { model.settings.resolvedSuppressHoverInFullScreen }, set: { model.settings.suppressHoverInFullScreen = $0 }))
+                HStack {
+                    Text("命中全屏或黑名单时")
+                    Spacer()
+                    Picker("例外呼出方式", selection: Binding(get: { model.settings.resolvedClickWakeWhenSuppressed }, set: { model.settings.clickWakeWhenSuppressed = $0 })) {
+                        Text("停用鼠标呼出").tag(false)
+                        Text("改用点按呼出").tag(true)
+                    }.labelsHidden().frame(width: 170)
+                }
+                note("点按模式只在当前刘海或触发边角生效，悬停不会展开；离开例外环境后恢复原方式。仅快捷键模式不启用鼠标触发，快捷键和菜单栏照常可用。")
                 Divider()
                 DisclosureGroup("应用黑名单（\(model.settings.resolvedBlockedApplicationBundleIDs.count)）") {
                     VStack(alignment: .leading, spacing: 12) {

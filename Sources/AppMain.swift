@@ -66,7 +66,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
     private var subscriptions: Set<AnyCancellable> = []
     private var notificationTokens: [NSObjectProtocol] = []
     private var keyMonitor: Any?
-    private var notchClickMonitors: [Any] = []
+    private var triggerClickMonitors: [Any] = []
     private var hoverActivation = HubHoverActivation()
     private var hoverDismissal = HubHoverDismissal()
     private var fileDragDismissal = HubFileDragDismissal()
@@ -149,8 +149,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         configureHotKeys()
         configureNotifications()
         configureKeyboard()
-        if let monitor = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDown, handler: { [weak self] _ in self?.wakeFromNotchClick() }) { notchClickMonitors.append(monitor) }
-        if let monitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown, handler: { [weak self] event in self?.wakeFromNotchClick(); return event }) { notchClickMonitors.append(monitor) }
+        if let monitor = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDown, handler: { [weak self] event in self?.wakeFromTriggerClick(event) }) { triggerClickMonitors.append(monitor) }
+        if let monitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown, handler: { [weak self] event in self?.wakeFromTriggerClick(event); return event }) { triggerClickMonitors.append(monitor) }
         model.$settings.sink { [weak self] _ in
             DispatchQueue.main.async { self?.applySettings() }
         }.store(in: &subscriptions)
@@ -483,10 +483,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         model.nextWorkspace(delta)
     }
 
-    func showPanel(atCursor: Bool) {
+    func showPanel(atCursor: Bool, screenPoint: NSPoint? = nil) {
         guard !hasActiveDialog else { return }
         fileDragReentry.reset()
-        let pointer = NSEvent.mouseLocation
+        let pointer = screenPoint ?? NSEvent.mouseLocation
         let screens = NSScreen.screens
         let screen = screenContaining(pointer, among: screens) ?? NSScreen.main ?? screens.first
         guard let screen else { return }
@@ -751,19 +751,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         }
     }
 
-    private func wakeFromNotchClick() {
-        guard let model, model.settings.usesNotchClickToWake,
+    private func wakeFromTriggerClick(_ event: NSEvent) {
+        guard HubTriggerClick.accepts(type: event.type, modifiers: event.modifierFlags),
+              let model, model.settings.usesNotchClickToWake || model.settings.resolvedClickWakeWhenSuppressed,
               model.settings.triggerMode != "keyboard", !desiredVisible,
               windowDragSession == nil, settingsWindow?.isVisible != true,
               !hasActiveDialog, !NSMenuHasTrackingMenu(),
               !HubFileDragState.isDragging, !HubWorkspaceDragState.isDragging else { return }
-        let pointer = NSEvent.mouseLocation
-        guard hoverActivationRegion(at: pointer).id != nil,
-              !triggerSuppression.shouldSuppressHover(at: pointer,
-                blockedBundleIDs: model.settings.resolvedBlockedApplicationBundleIDs,
-                suppressFullScreen: model.settings.resolvedSuppressHoverInFullScreen) else { return }
+        let pointer = HubTriggerClick.screenPoint(for: event)
+        guard hoverActivationRegion(at: pointer).id != nil else { return }
+        let suppressed = triggerSuppression.shouldSuppressHover(at: pointer,
+            blockedBundleIDs: model.settings.resolvedBlockedApplicationBundleIDs,
+            suppressFullScreen: model.settings.resolvedSuppressHoverInFullScreen)
+        guard HubMouseWakeMode.resolve(mouseEnabled: true, normalClick: model.settings.usesNotchClickToWake,
+            suppressed: suppressed, clickFallback: model.settings.resolvedClickWakeWhenSuppressed) == .click else { return }
         shownFromHover = true
-        showPanel(atCursor: false)
+        showPanel(atCursor: false, screenPoint: pointer)
     }
 
     private func tick() {
@@ -796,11 +799,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         }
         let hoverEnabled = model.settings.triggerMode != "keyboard" && !desiredVisible && windowDragSession == nil &&
             settingsWindow?.isVisible != true && !hasActiveDialog && !NSMenuHasTrackingMenu() && !HubFileDragState.isDragging && !HubWorkspaceDragState.isDragging &&
-            !triggerSuppression.shouldSuppressHover(at: pointer,
-                blockedBundleIDs: model.settings.resolvedBlockedApplicationBundleIDs,
-                suppressFullScreen: model.settings.resolvedSuppressHoverInFullScreen)
+            HubMouseWakeMode.resolve(mouseEnabled: true, normalClick: model.settings.usesNotchClickToWake,
+                suppressed: triggerSuppression.shouldSuppressHover(at: pointer,
+                    blockedBundleIDs: model.settings.resolvedBlockedApplicationBundleIDs,
+                    suppressFullScreen: model.settings.resolvedSuppressHoverInFullScreen),
+                clickFallback: model.settings.resolvedClickWakeWhenSuppressed) == .hover
         if hoverActivation.update(regionID: activationRegion.id, now: ProcessInfo.processInfo.systemUptime,
-                                  delay: model.settings.hoverDelay, enabled: hoverEnabled && !model.settings.usesNotchClickToWake,
+                                  delay: model.settings.hoverDelay, enabled: hoverEnabled,
                                   strictDwell: activationRegion.strictDwell) {
             shownFromHover = true
             showPanel(atCursor: false)
@@ -1179,7 +1184,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         timer?.invalidate()
         triggerSuppression.stop()
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
-        notchClickMonitors.forEach { NSEvent.removeMonitor($0) }
+        triggerClickMonitors.forEach { NSEvent.removeMonitor($0) }
         hotKeys.forEach { UnregisterEventHotKey($0) }
         if let hotKeyHandler { RemoveEventHandler(hotKeyHandler) }
         for token in notificationTokens {
