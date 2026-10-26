@@ -259,3 +259,24 @@ struct HubFileDragDismissal {
         tracking && !(sessionID != nil && mousePressed)
     }
 }
+
+/// Only the source session that automatically hid the panel may bring it back.
+/// A separate gate intentionally bypasses the ordinary post-dismissal lock,
+/// while retaining the configured region's dwell and strict notch geometry.
+struct HubFileDragReentry {
+    private var hiddenSessionID: UUID?
+    private var activation = HubHoverActivation(edgeGrace: 0)
+    var isArmed: Bool { hiddenSessionID != nil }
+
+    mutating func arm(sessionID: UUID) { hiddenSessionID = sessionID; activation.reset() }
+    mutating func reset() { hiddenSessionID = nil; activation.reset() }
+
+    mutating func update(sessionID: UUID?, mousePressed: Bool, regionID: String?,
+                         now: TimeInterval, delay: TimeInterval, strictDwell: Bool, enabled: Bool) -> Bool {
+        guard let hiddenSessionID else { return false }
+        guard sessionID == hiddenSessionID, mousePressed, enabled else { reset(); return false }
+        guard activation.update(regionID: regionID, now: now, delay: delay, strictDwell: strictDwell) else { return false }
+        reset()
+        return true
+    }
+}

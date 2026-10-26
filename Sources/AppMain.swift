@@ -70,6 +70,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
     private var hoverActivation = HubHoverActivation()
     private var hoverDismissal = HubHoverDismissal()
     private var fileDragDismissal = HubFileDragDismissal()
+    private var fileDragReentry = HubFileDragReentry()
     private let triggerSuppression = HubTriggerSuppressionMonitor()
     private var hoverSettingsSignature: String?
     private var windowAttachment = HubWindowAttachmentPolicy()
@@ -484,6 +485,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
 
     func showPanel(atCursor: Bool) {
         guard !hasActiveDialog else { return }
+        fileDragReentry.reset()
         let pointer = NSEvent.mouseLocation
         let screens = NSScreen.screens
         let screen = screenContaining(pointer, among: screens) ?? NSScreen.main ?? screens.first
@@ -543,6 +545,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
 
     func hidePanel() {
         guard desiredVisible, !hasActiveDialog else { return }
+        fileDragReentry.reset()
         HubMarqueeSelectionState.cancel()
         desiredVisible = false
         cornerKeepAliveFrame = nil
@@ -775,6 +778,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         let regionID = hoveredRegionIdentifier(at: pointer)
         let hovering = regionID != nil
         let activationRegion = hoverActivationRegion(at: pointer)
+        let mousePressed = (NSEvent.pressedMouseButtons & 1) != 0
+        let fileSessionID = HubFileDragState.current?.id
+        let canReturnFromFileDrag = fileDragReentry.isArmed && fileSessionID != nil && mousePressed &&
+            model.settings.resolvedHideOnFileDragExit && model.settings.triggerMode != "keyboard" &&
+            !desiredVisible && windowDragSession == nil && settingsWindow?.isVisible != true && !hasActiveDialog &&
+            !HubWorkspaceDragState.isDragging &&
+            !HubFileDragDismissal.menuBlocksDismissal(tracking: NSMenuHasTrackingMenu(), sessionID: fileSessionID, mousePressed: mousePressed)
+        if fileDragReentry.update(sessionID: fileSessionID, mousePressed: mousePressed, regionID: activationRegion.id,
+                                   now: ProcessInfo.processInfo.systemUptime, delay: model.settings.hoverDelay,
+                                   strictDwell: activationRegion.strictDwell,
+                                   enabled: canReturnFromFileDrag && !triggerSuppression.shouldSuppressHover(at: pointer,
+                                    blockedBundleIDs: model.settings.resolvedBlockedApplicationBundleIDs,
+                                    suppressFullScreen: model.settings.resolvedSuppressHoverInFullScreen)) {
+            shownFromHover = true
+            showPanel(atCursor: false)
+        }
         let hoverEnabled = model.settings.triggerMode != "keyboard" && !desiredVisible && windowDragSession == nil &&
             settingsWindow?.isVisible != true && !hasActiveDialog && !NSMenuHasTrackingMenu() && !HubFileDragState.isDragging && !HubWorkspaceDragState.isDragging &&
             !triggerSuppression.shouldSuppressHover(at: pointer,
@@ -798,8 +817,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
                windowDragSession == nil, now.timeIntervalSince(lastRefresh) > 2 {
                 model.refreshInBackground(ifDue: true); lastRefresh = now
             }
-            let fileSessionID = HubFileDragState.current?.id
-            let mousePressed = (NSEvent.pressedMouseButtons & 1) != 0
             let menuOpen = HubFileDragDismissal.menuBlocksDismissal(tracking: NSMenuHasTrackingMenu(), sessionID: fileSessionID, mousePressed: mousePressed)
             let sheetOpen = hasActiveDialog || menuOpen || HubInlineFileNameEditor.isEditing(in: panel)
             let previewVisible = QLPreviewPanel.sharedPreviewPanelExists() && QLPreviewPanel.shared()?.isVisible == true
@@ -814,7 +831,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
                 !panel.inLiveResize && windowDragSession == nil
             if fileDragDismissal.update(sessionID: fileSessionID, mousePressed: mousePressed, outside: dragOutside,
                                         now: ProcessInfo.processInfo.systemUptime, delay: model.settings.resolvedAutoHideDelay,
-                                        enabled: canDismissDrag) { hidePanel(); return }
+                                        enabled: canDismissDrag) {
+                hidePanel()
+                if !desiredVisible, let fileSessionID { fileDragReentry.arm(sessionID: fileSessionID) }
+                return
+            }
             // Keyboard/menu entry stays until focus leaves or the pointer has entered.
             // A drag or resize starts a fresh delay after it ends, never during it.
             let canDismiss = !model.pinned && !sheetOpen && !previewVisible && settingsWindow?.isVisible != true &&

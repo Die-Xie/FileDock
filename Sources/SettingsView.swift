@@ -215,7 +215,7 @@ struct HubSettingsView: View {
             }
             section("拖放文件") {
                 Toggle("拖出文件时自动收起面板", isOn: Binding(get: { model.settings.resolvedHideOnFileDragExit }, set: { model.settings.hideOnFileDragExit = $0 }))
-                note("从 FileDock 拖出文件后，按「呼出与交互」中的收起延迟隐藏面板，方便放到原先被遮挡的位置。返回面板会取消计时；固定面板同样适用，固定状态保留。")
+                note("拖出文件后按收起延迟隐藏面板，固定状态保留。计时期间返回面板会取消收起；收起后拖回刘海或当前设置的边角，会按展开延迟重新展开，点按唤醒模式也适用。延迟在「呼出与交互」中设置。")
                 Divider()
                 Label("拖入文件夹：移动；按住 ⌥：复制", systemImage: "folder")
                 Label("拖入收藏或暂存：添加引用", systemImage: "link")

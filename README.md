@@ -88,6 +88,8 @@ FileDock 使用 Swift、AppKit 与 SwiftUI 构建。源码、测试与发布工�
 - [质量与性能审查记录](docs/QUALITY_REVIEW.md)
 - [版本发布说明](docs/releases/)
 
+1.26.1 支持同一次文件拖动中，拖出收起、拖回刘海或已设置边角重新展开。详见 [版本说明](docs/releases/v1.26.1.md)。
+
 1.26.0 支持拖出文件时自动收起面板，露出被遮挡的投放区域；可在设置中关闭。详见 [版本说明](docs/releases/v1.26.0.md)。
 
 1.25.1 支持 Finder 式原位重命名：Return / Enter 编辑所选文件名，默认保留扩展名。详见 [版本说明](docs/releases/v1.25.1.md)。

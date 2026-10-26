@@ -144,8 +144,53 @@ struct HoverActivationTests {
         precondition(!dismissal.update(outside: true, now: 81, delay: 0.55))
         precondition(dismissal.update(outside: true, now: 81.6, delay: 0.55))
         testFileDragDismissal()
+        testFileDragReentry()
 
         print("PASS: visible cursor alpha, raster orientation and scale, inclusive screen edges, 75% overlap, strict dwell, sampling stalls, policy cancellation, dismiss lock and configurable mouse-exit dismissal")
+    }
+
+    private static func testFileDragReentry() {
+        let source = UUID()
+        var reentry = HubFileDragReentry()
+        func update(_ now: Double, session: UUID? = nil, pressed: Bool = true, region: String? = "display:notch",
+                    delay: Double = 0, strict: Bool = false, enabled: Bool = true) -> Bool {
+            reentry.update(sessionID: session ?? source, mousePressed: pressed, regionID: region,
+                           now: now, delay: delay, strictDwell: strict, enabled: enabled)
+        }
+        precondition(!update(0) && !reentry.isArmed, "Ordinary file drags cannot bypass normal hover protections")
+        for area in ["notch", "topLeft", "topRight", "bottomLeft", "bottomRight"] {
+            reentry.arm(sessionID: source)
+            precondition(!update(1, region: nil), "An armed session cannot reopen away from the configured trigger")
+            precondition(update(2, region: "display:\(area)"), "Notch and all four corner regions can restore the same drag")
+            precondition(!update(3, region: "display:\(area)") && !reentry.isArmed, "A return is consumed exactly once")
+        }
+        reentry.arm(sessionID: source)
+        precondition(!update(10, delay: 0.2, strict: true))
+        precondition(!update(10.1, region: nil, delay: 0.2, strict: true), "Leaving the notch before the deadline cancels dwell")
+        precondition(!update(10.15, delay: 0.2, strict: true))
+        precondition(!update(10.3, delay: 0.2, strict: true))
+        precondition(update(10.36, delay: 0.2, strict: true))
+        reentry.arm(sessionID: source)
+        precondition(!update(20, delay: 0.2, strict: true))
+        precondition(!update(20.4, delay: 0.2, strict: true), "A stalled tracking loop cannot prove continuous strict notch dwell")
+        precondition(update(20.61, delay: 0.2, strict: true))
+        reentry.arm(sessionID: source)
+        precondition(!update(30, pressed: false) && !reentry.isArmed, "Mouse release clears return permission before stale native end callbacks")
+        reentry.arm(sessionID: source)
+        precondition(!update(40, session: UUID()) && !reentry.isArmed, "A new file session cannot inherit permission to reopen")
+        reentry.arm(sessionID: source)
+        precondition(!reentry.update(sessionID: nil, mousePressed: true, regionID: "display:notch", now: 45, delay: 0, strictDwell: false, enabled: true))
+        precondition(!reentry.isArmed)
+        reentry.arm(sessionID: source)
+        precondition(!update(50, enabled: false) && !reentry.isArmed, "Preference, keyboard-only, modal and suppression cancellation revoke return permission")
+        reentry.arm(sessionID: source)
+        precondition(!update(60, region: "screen-A:topLeft", delay: 0.2))
+        precondition(!update(60.15, region: "screen-B:topLeft", delay: 0.2), "Changing eligible display starts a new trigger dwell")
+        precondition(update(60.36, region: "screen-B:topLeft", delay: 0.2))
+        reentry.arm(sessionID: source)
+        reentry.reset()
+        precondition(!update(70) && !reentry.isArmed, "Manual show/hide removes old automatic-return permission")
+        print("PASS: same-session drag return, notch/four corners, strict dwell and stalled samples, display changes, one-shot opening, release/new-session/disabled/manual-reset isolation")
     }
 
     private static func testFileDragDismissal() {
