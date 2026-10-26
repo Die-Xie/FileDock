@@ -1,0 +1,28 @@
+<?xml version="1.0" standalone="yes"?><!-- sparkle-sign-warning:
+IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+    <channel>
+        <title>FileDock</title>
+        <item>
+            <title>1.25.0</title>
+            <pubDate>Mon, 26 Oct 2026 12:21:30 +0800</pubDate>
+            <link>https://github.com/Die-Xie/FileDock</link>
+            <sparkle:version>52</sparkle:version>
+            <sparkle:shortVersionString>1.25.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown"><![CDATA[# FileDock 1.25.0
+
+- 支持从系统剪贴板粘贴文件、文件夹和图片，普通文件夹、收藏、文件引用合集和暂存区均可使用。
+- 文件区支持 ⌘C / ⌘V 与 Ctrl+C / Ctrl+V；编辑菜单和空白处右键菜单提供对应入口，文本输入与预览继续使用各自的编辑行为。
+- 粘贴到文件夹时复制并处理同名冲突；粘贴到收藏或暂存时仅添加引用。截图等图片先保存为本地文件；真实文件地址优先，SVG 不再误入位图解码。
+- 后台读取剪贴板并保存图片，目标在粘贴时确定，切换标签不会重定向。加入剪贴板变更检测、读取时限和并发上限，过期结果不执行传输；退出和更新继续等待实际文件写入完成。
+
+支持 macOS 13 及以上，提供 Apple Silicon / Intel 通用版本。当前发行包已签名，尚未经过 Apple 公证。
+]]></description>
+            <enclosure url="https://github.com/Die-Xie/FileDock/releases/download/v1.25.0/FileDock.zip" length="6418518" type="application/octet-stream" sparkle:edSignature="hYh9WSlCpuo9h+Jm7c+xwbWeYpQlIKx05uwlUE957CR/u66BFf/Tk3WvgOdjYpRcXkv0JLNyKMLRu1a8awgGBQ=="></enclosure>
+        </item>
+    </channel>
+</rss><!-- sparkle-signatures:
+edSignature: DdY7+QuJ3XM/E4V1h/9EJoz9K6CrGThB7Vo6IFBzeInD2jsEbhozdXxK96JJc5Sli14aye0gq9nf2uHFcoITBg==
+length: 2069
+-->
