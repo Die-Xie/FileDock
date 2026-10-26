@@ -1,0 +1,28 @@
+<?xml version="1.0" standalone="yes"?><!-- sparkle-sign-warning:
+IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+    <channel>
+        <title>FileDock</title>
+        <item>
+            <title>1.25.1</title>
+            <pubDate>Mon, 26 Oct 2026 20:17:49 +0800</pubDate>
+            <link>https://github.com/Die-Xie/FileDock</link>
+            <sparkle:version>53</sparkle:version>
+            <sparkle:shortVersionString>1.25.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown"><![CDATA[# FileDock 1.25.1
+
+- 按 Finder 习惯，在图标、列表和分栏视图单选项目后，按 Return / Enter（包括数字键盘 Enter）原位编辑文件名；默认选中主名并保留扩展名。回车或结束编辑时保存，Esc 取消。
+- 使用实际文件名进行编辑；修改已有扩展名时会再次确认。编辑草稿不会被缩略图或元数据刷新覆盖，中文输入法的回车确认保持正常。
+- 收藏与暂存中的项目同样适用；暂存传输期间仍保留原有重命名限制。多选或未选择时不触发重命名。
+- 双击与 ⌘↓ 继续打开项目；搜索、预览及文本编辑中的回车保持原有行为。设置中的快捷键说明同步更新。
+
+支持 macOS 13 及以上，提供 Apple Silicon / Intel 通用版本。当前发行包已签名，尚未经过 Apple 公证。
+]]></description>
+            <enclosure url="https://github.com/Die-Xie/FileDock/releases/download/v1.25.1/FileDock.zip" length="6527401" type="application/octet-stream" sparkle:edSignature="joiOtbWVQd+RnqJb155nbSHn12YYW+rNm2olXt18epGfseVTPUK3r704v1dOd4gAcJPvePUpTjkSxW3Z6BvuAw=="></enclosure>
+        </item>
+    </channel>
+</rss><!-- sparkle-signatures:
+edSignature: w8p8mEaUSF2f2OF7HmfVna/2riIK/a6QSJJ7rvM9K1MxMeX0ocLOpP2vNywu0m1fM7YW/kUBMKTpe+DAYUoFAQ==
+length: 2023
+-->
