@@ -1,0 +1,28 @@
+<?xml version="1.0" standalone="yes"?><!-- sparkle-sign-warning:
+IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+    <channel>
+        <title>FileDock</title>
+        <item>
+            <title>1.26.1</title>
+            <pubDate>Mon, 26 Oct 2026 22:40:37 +0800</pubDate>
+            <link>https://github.com/Die-Xie/FileDock</link>
+            <sparkle:version>55</sparkle:version>
+            <sparkle:shortVersionString>1.26.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown"><![CDATA[# FileDock 1.26.1
+
+- 补齐文件拖出自动收起后的返回：继续同一次拖动，回到刘海或当前设置的边角即可重新展开面板，继续在标签、收藏或暂存中放置文件。
+- 返回使用原有展开延迟和触发区域判定，点按刘海唤醒模式也支持；保留副屏、全屏与黑名单例外，仅快捷键模式不会自动展开。
+- 仅允许刚才引起自动收起的同一个文件拖动返回；松手、取消、切换会话或手动开合后清除权限，避免过期拖动误呼出。
+- 拖出收起和拖回展开由「设置 → 文件与工作区 → 拖放文件 → 拖出文件时自动收起面板」统一控制，默认开启。
+
+支持 macOS 13 及以上，提供 Apple Silicon / Intel 通用版本。当前发行包已签名，尚未经过 Apple 公证。
+]]></description>
+            <enclosure url="https://github.com/Die-Xie/FileDock/releases/download/v1.26.1/FileDock.zip" length="6542592" type="application/octet-stream" sparkle:edSignature="5H2xAZaLMCEFoSshu7d7LEBgpVSg7yDg7iGHt58z5UOGTMrDRxQqMkcLAWn8NkgV7HGpQzRSNl/p3rAAOKFvCQ=="></enclosure>
+        </item>
+    </channel>
+</rss><!-- sparkle-signatures:
+edSignature: mihUNROykSqSLPtxL0uPJeyCcRqPt7rxTxDgvJ5Mt8rJr1XUiSqnK+jHbV1FzFnRmI+picE5L36O7L9qYJFHAQ==
+length: 2000
+-->
