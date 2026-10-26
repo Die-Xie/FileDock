@@ -1572,14 +1572,6 @@ enum HubFileOperations {
         }
     }
 
-    func pasteFiles(copy: Bool = true, from pasteboard: NSPasteboard = .general) {
-        let urls = (pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []
-        guard !urls.isEmpty else { return }
-        if !acceptFileDrop(urls, workspaceID: selectedWorkspaceID, directory: currentURL, copy: copy) {
-            errorMessage = fileOperationsInProgress >= 3 ? "已有文件操作正在进行，请稍后重试。" : HubFileError.invalidDestination.localizedDescription
-        }
-    }
-
     private func uniquePaths(_ paths: [String]) -> [String] {
         var seen = Set<String>()
         return paths.filter { $0.hasPrefix("/") && seen.insert($0).inserted }

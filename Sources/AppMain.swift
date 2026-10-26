@@ -8,6 +8,7 @@ import ServiceManagement
 @MainActor
 final class HubPanel: NSPanel {
     weak var hubDelegate: AppDelegate?
+    weak var clipboardModel: HubModel?
     var allowsScreenTopOverlap = false
     override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
         allowsScreenTopOverlap ? frameRect : super.constrainFrameRect(frameRect, to: screen)
@@ -18,6 +19,24 @@ final class HubPanel: NSPanel {
         if HubMarqueeSelectionState.isSelecting { HubMarqueeSelectionState.cancel(); return }
         if HubFileDragState.isDragging || HubWorkspaceDragState.isDragging { return }
         hubDelegate?.hidePanel()
+    }
+    private var canHandleFileClipboard: Bool {
+        isKeyWindow && attachedSheet == nil && NSApp.modalWindow == nil &&
+            !HubInlinePreviewFocus.contains(firstResponder) && !(firstResponder is NSTextView) &&
+            !HubFileDragState.isDragging && !HubWorkspaceDragState.isDragging && !HubMarqueeSelectionState.isSelecting
+    }
+    @objc func copy(_ sender: Any?) {
+        guard canHandleFileClipboard else { return }
+        clipboardModel?.copySelectedFiles()
+    }
+    @objc func paste(_ sender: Any?) {
+        guard canHandleFileClipboard else { return }
+        clipboardModel?.pasteFiles()
+    }
+    override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        if item.action == #selector(copy(_:)) { return canHandleFileClipboard && clipboardModel?.selectedURLs.isEmpty == false }
+        if item.action == #selector(paste(_:)) { return canHandleFileClipboard && clipboardModel?.canPasteFiles == true }
+        return super.validateUserInterfaceItem(item)
     }
     override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool { true }
     override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
@@ -150,6 +169,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         panel = HubPanel(contentRect: NSRect(x: 0, y: 0, width: 800, height: 420),
                          styleMask: [.borderless, .resizable], backing: .buffered, defer: false)
         panel.hubDelegate = self
+        panel.clipboardModel = model
         panel.delegate = self
         panel.title = "FileDock"
         panel.identifier = NSUserInterfaceItemIdentifier("FileDockPanel")

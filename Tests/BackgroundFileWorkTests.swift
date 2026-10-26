@@ -47,9 +47,9 @@ private final class Gate: @unchecked Sendable {
         precondition(clipboard.writeObjects([files[0] as NSURL]))
         model.selectWorkspace(targetTab.id)
         model.pasteFiles(from: clipboard)
-        precondition(model.fileOperationsInProgress == 1, "Paste must admit background work and return before copying")
+        precondition(HubImportActivity.isBusy, "Paste must admit a background clipboard read and return before copying")
         model.selectWorkspace(sourceTab.id)
-        try await wait { model.fileOperationsInProgress == 0 }
+        try await wait { !HubImportActivity.isBusy && model.fileOperationsInProgress == 0 }
         precondition(fm.fileExists(atPath: target.appendingPathComponent("item-0 copy.txt").path))
         precondition(!fm.fileExists(atPath: source.appendingPathComponent("item-0 copy.txt").path), "Navigation cannot redirect a pending paste")
         model.createFolder(named: "new")

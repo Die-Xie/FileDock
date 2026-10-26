@@ -88,6 +88,8 @@ FileDock 使用 Swift、AppKit 与 SwiftUI 构建。源码、测试与发布工�
 - [质量与性能审查记录](docs/QUALITY_REVIEW.md)
 - [版本发布说明](docs/releases/)
 
+1.25.0 支持系统剪贴板文件与图片粘贴，包含收藏和暂存区，并兼容文件区 Ctrl+C / Ctrl+V。详见 [版本说明](docs/releases/v1.25.0.md)。
+
 1.24.0 为系统音乐加入真实播放进度，缺少时间数据时隐藏进度条；设置侧栏新增退出入口。详见 [版本说明](docs/releases/v1.24.0.md)。
 
 1.23.0 移除趣味动画，设置改用侧栏分类与统一分组，集中管理呼出延迟和文件快捷入口。详见 [版本说明](docs/releases/v1.23.0.md)。

@@ -1184,7 +1184,8 @@ struct HubView: View {
     }
 
     @ViewBuilder private var backgroundMenu: some View {
-        if model.currentURL != nil { HubMenuButton("新建文件夹…", systemImage: "folder.badge.plus") { folderName = "新建文件夹"; newFolder = true }; HubMenuButton("粘贴文件", systemImage: "doc.on.clipboard") { model.pasteFiles() }; HubMenuButton("在访达中打开", systemImage: "folder") { if let url = model.currentURL { NSWorkspace.shared.open(url) } } }
+        if model.canPasteFiles { HubMenuButton("粘贴", systemImage: "doc.on.clipboard") { model.pasteFiles() } }
+        if model.currentURL != nil { HubMenuButton("新建文件夹…", systemImage: "folder.badge.plus") { folderName = "新建文件夹"; newFolder = true }; HubMenuButton("在访达中打开", systemImage: "folder") { if let url = model.currentURL { NSWorkspace.shared.open(url) } } }
         if model.selectedWorkspace?.mode == .references && model.currentURL == nil { HubMenuButton("添加项目…", systemImage: "plus") { model.addReferences() } }
         HubMenuButton("刷新", systemImage: "arrow.clockwise") { model.refresh() }
     }
@@ -1380,8 +1381,14 @@ struct HubView: View {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         let command = flags.contains(.command)
         if command && event.charactersIgnoringModifiers == "a" { model.selectedIDs = Set(model.visibleEntries.map(\.url)); return true }
-        if command && event.charactersIgnoringModifiers == "c" { if flags.contains(.option) { model.copySelectedPaths() } else { model.copySelectedFiles() }; return true }
-        if command && event.charactersIgnoringModifiers == "v" { model.pasteFiles(); return true }
+        if let action = HubClipboardShortcut.resolve(keyCode: event.keyCode, modifiers: flags) {
+            switch action {
+            case .copy: model.copySelectedFiles()
+            case .copyPaths: model.copySelectedPaths()
+            case .paste: model.pasteFiles()
+            }
+            return true
+        }
         if command && event.keyCode == 51 {
             if model.isStagingRoot { model.removeStagedFiles(model.selectedURLs) }
             else { pendingTrash = model.selectedURLs }

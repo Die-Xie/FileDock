@@ -159,8 +159,12 @@ swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache
     -framework AppKit -framework Carbon -framework Combine -framework UniformTypeIdentifiers
 .build/cross-workspace-drop-tests
 swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
-    Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/WorkspaceShortcutOrder.swift Sources/HubModel.swift Sources/DirectoryLoader.swift Tests/ModelTestSupport.swift Tests/BackgroundFileWorkTests.swift -o .build/background-file-work-tests \
-    -framework AppKit -framework Carbon -framework Combine -framework UniformTypeIdentifiers
+    Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/WorkspaceShortcutOrder.swift Sources/HubModel.swift Sources/DirectoryLoader.swift Sources/Clipboard.swift Sources/ClipboardShortcuts.swift Sources/ImportActivity.swift Sources/ImageImport.swift Sources/StagingImportStore.swift Sources/StagingDropReceiver.swift Sources/WebImageLoader.swift Tests/ModelTestSupport.swift Tests/ClipboardTests.swift -o .build/clipboard-tests \
+    -framework AppKit -framework Carbon -framework Combine -framework UniformTypeIdentifiers -framework ImageIO
+.build/clipboard-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
+    Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/WorkspaceShortcutOrder.swift Sources/HubModel.swift Sources/DirectoryLoader.swift Sources/Clipboard.swift Sources/ClipboardShortcuts.swift Sources/ImportActivity.swift Sources/ImageImport.swift Sources/StagingImportStore.swift Sources/StagingDropReceiver.swift Sources/WebImageLoader.swift Tests/ModelTestSupport.swift Tests/BackgroundFileWorkTests.swift -o .build/background-file-work-tests \
+    -framework AppKit -framework Carbon -framework Combine -framework UniformTypeIdentifiers -framework ImageIO
 .build/background-file-work-tests
 swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
     Sources/NativeFileDrag.swift Sources/NativeWorkspaceDrag.swift Sources/NativeFileDrop.swift Sources/FileDropFeedback.swift Sources/AirDropDropPlan.swift Sources/AirDrop.swift Tests/NativeFileDropTests.swift -o .build/native-drop-tests \
