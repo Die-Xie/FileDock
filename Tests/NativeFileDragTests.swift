@@ -158,6 +158,10 @@ struct NativeFileDragTests {
         sourceView.isHidden = true
         precondition(sourceView.hitTest(NSPoint(x: 60, y: 70)) == nil)
         sourceView.isHidden = false
+        sourceView.interactionEnabled = false
+        precondition(sourceView.hitTest(NSPoint(x: 60, y: 70)) == nil,
+                     "Inline filename editing must receive text clicks instead of starting a file drag")
+        sourceView.interactionEnabled = true
         precondition(HubFileDragData.takesMouseDown(.leftMouseDown, modifiers: []))
         precondition(HubFileDragData.takesMouseDown(.leftMouseDown, modifiers: [.command, .shift]))
         precondition(!HubFileDragData.takesMouseDown(.leftMouseDown, modifiers: .control),

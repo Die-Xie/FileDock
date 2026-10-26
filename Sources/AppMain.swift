@@ -795,7 +795,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
                windowDragSession == nil, now.timeIntervalSince(lastRefresh) > 2 {
                 model.refreshInBackground(ifDue: true); lastRefresh = now
             }
-            let sheetOpen = hasActiveDialog || NSMenuHasTrackingMenu()
+            let sheetOpen = hasActiveDialog || NSMenuHasTrackingMenu() || HubInlineFileNameEditor.isEditing(in: panel)
             let previewVisible = QLPreviewPanel.sharedPreviewPanelExists() && QLPreviewPanel.shared()?.isVisible == true
             let insideCornerPath = cornerKeepAliveFrame.map { HubHoverGeometry.containsTriggerPoint(pointer, in: $0) } ?? false
             let outside = !insideSurface && !insideBridge && !insideCornerPath && !panel.frame.insetBy(dx: -12, dy: -12).contains(pointer) && !hovering

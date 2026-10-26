@@ -49,7 +49,12 @@ import os
     func updateNSView(_ view: DestinationView, context: Context) {
         view.enabled = enabled; view.contains = contains; view.operation = operation; view.exited = exited; view.receive = receive
     }
-    static func dismantleNSView(_ view: DestinationView, coordinator: ()) { view.exited?() }
+    static func dismantleNSView(_ view: DestinationView, coordinator: ()) {
+        // The owning HubView clears feedback and spring loading on disappear.
+        // A callback here would mutate its State while SwiftUI destroys the
+        // graph, causing an exclusive-access conflict during window teardown.
+        view.operation = nil; view.exited = nil; view.receive = nil
+    }
 
     final class DestinationView: NSView {
         var enabled = true

@@ -192,6 +192,12 @@ swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache
 TASK_VIEW_TEST_SOURCES=(Sources/*.swift)
 TASK_VIEW_TEST_SOURCES=("${TASK_VIEW_TEST_SOURCES[@]:#Sources/AppMain.swift}")
 swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache "${TASK_VIEW_TEST_SOURCES[@]}" \
+    Tests/ModelTestSupport.swift Tests/InlineRenameTests.swift -o .build/inline-rename-tests \
+    -framework AppKit -framework SwiftUI -framework Combine -framework Carbon -framework Quartz \
+    -framework QuickLookThumbnailing -framework ImageIO -framework ServiceManagement -framework UniformTypeIdentifiers -framework ApplicationServices \
+    -F "$TASK_SPARKLE" -framework Sparkle -Xlinker -rpath -Xlinker "$TASK_SPARKLE"
+.build/inline-rename-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache "${TASK_VIEW_TEST_SOURCES[@]}" \
     Tests/HeaderWindowDragTests.swift -o .build/header-window-drag-tests \
     -framework AppKit -framework SwiftUI -framework Combine -framework Carbon -framework Quartz \
     -framework QuickLookThumbnailing -framework ImageIO -framework ServiceManagement -framework UniformTypeIdentifiers -framework ApplicationServices \

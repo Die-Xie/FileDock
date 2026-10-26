@@ -311,7 +311,8 @@ struct HubSettingsView: View {
             }
             section("浏览文件") {
                 shortcutRow("选择项目", keys: "↑ ↓ ← →")
-                shortcutRow("打开所选项目", keys: "↩ / ⌘ ↓")
+                shortcutRow("重新命名单个所选项目", keys: "↩ / Enter")
+                shortcutRow("打开所选项目", keys: "⌘ ↓ / 双击")
                 shortcutRow("快速查看", keys: "空格")
                 shortcutRow("上一级文件夹", keys: "⌘ ↑")
                 shortcutRow("后退 / 前进", keys: "⌥ ← / ⌥ →")

@@ -66,6 +66,8 @@ struct HubView: View {
     @State private var tabRevealTask: Task<Void, Never>?
     @State private var renameEntry: FileEntry?
     @State private var renameName = ""
+    @State private var renameSessionID = UUID()
+    @State private var extensionRename: (entry: FileEntry, name: String)?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -174,12 +176,13 @@ struct HubView: View {
         .onChange(of: presentation.previewVisible) {
             activityVisibility.update(active: activityActive, presented: $0)
             prepareWorkspaceHover()
-            if !$0 { clearFileDrop(); showsAirDropHint = false; tabRevealTask?.cancel() }
+            if !$0 { clearFileDrop(); showsAirDropHint = false; tabRevealTask?.cancel(); renameEntry = nil }
         }
         .onChange(of: presentation.header) { _ in prepareWorkspaceHover() }
         .onChange(of: canReceiveAirDrop) { if !$0 { showsAirDropHint = false; if airDropTargeted { clearFileDrop() } } }
         .onDisappear {
             clearFileDrop(); showsAirDropHint = false; hoverTask?.cancel(); tabRevealTask?.cancel()
+            renameEntry = nil
             activityVisibility.update(active: false, presented: false)
         }
         .onAppear {
@@ -187,7 +190,16 @@ struct HubView: View {
             activityVisibility.update(active: activityActive, presented: presentation.previewVisible)
         }
         .onChange(of: activityActive) { activityVisibility.update(active: $0, presented: presentation.previewVisible) }
-        .onChange(of: model.search) { _ in model.selectedIDs = [] }
+        .onChange(of: model.search) { _ in renameEntry = nil; model.selectedIDs = [] }
+        .onChange(of: model.selectedIDs) { selection in
+            if let entry = renameEntry, !selection.contains(entry.url) { renameEntry = nil }
+        }
+        .onReceive(model.$entries) { entries in
+            if let entry = renameEntry, !entries.contains(where: { $0.url == entry.url }) { renameEntry = nil }
+        }
+        .onChange(of: model.selectedWorkspaceID) { _ in renameEntry = nil }
+        .onChange(of: model.currentURL) { _ in renameEntry = nil }
+        .onChange(of: model.viewMode) { _ in renameEntry = nil }
         .onChange(of: dropTargeted) { if $0 { presentation.setFileDragActive(true) } }
         .sheet(item: $editingWorkspace) { WorkspaceEditor(model: model, workspace: $0) }
         .alert("新建文件夹", isPresented: $newFolder) {
@@ -195,11 +207,17 @@ struct HubView: View {
             Button("取消", role: .cancel) { }
             Button("创建") { model.createFolder(named: folderName) }
         }
-        .alert("重新命名", isPresented: Binding(get: { renameEntry != nil }, set: { if !$0 { renameEntry = nil } })) {
-            TextField("名称", text: $renameName)
-            Button("取消", role: .cancel) { renameEntry = nil }
-            Button("保存") { if let entry = renameEntry { model.rename(entry, to: renameName) }; renameEntry = nil }
-        }
+        .alert("更改文件扩展名？", isPresented: Binding(get: { extensionRename != nil }, set: { if !$0 { extensionRename = nil } })) {
+            Button("取消", role: .cancel) { extensionRename = nil }
+            Button("保留原扩展名") {
+                if let request = extensionRename {
+                    model.rename(request.entry, to: HubFileNameEditing.keepingExtension(from: request.entry.url.lastPathComponent, in: request.name))
+                }
+                extensionRename = nil
+            }
+            Button("使用新名称") { if let request = extensionRename { model.rename(request.entry, to: request.name) }; extensionRename = nil }
+                .keyboardShortcut(.defaultAction)
+        } message: { Text("更改扩展名可能导致原来的应用无法识别文件，不会转换文件格式。") }
         .alert("移到废纸篓？", isPresented: Binding(get: { !pendingTrash.isEmpty }, set: { if !$0 { pendingTrash = [] } })) {
             Button("取消", role: .cancel) { pendingTrash = [] }
             Button("移到废纸篓", role: .destructive) { let urls = pendingTrash; pendingTrash = []; model.trash(urls) }
@@ -381,7 +399,7 @@ struct HubView: View {
     }
 
     private func canHoverWorkspace(_ target: UUID) -> Bool {
-        let ready = presentation.previewVisible && !presentation.windowMoving && !presentation.layoutChanging &&
+        let ready = renameEntry == nil && presentation.previewVisible && !presentation.windowMoving && !presentation.layoutChanging &&
             !presentation.surfaceAnimating && !HubWorkspaceDragState.isDragging && !HubFileDragState.isDragging
         guard HubWorkspaceHoverActivation.permits(target: target, current: model.selectedWorkspaceID, ready: ready,
             pointer: NSEvent.mouseLocation, origin: workspaceRevealPointer) else { return false }
@@ -991,7 +1009,7 @@ struct HubView: View {
         VStack(spacing: 7) {
             HubFileIcon(entry: entry, size: model.settings.iconSize, allowsThumbnail: !model.isCloudPlaceholder(entry),
                         lightweight: presentation.defersFileRendering).opacity(entry.exists ? 1 : 0.4)
-            Text(entry.name).font(.system(size: model.settings.fontSize)).lineLimit(2).multilineTextAlignment(.center).frame(maxWidth: .infinity, minHeight: 29, alignment: .top)
+            fileName(entry, grid: true)
         }
         .padding(.horizontal, 5).padding(.vertical, 9)
         .background(model.selectedIDs.contains(entry.url) ? Color.accentColor.opacity(0.20) : .clear, in: RoundedRectangle(cornerRadius: 8))
@@ -1017,7 +1035,7 @@ struct HubView: View {
                     ForEach(Array(model.visibleEntries.enumerated()), id: \.element.id) { index, entry in
                         HStack(spacing: 9) {
                             HubFileIcon(entry: entry, size: 22, allowsThumbnail: false, lightweight: presentation.defersFileRendering)
-                            Text(entry.name).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
+                            fileName(entry)
                             Text((model.isRecentsRoot ? model.lastUsedDate(for: entry.url) : entry.modified)?.formatted(date: .abbreviated, time: .shortened) ?? "—").font(.system(size: 10)).foregroundStyle(.secondary).frame(width: 120, alignment: .leading)
                             Text(model.isCloudPlaceholder(entry) ? "仅在云端" : entry.kind).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1).frame(width: 80, alignment: .leading)
                             Text(entry.isDirectory || model.isCloudPlaceholder(entry) ? "—" : ByteCountFormatter.string(fromByteCount: entry.size, countStyle: .file)).font(.system(size: 10)).foregroundStyle(.secondary).frame(width: 66, alignment: .trailing)
@@ -1089,7 +1107,7 @@ struct HubView: View {
                                 ForEach(model.visibleEntries) { entry in
                                     HStack(spacing: 7) {
                                         HubFileIcon(entry: entry, size: 20, allowsThumbnail: false, lightweight: presentation.defersFileRendering)
-                                        Text(entry.name).lineLimit(1)
+                                        fileName(entry)
                                         Spacer()
                                         if entry.isDirectory && !entry.isPackage { Image(systemName: "chevron.right").font(.system(size: 8)).foregroundStyle(.secondary) }
                                     }.padding(.horizontal, 9).padding(.vertical, 6)
@@ -1203,7 +1221,7 @@ struct HubView: View {
         }
         HubMenuButton("快速查看", systemImage: "eye") { preview(urls) }.disabled(HubInlinePreviewPolicy.quickLookURLs(urls).isEmpty)
         HubMenuButton("在访达中显示", systemImage: "folder") { NSWorkspace.shared.activateFileViewerSelecting(urls) }
-        if urls.count == 1 { HubMenuButton("重新命名…", systemImage: "pencil") { renameName = entry.name; renameEntry = entry }.disabled(model.isStagingRoot && model.stagingTransferInProgress) }
+        if urls.count == 1 { HubMenuButton("重新命名…", systemImage: "pencil") { beginRename(entry) }.disabled(model.isStagingRoot && model.stagingTransferInProgress) }
         Divider()
         HubMenuButton("复制", systemImage: "doc.on.doc") { model.copyFiles(urls) }
         HubMenuButton("复制路径", systemImage: "link") { model.copyPath(urls) }
@@ -1240,6 +1258,7 @@ struct HubView: View {
 
     private func fileInteraction(for entry: FileEntry, navigateOnClick: Bool = false) -> some View {
         HubFileDragBridge(entryURL: entry.url, context: fileDragContext,
+                          interactionEnabled: renameEntry?.url != entry.url,
                           selectedURLs: { model.selectedURLs }, selectEntry: { selectForDrag(entry) },
                           onClick: { flags in
                               select(entry, flags: flags)
@@ -1372,6 +1391,49 @@ struct HubView: View {
                 .background(HubSelectionBackdrop(selected: model.viewMode == mode, namespace: viewModeSelection, cornerRadius: 4))
         }.buttonStyle(HubToolbarButtonStyle()).help(label)
     }
+    private func beginRename(_ entry: FileEntry) {
+        guard renameEntry == nil, extensionRename == nil, !HubFileDragState.isDragging, !HubWorkspaceDragState.isDragging,
+              !(model.isStagingRoot && model.stagingTransferInProgress) else { return }
+        model.selectedIDs = [entry.url]
+        hoverTask?.cancel(); hoveredWorkspace = nil
+        renameName = entry.url.lastPathComponent
+        renameSessionID = UUID()
+        renameEntry = entry
+    }
+
+    private func fileName(_ entry: FileEntry, grid: Bool = false) -> some View {
+        let editing = renameEntry?.url == entry.url
+        let context = fileDragContext, mode = model.viewMode, session = renameSessionID
+        return Text(entry.name).font(.system(size: model.settings.fontSize))
+            .lineLimit(grid ? 2 : 1).multilineTextAlignment(grid ? .center : .leading)
+            .frame(maxWidth: .infinity, minHeight: grid ? 29 : nil, alignment: grid ? .top : .leading)
+            .opacity(editing ? 0 : 1).accessibilityHidden(editing)
+            .overlay {
+                if editing {
+                    HubInlineFileNameEditor(name: renameName, isDirectory: entry.isDirectory, isPackage: entry.isPackage,
+                                            fontSize: model.settings.fontSize, centered: grid,
+                                            onCommit: { name in
+                                                guard renameSessionID == session else { return }
+                                                guard fileDragContext == context, model.viewMode == mode else { renameEntry = nil; return }
+                                                finishRename(name, entry: entry)
+                                            }, onCancel: { if renameSessionID == session { renameEntry = nil } })
+                        .id(session)
+                }
+            }
+    }
+
+    private func finishRename(_ name: String, entry: FileEntry) {
+        guard renameEntry?.url == entry.url else { return }
+        renameEntry = nil
+        guard model.selectedIDs == [entry.url], !(model.isStagingRoot && model.stagingTransferInProgress) else { return }
+        guard name != entry.url.lastPathComponent else { return }
+        do { try HubFileOperations.validateName(name) }
+        catch { model.errorMessage = error.localizedDescription; return }
+        if HubFileNameEditing.changesExtension(from: entry.url.lastPathComponent, to: name, isDirectory: entry.isDirectory, isPackage: entry.isPackage) {
+            extensionRename = (entry, name)
+        } else { model.rename(entry, to: name) }
+    }
+
     private func handleKey(_ event: NSEvent) -> Bool {
         if HubMarqueeSelectionState.isSelecting {
             if event.keyCode == 53 { HubMarqueeSelectionState.cancel() }
@@ -1405,7 +1467,10 @@ struct HubView: View {
         if flags.contains(.option) && !command && event.keyCode == 124 { model.goForward(); return true }
         guard !command && !flags.contains(.control) && !flags.contains(.option) else { return false }
         if event.keyCode == 49 { if !model.selectedURLs.isEmpty { preview(model.selectedURLs) }; return true }
-        if event.keyCode == 36 { model.openSelected(); return true }
+        if [36, 76].contains(event.keyCode), !flags.contains(.shift) {
+            if model.selectedIDs.count == 1, let entry = model.selectedEntries.first { beginRename(entry) }
+            return true
+        }
         if event.keyCode == 53 { onClose(); return true }
         if [123,124,125,126].contains(event.keyCode), !model.visibleEntries.isEmpty {
             let current = model.visibleEntries.firstIndex(where: { model.selectedIDs.contains($0.url) }) ?? -1
@@ -1418,7 +1483,7 @@ struct HubView: View {
     }
 }
 
-private struct HubKeyMonitor: NSViewRepresentable {
+struct HubKeyMonitor: NSViewRepresentable {
     var handler: (NSEvent) -> Bool
     func makeNSView(context: Context) -> KeyboardView { let view = KeyboardView(); view.handler = handler; return view }
     func updateNSView(_ view: KeyboardView, context: Context) { view.handler = handler }
@@ -1430,12 +1495,16 @@ private struct HubKeyMonitor: NSViewRepresentable {
             if let monitor { NSEvent.removeMonitor(monitor); self.monitor = nil }
             if window != nil {
                 monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-                    guard let self, event.window === self.window, self.window?.attachedSheet == nil, NSApp.modalWindow == nil else { return event }
-                    if HubInlinePreviewFocus.contains(self.window?.firstResponder) { return event }
-                    if let text = self.window?.firstResponder as? NSTextView, text.isEditable { return event }
-                    return self.handler?(event) == true ? nil : event
+                    guard let self else { return event }
+                    return self.route(event)
                 }
             }
+        }
+        func route(_ event: NSEvent) -> NSEvent? {
+            guard let window, event.window === window, window.attachedSheet == nil, NSApp.modalWindow == nil else { return event }
+            if HubInlinePreviewFocus.contains(window.firstResponder) { return event }
+            if let text = window.firstResponder as? NSTextView, text.isEditable { return event }
+            return handler?(event) == true ? nil : event
         }
         deinit { if let monitor { NSEvent.removeMonitor(monitor) } }
     }

@@ -201,8 +201,13 @@ import UniformTypeIdentifiers
             destination.draggingEnded(info)
             precondition(feedback == nil)
             precondition(destination.draggingEntered(info) == .copy)
+            let exitsBeforeTeardown = exits
             HubNativeFileDropBridge.dismantleNSView(destination, coordinator: ())
-            precondition(feedback == nil && received.count == 1)
+            precondition(exits == exitsBeforeTeardown && received.count == 1,
+                         "SwiftUI graph teardown must not synchronously call back into the owner's State; its onDisappear clears feedback")
+            precondition(destination.operation == nil && destination.exited == nil && destination.receive == nil,
+                         "A dismantled destination must release callbacks and cannot accept a late drop")
+            precondition(!destination.performDragOperation(info) && received.count == 1)
         }
     }
 }

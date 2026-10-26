@@ -151,6 +151,7 @@ enum HubFileDragState {
 struct HubFileDragBridge: NSViewRepresentable {
     var entryURL: URL
     var context: HubFileDragContext
+    var interactionEnabled = true
     var selectedURLs: @MainActor () -> [URL]
     var selectEntry: @MainActor () -> Void
     var onClick: @MainActor (NSEvent.ModifierFlags) -> Void
@@ -165,6 +166,8 @@ struct HubFileDragBridge: NSViewRepresentable {
     func updateNSView(_ view: FileDragView, context: Context) {
         view.entryURL = entryURL
         view.dragContext = self.context
+        view.interactionEnabled = interactionEnabled
+        if !interactionEnabled { view.cancelPendingInteraction() }
         view.selectedURLs = selectedURLs
         view.selectEntry = selectEntry
         view.onClick = onClick
@@ -176,6 +179,7 @@ struct HubFileDragBridge: NSViewRepresentable {
     @MainActor
     final class FileDragView: NSView, NSDraggingSource {
         var entryURL = URL(fileURLWithPath: "/")
+        var interactionEnabled = true
         var dragContext = HubFileDragContext(workspaceID: nil, directory: nil)
         var selectedURLs: (@MainActor () -> [URL])?
         var selectEntry: (@MainActor () -> Void)?
@@ -199,7 +203,7 @@ struct HubFileDragBridge: NSViewRepresentable {
         override var acceptsFirstResponder: Bool { true }
         override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
         override func hitTest(_ point: NSPoint) -> NSView? {
-            guard !bypassHitTesting, !isHiddenOrHasHiddenAncestor else { return nil }
+            guard interactionEnabled, !bypassHitTesting, !isHiddenOrHasHiddenAncestor else { return nil }
             // Right-click, Control-click, scrolling and native drop targeting
             // retain their normal SwiftUI event dispatch. AppKit delivers later
             // drag/up events to the view that accepted the initial mouseDown.
@@ -216,6 +220,7 @@ struct HubFileDragBridge: NSViewRepresentable {
 
         override func mouseDown(with event: NSEvent) {
             cancelPendingInteraction()
+            guard interactionEnabled else { return }
             guard HubFileDragData.takesMouseDown(event.type, modifiers: event.modifierFlags) else {
                 forwardContextEvent(event)
                 return
@@ -229,7 +234,7 @@ struct HubFileDragBridge: NSViewRepresentable {
         }
 
         override func mouseDragged(with event: NSEvent) {
-            guard let press, press.payload.context == dragContext,
+            guard interactionEnabled, let press, press.payload.context == dragContext,
                   press.entryURL == entryURL, !press.payload.urls.isEmpty, Self.activeSource == nil else { return }
             let distance = hypot(event.locationInWindow.x - press.event.locationInWindow.x, event.locationInWindow.y - press.event.locationInWindow.y)
             guard distance >= 5 else { return }
