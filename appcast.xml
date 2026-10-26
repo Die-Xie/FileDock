@@ -1,0 +1,28 @@
+<?xml version="1.0" standalone="yes"?><!-- sparkle-sign-warning:
+IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+    <channel>
+        <title>FileDock</title>
+        <item>
+            <title>1.27.0</title>
+            <pubDate>Tue, 27 Oct 2026 00:38:45 +0800</pubDate>
+            <link>https://github.com/Die-Xie/FileDock</link>
+            <sparkle:version>57</sparkle:version>
+            <sparkle:shortVersionString>1.27.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown"><![CDATA[# FileDock 1.27.0
+
+- 「设置 → 呼出与交互 → 自动呼出例外」新增行为选择：命中全屏或应用黑名单时，可继续停用鼠标呼出，或临时改用点按呼出。
+- 点按模式暂停悬停，只在普通左键点击当前刘海／所选触发边角时展开；离开例外环境后自动恢复原有方式，正常呼出设置保持不变。
+- 默认保留现有禁用行为；仅快捷键模式、设置／模态窗口及拖动保护继续生效，副屏按原配置准入。
+- 点击位置使用事件中的屏幕坐标，避免点击后移动鼠标导致错误判定或在另一块屏幕展开；带修饰键的点击留给前台应用。
+
+支持 macOS 13 及以上，提供 Apple Silicon / Intel 通用版本。当前发行包已签名，尚未经过 Apple 公证。
+]]></description>
+            <enclosure url="https://github.com/Die-Xie/FileDock/releases/download/v1.27.0/FileDock.zip" length="6568399" type="application/octet-stream" sparkle:edSignature="t/bR11tTDFrqT9Sz8PX2OKMPK4n+5Rnxq5tNTwDS1lttSW9UKhhFqAHTYXdx+LX6Ryjs+AfJ7SsUl4q4S+2wCA=="></enclosure>
+        </item>
+    </channel>
+</rss><!-- sparkle-signatures:
+edSignature: nYmJrIXIy2ZO6C3QUDaN0LAmOgYjHEzr/CDHMF/DTLOewA1b+FSQqi03dihuIwOE4ZXmfOdlL1TtRp58DVuCDA==
+length: 1980
+-->
