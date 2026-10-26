@@ -1,0 +1,28 @@
+<?xml version="1.0" standalone="yes"?><!-- sparkle-sign-warning:
+IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+    <channel>
+        <title>FileDock</title>
+        <item>
+            <title>1.26.2</title>
+            <pubDate>Tue, 27 Oct 2026 00:14:55 +0800</pubDate>
+            <link>https://github.com/Die-Xie/FileDock</link>
+            <sparkle:version>56</sparkle:version>
+            <sparkle:shortVersionString>1.26.2</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown"><![CDATA[# FileDock 1.26.2
+
+- 支持把文件、文件夹及多选项目从 FileDock 拖到 Dock 的系统废纸篓，松手后移入废纸篓，可在访达中恢复。
+- 从收藏和暂存拖到废纸篓同样处理原文件；成功后同步移除相关引用和旧书签。暂存区的清空／移除操作仍只移除引用。
+- 使用拖动开始时捕获的完整文件批次，切换标签、收起面板或改变选择不会更改删除对象；取消、普通复制／移动和迟到重复回调不会额外删除文件。
+- 实际移入在后台执行，部分失败会保留对应引用并提示原因；保留拖出收起、拖回当前刘海或边角展开的行为。
+
+支持 macOS 13 及以上，提供 Apple Silicon / Intel 通用版本。当前发行包已签名，尚未经过 Apple 公证。
+]]></description>
+            <enclosure url="https://github.com/Die-Xie/FileDock/releases/download/v1.26.2/FileDock.zip" length="6557087" type="application/octet-stream" sparkle:edSignature="OJrWtpIN0yQkgUTtI+veDrnD8+HyuL/lTv4nPTMSIFBvMCUw/nXQMTEQrWmIjoTlpKNH2HnVLl4g0fYgJkoCDA=="></enclosure>
+        </item>
+    </channel>
+</rss><!-- sparkle-signatures:
+edSignature: SZtVwIy/GpqPhrNL5l3QpDnoWQLPWjS5UexuzsQNM7QgHTBtkpDcSZdqfHbhQ0Vd0KFtLpAZrF1FSQI1HnjGBQ==
+length: 1980
+-->
