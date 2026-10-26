@@ -12,6 +12,7 @@ import Foundation
         var wakeSettings = HubSettings()
         precondition(wakeSettings.appearance == "system" && wakeSettings.resolvedBackgroundTheme == "liquidGlass")
         precondition(wakeSettings.hoverDelay == 0 && wakeSettings.resolvedAutoHideDelay == 0 && wakeSettings.switchDelay == 0.1)
+        precondition(wakeSettings.resolvedHideOnFileDragExit, "File drags make room by default")
         precondition(wakeSettings.resolvedAnimationSpeed == 1.3 && wakeSettings.resolvedNotchIntegrationStyle == "embedded")
         precondition(wakeSettings.width == 683 && wakeSettings.height == 400 && wakeSettings.launchAtLogin)
         precondition(wakeSettings.resolvedQQMusicEnabled && wakeSettings.resolvedFavoriteShortcutEnabled && wakeSettings.resolvedStagingEnabled)
@@ -82,6 +83,7 @@ import Foundation
         model.settings.notchIntegrationStyle = "embedded"
         model.settings.qqMusicEnabled = false
         model.settings.autoHideDelay = 1.25
+        model.settings.hideOnFileDragExit = false
         precondition(model.settings.resolvedBackgroundTheme == "liquidGlass")
         model.settings.backgroundTheme = "liquidGlass"
         model.settings.appearance = "system"
@@ -187,6 +189,7 @@ import Foundation
         precondition(reloaded.settings.resolvedAnimationSpeed == 1.5 && !reloaded.settings.resolvedQQMusicEnabled,
                      "Animation speed and music visibility must survive a restart")
         precondition(reloaded.settings.resolvedAutoHideDelay == 1.25, "Mouse-exit delay must survive a restart")
+        precondition(!reloaded.settings.resolvedHideOnFileDragExit, "Disabling source-drag dismissal must survive a restart")
         precondition(reloaded.settings.resolvedNotchIntegrationStyle == "embedded", "Embedded notch integration must survive a restart")
         precondition(reloaded.workspaces.contains { $0.id == favorites.id && $0.referencePaths.map { HubFileOperations.canonical(URL(fileURLWithPath: $0)) } == [HubFileOperations.canonical(child)] })
         precondition(reloaded.selectedWorkspaceID == workspace.id)
@@ -201,6 +204,7 @@ import Foundation
         legacy.removeValue(forKey: "animationSpeed")
         legacy.removeValue(forKey: "qqMusicEnabled")
         legacy.removeValue(forKey: "autoHideDelay")
+        legacy.removeValue(forKey: "hideOnFileDragExit")
         legacy.removeValue(forKey: "notchIntegrationStyle")
         legacy.removeValue(forKey: "backgroundTheme")
         legacy.removeValue(forKey: "foldersFirst")
@@ -208,6 +212,8 @@ import Foundation
         precondition(oldSettings.resolvedAnimationSpeed == 1 && oldSettings.resolvedQQMusicEnabled,
                      "Configs saved before music/speed settings must continue to load")
         precondition(oldSettings.resolvedAutoHideDelay == 0.55, "Older configs must retain the previous 550ms exit delay")
+        precondition(oldSettings.hideOnFileDragExit == nil && oldSettings.resolvedHideOnFileDragExit,
+                     "Older configs gain the optional drag-exit preference without discarding their settings")
         precondition(oldSettings.notchIntegrationStyle == nil && oldSettings.resolvedNotchIntegrationStyle == "connected", "Older configs must retain the existing connected notch style")
         precondition(oldSettings.resolvedBackgroundTheme == "solid" && oldSettings.resolvedFoldersFirst,
                      "New factory defaults must not change missing legacy settings")

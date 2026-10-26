@@ -233,3 +233,29 @@ struct HubHoverDismissal {
         fired = false
     }
 }
+
+/// A source drag may outlive the browser window's visibility. Track its own
+/// departure so ordinary mouse exits and other drag sessions cannot donate
+/// elapsed time. The caller supplies only FileDock's local file-session ID.
+struct HubFileDragDismissal {
+    private var sessionID: UUID?
+    private var dismissal = HubHoverDismissal()
+
+    mutating func update(sessionID: UUID?, mousePressed: Bool, outside: Bool,
+                         now: TimeInterval, delay: TimeInterval, enabled: Bool) -> Bool {
+        guard let sessionID, mousePressed, enabled else { reset(); return false }
+        if self.sessionID != sessionID {
+            self.sessionID = sessionID
+            dismissal.reset()
+        }
+        return dismissal.update(outside: outside, now: now, delay: delay)
+    }
+
+    mutating func reset() { sessionID = nil; dismissal.reset() }
+
+    /// AppKit file dragging also runs in eventTracking mode. Only a live local
+    /// source with its mouse still pressed may bypass that menu-mode proxy.
+    static func menuBlocksDismissal(tracking: Bool, sessionID: UUID?, mousePressed: Bool) -> Bool {
+        tracking && !(sessionID != nil && mousePressed)
+    }
+}

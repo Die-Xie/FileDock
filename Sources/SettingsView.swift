@@ -214,6 +214,9 @@ struct HubSettingsView: View {
                 note("关闭文件夹优先后，文件与文件夹按同一列混排。手动顺序和最近使用不受影响。")
             }
             section("拖放文件") {
+                Toggle("拖出文件时自动收起面板", isOn: Binding(get: { model.settings.resolvedHideOnFileDragExit }, set: { model.settings.hideOnFileDragExit = $0 }))
+                note("从 FileDock 拖出文件后，按「呼出与交互」中的收起延迟隐藏面板，方便放到原先被遮挡的位置。返回面板会取消计时；固定面板同样适用，固定状态保留。")
+                Divider()
                 Label("拖入文件夹：移动；按住 ⌥：复制", systemImage: "folder")
                 Label("拖入收藏或暂存：添加引用", systemImage: "link")
                 Label("拖到 AirDrop：选择接收设备并发送", systemImage: "airplayaudio")

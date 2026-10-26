@@ -69,6 +69,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
     private var notchClickMonitors: [Any] = []
     private var hoverActivation = HubHoverActivation()
     private var hoverDismissal = HubHoverDismissal()
+    private var fileDragDismissal = HubFileDragDismissal()
     private let triggerSuppression = HubTriggerSuppressionMonitor()
     private var hoverSettingsSignature: String?
     private var windowAttachment = HubWindowAttachmentPolicy()
@@ -537,6 +538,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         NSApp.activate(ignoringOtherApps: true)
         hoverDismissal.reset()
         panelPointerEntered = false
+        fileDragDismissal.reset()
     }
 
     func hidePanel() {
@@ -562,6 +564,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         bridgeView.setPresented(false, animated: attachedToNotch && !embeddedAtNotch, completion: finish)
         shownFromHover = false
         hoverDismissal.reset()
+        fileDragDismissal.reset()
         hoverActivation.dismiss(regionID: hoveredRegionID, now: ProcessInfo.processInfo.systemUptime)
     }
 
@@ -783,9 +786,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
             shownFromHover = true
             showPanel(atCursor: false)
         }
-        guard !hasActiveDialog else { hoverDismissal.reset(); return }
+        guard !hasActiveDialog else { hoverDismissal.reset(); fileDragDismissal.reset(); return }
         if panel.isVisible, desiredVisible {
-            guard !surface.isAnimating, !bridgeView.isAnimating else { hoverDismissal.reset(); return }
+            guard !surface.isAnimating, !bridgeView.isAnimating else { hoverDismissal.reset(); fileDragDismissal.reset(); return }
             let localPoint = surface.convert(panel.convertPoint(fromScreen: pointer), from: nil)
             let insideSurface = surface.containsVisiblePoint(localPoint)
             let bridgePoint = bridgeView.convert(bridgePanel.convertPoint(fromScreen: pointer), from: nil)
@@ -795,10 +798,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
                windowDragSession == nil, now.timeIntervalSince(lastRefresh) > 2 {
                 model.refreshInBackground(ifDue: true); lastRefresh = now
             }
-            let sheetOpen = hasActiveDialog || NSMenuHasTrackingMenu() || HubInlineFileNameEditor.isEditing(in: panel)
+            let fileSessionID = HubFileDragState.current?.id
+            let mousePressed = (NSEvent.pressedMouseButtons & 1) != 0
+            let menuOpen = HubFileDragDismissal.menuBlocksDismissal(tracking: NSMenuHasTrackingMenu(), sessionID: fileSessionID, mousePressed: mousePressed)
+            let sheetOpen = hasActiveDialog || menuOpen || HubInlineFileNameEditor.isEditing(in: panel)
             let previewVisible = QLPreviewPanel.sharedPreviewPanelExists() && QLPreviewPanel.shared()?.isVisible == true
             let insideCornerPath = cornerKeepAliveFrame.map { HubHoverGeometry.containsTriggerPoint(pointer, in: $0) } ?? false
             let outside = !insideSurface && !insideBridge && !insideCornerPath && !panel.frame.insetBy(dx: -12, dy: -12).contains(pointer) && !hovering
+            // Source ownership, pasteboard and native drag session remain alive
+            // while the panel animates out. Never end/cancel the drag to hide it.
+            // This explicit preference also allows pinned panels to make room.
+            let dragOutside = !insideSurface && !insideBridge && !panel.frame.insetBy(dx: -12, dy: -12).contains(pointer)
+            let canDismissDrag = model.settings.resolvedHideOnFileDragExit && !sheetOpen && !previewVisible &&
+                settingsWindow?.isVisible != true && !HubWorkspaceDragState.isDragging && !HubMarqueeSelectionState.isSelecting &&
+                !panel.inLiveResize && windowDragSession == nil
+            if fileDragDismissal.update(sessionID: fileSessionID, mousePressed: mousePressed, outside: dragOutside,
+                                        now: ProcessInfo.processInfo.systemUptime, delay: model.settings.resolvedAutoHideDelay,
+                                        enabled: canDismissDrag) { hidePanel(); return }
             // Keyboard/menu entry stays until focus leaves or the pointer has entered.
             // A drag or resize starts a fresh delay after it ends, never during it.
             let canDismiss = !model.pinned && !sheetOpen && !previewVisible && settingsWindow?.isVisible != true &&
@@ -806,7 +822,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
                 (shownFromHover || panelPointerEntered || !panel.isKeyWindow)
             if hoverDismissal.update(outside: outside, now: ProcessInfo.processInfo.systemUptime,
                                      delay: model.settings.resolvedAutoHideDelay, enabled: canDismiss) { hidePanel() }
-        } else { hoverDismissal.reset() }
+        } else { hoverDismissal.reset(); fileDragDismissal.reset() }
     }
 
     private func hotspot(on screen: NSScreen) -> NSRect {

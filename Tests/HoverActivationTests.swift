@@ -143,8 +143,59 @@ struct HoverActivationTests {
         precondition(!dismissal.update(outside: true, now: .infinity, delay: 0.55))
         precondition(!dismissal.update(outside: true, now: 81, delay: 0.55))
         precondition(dismissal.update(outside: true, now: 81.6, delay: 0.55))
+        testFileDragDismissal()
 
         print("PASS: visible cursor alpha, raster orientation and scale, inclusive screen edges, 75% overlap, strict dwell, sampling stalls, policy cancellation, dismiss lock and configurable mouse-exit dismissal")
+    }
+
+    private static func testFileDragDismissal() {
+        var drag = HubFileDragDismissal()
+        let first = UUID(), second = UUID()
+        func update(_ time: Double, id: UUID? = nil, pressed: Bool = true, outside: Bool = true,
+                    enabled: Bool = true, delay: Double = 0.55) -> Bool {
+            drag.update(sessionID: id ?? first, mousePressed: pressed, outside: outside, now: time, delay: delay, enabled: enabled)
+        }
+        precondition(!drag.update(sessionID: nil, mousePressed: true, outside: true, now: 0, delay: 0, enabled: true),
+                     "External drags and ordinary mouse presses have no local source session")
+        precondition(!update(1, outside: false, delay: 0), "Cross-tab and in-panel drags never hide the panel")
+        precondition(update(2, delay: 0), "Zero delay hides on file departure without waiting for mouse release")
+        precondition(!update(3, delay: 0), "A drag departure fires only once")
+        drag.reset()
+        precondition(!update(10))
+        precondition(!update(10.5, outside: false), "Returning to the panel cancels the pending drag exit")
+        precondition(!update(11))
+        precondition(!update(11.54))
+        precondition(update(11.56))
+        drag.reset()
+        precondition(!update(20))
+        precondition(!update(20.5, enabled: false), "Turning the preference off or presenting a dialog cancels elapsed time")
+        precondition(!update(21))
+        precondition(update(21.56))
+        drag.reset()
+        precondition(!update(30))
+        precondition(!update(30.5, pressed: false), "A stale source ID after release must not hide the panel")
+        precondition(!update(31))
+        precondition(update(31.56))
+        drag.reset()
+        precondition(!update(40))
+        precondition(!update(40.54, id: second), "Another drag session cannot reuse departure time")
+        precondition(!update(41, id: second))
+        precondition(update(41.1, id: second))
+        drag.reset()
+        precondition(!update(50))
+        precondition(!update(49), "Clock reversal cancels a pending source drag exit")
+        precondition(!update(51))
+        precondition(update(51.56))
+        for tracking in [false, true] {
+            for session in [nil, first] {
+                for pressed in [false, true] {
+                    precondition(HubFileDragDismissal.menuBlocksDismissal(tracking: tracking, sessionID: session, mousePressed: pressed)
+                                 == (tracking && !(session != nil && pressed)),
+                                 "Only the held local drag may bypass eventTracking; real menus remain protected")
+                }
+            }
+        }
+        print("PASS: local file drag exit timing, return/disable/release/session/clock cancellation, one-shot dismissal and native tracking-mode menu distinction")
     }
 
     private static func testVisibleCursorFootprint() {

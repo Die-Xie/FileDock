@@ -69,6 +69,7 @@ struct HubSettings: Codable, Equatable {
     var usesNotchClickToWake: Bool { hotCorner == "notch" && notchClickToWake == true }
     var hoverDelay: Double = 0
     var autoHideDelay: Double? = 0
+    var hideOnFileDragExit: Bool? = true
     var globalShortcuts: HubGlobalShortcuts? = nil
     var animationSpeed: Double? = 1.3
     var notchIntegrationStyle: String? = "embedded"
@@ -124,6 +125,7 @@ struct HubSettings: Codable, Equatable {
         let value = autoHideDelay ?? 0.55
         return value.isFinite ? min(3, max(0, value)) : 0.55
     }
+    var resolvedHideOnFileDragExit: Bool { hideOnFileDragExit ?? true }
 
     mutating func normalize() {
         if shortcutOrder != nil { shortcutOrder = resolvedShortcutOrder.map(\.rawValue) }

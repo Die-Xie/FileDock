@@ -162,6 +162,23 @@ struct NativeFileDragTests {
         precondition(sourceView.hitTest(NSPoint(x: 60, y: 70)) == nil,
                      "Inline filename editing must receive text clicks instead of starting a file drag")
         sourceView.interactionEnabled = true
+        _ = NSApplication.shared
+        let sourcePanel = NSPanel(contentRect: parentView.frame, styleMask: .borderless, backing: .buffered, defer: false)
+        sourcePanel.isReleasedWhenClosed = false
+        sourcePanel.contentView = parentView
+        let outgoing = HubFileDragPayload(id: UUID(), context: context, urls: [first, second])
+        writeItems(validItems(id: outgoing.id))
+        HubFileDragState.begin(outgoing, source: sourceView)
+        HubFileDragState.bind(pasteboard: pasteboard, for: outgoing.id)
+        sourcePanel.ignoresMouseEvents = true
+        sourcePanel.orderOut(nil)
+        HubFileDragState.reconcile(mousePressed: true, now: 100)
+        let surviving = HubFileDragState.localPayload(source: sourceView, pasteboard: pasteboard)
+        precondition(surviving?.id == outgoing.id && surviving?.urls == outgoing.urls,
+                     "Hiding the source panel must retain the authenticated file URLs and drag identity until release")
+        precondition(sourceView.window === sourcePanel && HubFileDragState.isDragging)
+        HubFileDragState.end(outgoing.id)
+        sourcePanel.contentView = nil; sourcePanel.close()
         precondition(HubFileDragData.takesMouseDown(.leftMouseDown, modifiers: []))
         precondition(HubFileDragData.takesMouseDown(.leftMouseDown, modifiers: [.command, .shift]))
         precondition(!HubFileDragData.takesMouseDown(.leftMouseDown, modifiers: .control),
