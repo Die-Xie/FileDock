@@ -1,0 +1,29 @@
+<?xml version="1.0" standalone="yes"?><!-- sparkle-sign-warning:
+IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+    <channel>
+        <title>FileDock</title>
+        <item>
+            <title>1.28.1</title>
+            <pubDate>Tue, 27 Oct 2026 11:17:44 +0800</pubDate>
+            <link>https://github.com/Die-Xie/FileDock</link>
+            <sparkle:version>59</sparkle:version>
+            <sparkle:shortVersionString>1.28.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown"><![CDATA[# FileDock 1.28.1
+
+- 「设置 → 呼出与交互 → 呼出方式」新增“鼠标进入比例”，可在 1%–200% 间连续调节，一键恢复默认 75%。
+- 1%–100% 按鼠标可见面积判定；超过 100% 需要完全进入后继续向刘海内部移动，200% 要求到达屏幕顶边，中间值按剩余可移动深度计算。
+- 悬停、点按及同一次文件拖动返回刘海使用同一设置；无刘海屏幕的顶部中央和边角触发不受影响。
+- 屏幕之外不可见的光标像素不计入面积，确保 100%–200% 仍可触达；调节后重新计时，保留手动收起保护及原有配置。
+- 中英文说明同步更新，滑动期间仅更新界面草稿，结束后保存。
+
+支持 macOS 13 及以上，提供 Apple Silicon / Intel 通用版本。当前发行包已签名，尚未经过 Apple 公证。
+]]></description>
+            <enclosure url="https://github.com/Die-Xie/FileDock/releases/download/v1.28.1/FileDock.zip" length="6701650" type="application/octet-stream" sparkle:edSignature="4hF7NHwdYt6F/t9xea/llcMvDOT9BUyHrIjIi/bt32XzoDb9jYLpobrkh/GS4kyboIDElNwsXAGrAeqK1UJ8Cw=="></enclosure>
+        </item>
+    </channel>
+</rss><!-- sparkle-signatures:
+edSignature: uy0nBXIeSm1P+PshAXg8xh9uvk5enIIgz5hkWQI1h0LqhLpyZ+WKP5PMXYD6QHH3hwpDbKhtoibMKpozmVORDQ==
+length: 2029
+-->
