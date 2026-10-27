@@ -20,9 +20,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.29.0</string>
+	<string>1.30.0</string>
 	<key>CFBundleVersion</key>
-	<string>60</string>
+	<string>61</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>Copyright © 2026 Diexie.</string>
 	<key>CFBundleIconFile</key>
@@ -38,7 +38,7 @@
 	<key>NSDesktopFolderUsageDescription</key>
 	<string>浏览你选择的桌面文件夹。</string>
 	<key>NSAppleEventsUsageDescription</key>
-	<string>读取你选择的音乐播放器的歌曲信息，并在你操作时控制播放。</string>
+	<string>按你的操作显示访达文件简介，或读取所选音乐播放器的歌曲信息并控制播放。</string>
 	<key>NSDocumentsFolderUsageDescription</key>
 	<string>浏览你选择的文稿文件夹。</string>
 	<key>NSDownloadsFolderUsageDescription</key>

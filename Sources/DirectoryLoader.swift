@@ -306,4 +306,5 @@ extension HubDirectoryLoading {
         order.removeAll { $0 == key }; order.append(key)
         return value.snapshot
     }
+    func removeAll() { values.removeAll(); order.removeAll() }
 }

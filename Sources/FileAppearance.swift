@@ -141,6 +141,17 @@ enum HubFileIconCache {
             tags: entry.tagNames, exists: entry.exists, folder: entry.folderAppearance)
     }
 
+    static func invalidate(_ urls: [URL]) {
+        for url in urls {
+            let path = url.standardizedFileURL.path
+            cache.removeObject(forKey: path as NSString)
+            // Existing real workers keep their accounting; obsolete callbacks
+            // cannot publish an icon captured before the explicit edit.
+            pending.removeValue(forKey: path)
+            HubFileIconUpdates.mark(path)
+        }
+    }
+
     private static let context = CIContext(options: [.cacheIntermediates: false])
     private static func customizedFolder(_ image: NSImage, entry: FileEntry) -> NSImage {
         // Tahoe uses Finder labels as folder colors. Older systems retain their

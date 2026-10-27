@@ -46,6 +46,7 @@ struct HubView: View {
     var onSettings: () -> Void
     var onClose: () -> Void
     @State private var editingWorkspace: Workspace?
+    @State private var folderStyleEntry: FileEntry?
     @State private var newFolder = false
     @State private var folderName = L("新建文件夹")
     @State private var pendingTrash: [URL] = []
@@ -204,6 +205,9 @@ struct HubView: View {
         .onChange(of: model.viewMode) { _ in renameEntry = nil }
         .onChange(of: dropTargeted) { if $0 { presentation.setFileDragActive(true) } }
         .sheet(item: $editingWorkspace) { WorkspaceEditor(model: model, workspace: $0) }
+        .sheet(item: $folderStyleEntry) { entry in
+            HubFolderStyleEditor(entry: entry) { label, icon in model.performFinderAction(.folderStyle(label, icon), urls: [entry.url]) }
+        }
         .alert(L("新建文件夹"), isPresented: $newFolder) {
             TextField(L("名称"), text: $folderName)
             Button(L("取消"), role: .cancel) { }
@@ -1236,12 +1240,14 @@ struct HubView: View {
     @ViewBuilder private var backgroundMenu: some View {
         if model.canPasteFiles { HubMenuButton(L("粘贴"), systemImage: "doc.on.clipboard") { model.pasteFiles() } }
         if model.currentURL != nil { HubMenuButton(L("新建文件夹…"), systemImage: "folder.badge.plus") { folderName = L("新建文件夹"); newFolder = true }; HubMenuButton(L("在访达中打开"), systemImage: "folder") { if let url = model.currentURL { NSWorkspace.shared.open(url) } } }
+        if let directory = model.currentURL { HubMenuButton(L("在终端中打开"), systemImage: "terminal") { model.openTerminal(at: directory) } }
         if model.selectedWorkspace?.mode == .references && model.currentURL == nil { HubMenuButton(L("添加项目…"), systemImage: "plus") { model.addReferences() } }
         HubMenuButton(L("刷新"), systemImage: "arrow.clockwise") { model.refresh() }
     }
 
     @ViewBuilder private func fileMenu(_ entry: FileEntry) -> some View {
         let urls = model.selectedIDs.contains(entry.url) && model.selectedIDs.count > 1 ? model.selectedURLs : [entry.url]
+        let busy = model.stagingTransferInProgress || model.sharingInProgress || model.fileOperationsInProgress > 0
         HubMenuButton(L("打开"), systemImage: "arrow.up.forward.square") { if urls.count == 1 { model.open(entry) } else { urls.forEach { NSWorkspace.shared.open($0) } } }
         if !entry.isDirectory || entry.isPackage {
             Menu(L("打开方式")) {
@@ -1253,9 +1259,14 @@ struct HubView: View {
         }
         HubMenuButton(L("快速查看"), systemImage: "eye") { preview(urls) }.disabled(HubInlinePreviewPolicy.quickLookURLs(urls).isEmpty)
         HubMenuButton(L("在访达中显示"), systemImage: "folder") { NSWorkspace.shared.activateFileViewerSelecting(urls) }
+        HubMenuButton(L("显示简介"), systemImage: "info.circle") { model.performFinderAction(.information, urls: urls) }.disabled(busy || urls.count > 20)
         if urls.count == 1 { HubMenuButton(L("重新命名…"), systemImage: "pencil") { beginRename(entry) }.disabled(model.isStagingRoot && model.stagingTransferInProgress) }
         Divider()
-        HubMenuButton(L("复制"), systemImage: "doc.on.doc") { model.copyFiles(urls) }
+        HubMenuButton(L("压缩"), systemImage: "archivebox") { model.performFinderAction(.compress, urls: urls) }.disabled(busy)
+        HubMenuButton(HubFinderAction.duplicateMenuTitle, systemImage: "plus.square.on.square") { model.performFinderAction(.duplicate, urls: urls) }.disabled(busy)
+        HubMenuButton(L("制作替身"), systemImage: "arrowshape.turn.up.right") { model.performFinderAction(.alias, urls: urls) }.disabled(busy)
+        Divider()
+        HubMenuButton(L("拷贝"), systemImage: "doc.on.doc") { model.copyFiles(urls) }
         HubMenuButton(L("复制路径"), systemImage: "link") { model.copyPath(urls) }
         if model.settings.resolvedStagingEnabled && !model.isStagingRoot {
             HubMenuButton(L("添加到暂存区"), systemImage: "tray.and.arrow.down") { model.stageFiles(urls) }
@@ -1272,6 +1283,22 @@ struct HubView: View {
         if model.settings.resolvedAirDropEnabled {
             HubMenuButton("AirDrop…", systemImage: "airplayaudio") { NotificationCenter.default.post(name: Notification.Name("HubAirDrop"), object: nil, userInfo: ["urls": urls]) }
             .disabled(model.sharingInProgress || model.stagingTransferInProgress || model.fileOperationsInProgress > 0)
+        }
+        Divider()
+        Menu(L("颜色标签")) {
+            ForEach(HubFinderLabel.colors) { label in
+                Button { model.performFinderAction(.label(label.rawValue), urls: urls) } label: {
+                    Label { Text(label.name) } icon: { Image(nsImage: label.menuIcon(selected: urls.count == 1 && entry.labelNumber == label.rawValue)) }
+                }
+            }
+            Divider()
+            Button(L("移除颜色标签")) { model.performFinderAction(.label(0), urls: urls) }
+        }.disabled(busy)
+        if urls.count == 1 && entry.canNavigate {
+            HubMenuButton(L("自定义文件夹…"), systemImage: "paintpalette") { folderStyleEntry = entry }.disabled(busy)
+        }
+        if urls.count == 1 {
+            HubMenuButton(L("在终端中打开"), systemImage: "terminal") { model.openTerminal(at: entry.canNavigate ? entry.url : entry.url.deletingLastPathComponent()) }
         }
         if model.selectedWorkspace?.mode == .references && model.currentURL == nil {
             Divider()
@@ -1483,6 +1510,9 @@ struct HubView: View {
             case .paste: model.pasteFiles()
             }
             return true
+        }
+        if let action = HubFinderAction.shortcut(keyCode: event.keyCode, modifiers: flags), !model.selectedURLs.isEmpty {
+            model.performFinderAction(action, urls: model.selectedURLs); return true
         }
         if command && event.keyCode == 51 {
             if model.isStagingRoot { model.removeStagedFiles(model.selectedURLs) }

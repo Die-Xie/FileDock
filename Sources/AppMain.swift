@@ -388,12 +388,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
                 self.windowDragReleased = false
             }
         })
-        for name in ["HubPreview", "HubShare", "HubAirDrop", "HubAirDropFiles", "HubSettings", "HubMusicSettings", "HubLaunchAtLogin", "HubHelp", "HubShortcutRecording"] {
+        for name in ["HubPreview", "HubShare", "HubAirDrop", "HubAirDropFiles", "HubSettings", "HubMusicSettings", "HubLaunchAtLogin", "HubHelp", "HubShortcutRecording", "HubDismissForExternalFileAction"] {
             let token = NotificationCenter.default.addObserver(forName: Notification.Name(name), object: nil, queue: .main) { [weak self] note in
                 MainActor.assumeIsolated {
                     guard let self else { return }
                     switch name {
                     case "HubPreview": self.showPreview(note.userInfo?["urls"] as? [URL] ?? self.model.selectedURLs)
+                    case "HubDismissForExternalFileAction": self.hidePanel()
                     case "HubShare": self.share(note.userInfo?["urls"] as? [URL] ?? self.model.selectedURLs)
                     case "HubAirDrop": self.sendAirDrop(note.userInfo?["urls"] as? [URL] ?? self.model.selectedURLs)
                     case "HubAirDropFiles":

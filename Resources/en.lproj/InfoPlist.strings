@@ -1,4 +1,4 @@
 "NSDesktopFolderUsageDescription" = "Browse the Desktop folder you choose.";
 "NSDocumentsFolderUsageDescription" = "Browse the Documents folder you choose.";
 "NSDownloadsFolderUsageDescription" = "Browse the Downloads folder you choose.";
-"NSAppleEventsUsageDescription" = "Read track information from your selected music player and control playback when you use the controls.";
+"NSAppleEventsUsageDescription" = "Show Finder file information when requested, or read track information and control your selected music player.";

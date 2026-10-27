@@ -37,7 +37,7 @@
 
 ```sh
 mkdir -p .build
-swiftc -swift-version 5 -O -parse-as-library Sources/Localization.swift Sources/LocalizationCatalog.swift Sources/HubModel.swift Sources/FolderWorkspacePreparation.swift Sources/DirectoryLoader.swift Sources/FileAppearance.swift Sources/RecentFiles.swift Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift scripts/BenchmarkStaging.swift -o .build/benchmark-staging -framework AppKit -framework Combine -framework Carbon -framework UniformTypeIdentifiers
+swiftc -swift-version 5 -O -parse-as-library Sources/Localization.swift Sources/LocalizationCatalog.swift Sources/HubModel.swift Sources/FolderWorkspacePreparation.swift Sources/FinderFileActions.swift Sources/FolderArtwork.swift Sources/DirectoryLoader.swift Sources/FileAppearance.swift Sources/RecentFiles.swift Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift scripts/BenchmarkStaging.swift -o .build/benchmark-staging -framework AppKit -framework Combine -framework Carbon -framework UniformTypeIdentifiers
 .build/benchmark-staging
 ```
 
@@ -347,3 +347,14 @@ TriggerSuppressionTests覆盖黑名单和全屏两类证据的禁用／回退、
 - 验证本机URL、数量、目录／包类型与目标身份；完成时重查工作区容量和插入目标。完整候选配置先编码检查16MiB上限，再一次事务写入，整批失败不改变工作区或书签。用户已切换浏览位置、选择或搜索时不抢回焦点。忙碌、过期目标、混合类型和无响应磁盘均有本地化提示。
 - 新增纯几何、真实临时目录／保存重启、超时实际工人上限及完整HubView原生回调三套回归。覆盖多目录顺序和去重、源SVG／子项不变、单次保存、包／缺失目录／远程URL拒绝、过期和重复回调、迟到容量、超大配置、别名路径恢复、Finder格式与本地认证拖入、两种顶栏布局、插入取消旧悬停、接收器存活及普通文件类型跨导航保持。
 - 全量回归通过后补强源文件类型和空侧几何，并重跑七套相关测试；逐文件`git diff`和空白检查已完成。检查中英文原生截图，指引位于标签间且不裁剪。隐藏窗口验证实际AppKit接收和SwiftUI布局，未代替物理Finder指针操作，未宣称测量GPU帧率。
+
+## 1.30.0：文件夹样式与 Finder 操作（2026-10-27）
+
+- 颜色使用URLResourceValues.labelNumber，保留其他标签；图片／图案／表情使用[NSWorkspace.setIcon](https://developer.apple.com/documentation/appkit/nsworkspace/seticon(_:forfile:options:))，可在Finder与其他应用看到。原有私有元数据读取只用于兼容显示，本轮不写入Finder私有自定义格式。设置图标API由锁串行调用，校验目录、包、符号链接和图片后才写入，失败尝试恢复原颜色。
+- 自定义编辑器只持有草稿；应用才提交，取消与仅访问不写文件。图片最多16MiB，ImageIO只解码第一帧并生成最大512px缩略图；限制源尺寸与像素总数，最多两个实际读取器，5秒界面超时不提前释放实际槽，迟到结果被请求ID隔离。渲染复用CIContext，不增加全局轮询。
+- 副本使用[NSWorkspace.duplicate](https://developer.apple.com/documentation/appkit/nsworkspace/duplicate(_:completionhandler:))，后台等待实际回调并保留安全范围。替身用[suitableForBookmarkFile／writeBookmarkData](https://developer.apple.com/documentation/foundation/url/writebookmarkdata(_:to:))生成真正的Finder别名；不是符号链接。压缩使用固定绝对系统工具与独立参数，不拼shell代码，单项ditto保留资源叉，多项tar输出ZIP。输出先位于目标卷的私有UUID临时目录，再以不覆盖的move发布；同名输出重试，重名成员、递归输出、缺失输入及失败不会发布临时ZIP。
+- 文件命令复用现有实际操作计数和退出／更新等待，最大三项并行；新增元数据操作不在主线程创建书签或重写配置。完成时清除目录快照和相关图标缓存，旧图标回调不能覆盖新样式。捕获URL与浏览上下文，异步完成不抢回后来导航或选择。
+- 显示简介使用Finder公开脚本字典，固定脚本、路径描述符参数、10秒Apple事件超时与单独串行锁，用户路径不进入脚本源码。只在主动点击或⌘I时执行；最多20项，拒绝授权给出本地化说明。信息窗口／终端出现前收起FileDock，避免高层级面板遮挡。系统快捷操作与第三方扩展继续通过Finder入口使用，不调用未公开菜单接口或自动代替用户授权。
+- FinderFileActionTests在UUID临时目录实际验证颜色和标签保留、图片图标设置与恢复、PNG读入及表情渲染、包／链接拒绝、真实别名解析、原生副本、单／多来源ZIP解压字节、同名保护、临时清理、脚本编译与路径描述符、命令修饰键和跨导航完成；元数据操作零配置写入。FolderStyleEditorTests渲染五种模式×中英×明暗20种组合，检查尺寸与只读访问。完整回归结果记录于本次交付日志，逐文件git diff及空白检查完成后发布。
+- 隐藏窗口与描述符测试不代表实际完成Finder权限提示或所有第三方扩展交互，也不代表GPU帧率测量。真实简介窗口首次授权及菜单操作仍可由安装后的手动核对确认。
+- 本轮完整test.sh得到60条PASS记录。随后补强Duplicate／Copy的英文标题隔离和表情替换／焦点，五套相关回归再次通过；新增真实HubView键盘路由在网格、列表、分栏中执行⌘D和⌘L并校验实际输出，原位改名与拖动保护保持。样式编辑器中英文、明暗截图已逐一检查，无裁剪或不可读控件。

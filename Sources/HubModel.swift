@@ -1521,14 +1521,14 @@ enum HubFileOperations {
 
     /// UI file commands share admission/lifetime accounting with drag/drop.
     /// No persistence transaction spans await, and pending writes retain scopes.
-    private func performFileWork<Value: Sendable>(scopes: [URL],
+    private func performFileWork<Value: Sendable>(scopes: [URL], rememberScopes: Bool = true,
         work: @escaping @Sendable () throws -> Value,
         complete: @escaping @MainActor (Result<Value, Error>) -> Void) {
         guard fileOperationsInProgress < 3 else { errorMessage = L("已有文件操作正在进行，请稍后重试。"); return }
         let id = UUID()
         dropScopeURLs[id] = scopes
         beginPersistenceTransaction()
-        scopes.forEach(remember)
+        if rememberScopes { scopes.forEach(remember) }
         endPersistenceTransaction()
         fileOperationsInProgress += 1
         Task { @MainActor in
@@ -1536,10 +1536,57 @@ enum HubFileOperations {
             beginPersistenceTransaction()
             defer {
                 fileOperationsInProgress -= 1; dropScopeURLs.removeValue(forKey: id)
-                persistIfReady(); endPersistenceTransaction()
+                if rememberScopes { persistIfReady() }
+                endPersistenceTransaction()
             }
             complete(result)
         }
+    }
+
+    func performFinderAction(_ action: HubFinderAction, urls: [URL]) {
+        let files: [URL]
+        do { files = try HubFinderFileActions.files(urls) }
+        catch { errorMessage = error.localizedDescription; return }
+        guard !stagingTransferInProgress, !sharingInProgress, fileOperationsInProgress < 3 else { errorMessage = L("已有文件操作正在进行，请稍后重试。"); return }
+        let workspaceID = selectedWorkspaceID, directory = currentURL, selection = selectedIDs
+        let aliasSuffix = L("替身"), archiveName = L("归档")
+        if case .information = action { NotificationCenter.default.post(name: Notification.Name("HubDismissForExternalFileAction"), object: nil) }
+        performFileWork(scopes: files + files.map { $0.deletingLastPathComponent() }, rememberScopes: false, work: {
+            switch action {
+            case .label(let value): return try HubFinderFileActions.setLabel(value, urls: files)
+            case .folderStyle(let label, let icon):
+                guard files.count == 1 else { throw HubFinderActionError.invalidSelection }
+                return try HubFinderFileActions.folderStyle(files[0], label: label, icon: icon)
+            case .duplicate: return try HubFinderFileActions.duplicate(files)
+            case .alias: return try HubFinderFileActions.aliases(files, suffix: aliasSuffix)
+            case .compress: return try HubFinderFileActions.archive(files, destination: nil, defaultName: archiveName)
+            case .information: return try HubFinderFileActions.showInformation(files)
+            }
+        }) { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .success(let completed):
+                if !completed.changed.isEmpty || !completed.created.isEmpty {
+                    self.directorySnapshots.removeAll()
+                    HubFileIconCache.invalidate(completed.changed)
+                    self.refresh()
+                    if self.selectedWorkspaceID == workspaceID && self.currentURL == directory && self.selectedIDs == selection {
+                        let visible = completed.created.filter { $0.deletingLastPathComponent() == directory }
+                        if !visible.isEmpty { self.selectedIDs = Set(visible) }
+                    }
+                }
+                if !completed.failures.isEmpty { self.errorMessage = HubFileError.partial(completed.failures).localizedDescription }
+            case .failure(let error): self.errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    func openTerminal(at directory: URL) {
+        guard directory.isFileURL, let terminal = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Terminal") else {
+            errorMessage = L("无法找到系统终端应用。"); return
+        }
+        NotificationCenter.default.post(name: Notification.Name("HubDismissForExternalFileAction"), object: nil)
+        openWith([directory], application: terminal)
     }
 
     func createFolder(named name: String = L("未命名文件夹")) {
