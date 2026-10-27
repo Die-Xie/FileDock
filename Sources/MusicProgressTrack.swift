@@ -33,7 +33,7 @@ import SwiftUI
         fill.anchorPoint = CGPoint(x: 0, y: 0.5)
         layer?.addSublayer(fill)
         setAccessibilityElement(true); setAccessibilityRole(.progressIndicator)
-        setAccessibilityLabel("音乐播放进度")
+        setAccessibilityLabel(L("音乐播放进度"))
         recolor()
     }
     required init?(coder: NSCoder) { nil }

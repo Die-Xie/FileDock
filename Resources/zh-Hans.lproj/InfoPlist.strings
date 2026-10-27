@@ -1,0 +1,4 @@
+"NSDesktopFolderUsageDescription" = "浏览你选择的桌面文件夹。";
+"NSDocumentsFolderUsageDescription" = "浏览你选择的文稿文件夹。";
+"NSDownloadsFolderUsageDescription" = "浏览你选择的下载文件夹。";
+"NSAppleEventsUsageDescription" = "读取你选择的音乐播放器的歌曲信息，并在你操作时控制播放。";

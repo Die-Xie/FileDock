@@ -183,7 +183,7 @@ final class HubRecentFilesSource: HubRecentFilesProviding {
         self.receive = receive
         if query != nil { refresh(); return }
         guard let predicate = NSPredicate(fromMetadataQueryString: Self.rawQuery) else {
-            receive(.init(files: [], gathering: false, message: "无法建立最近使用的文件查询。")); return
+            receive(.init(files: [], gathering: false, message: L("无法建立最近使用的文件查询。"))); return
         }
         let query = makeQuery()
         query.predicate = predicate
@@ -204,11 +204,11 @@ final class HubRecentFilesSource: HubRecentFilesProviding {
                 }
             })
         }
-        receive(.init(files: lastFiles, gathering: true, message: "正在读取最近使用的文件…"))
+        receive(.init(files: lastFiles, gathering: true, message: L("正在读取最近使用的文件…")))
         guard self.query === query, generation == startedGeneration else { return }
         if !query.start() {
             stopQuery()
-            self.receive?(.init(files: lastFiles, gathering: false, message: "无法读取最近使用的文件，请检查 Spotlight 索引后重试。"))
+            self.receive?(.init(files: lastFiles, gathering: false, message: L("无法读取最近使用的文件，请检查 Spotlight 索引后重试。")))
         }
     }
 
@@ -269,7 +269,7 @@ final class HubRecentFilesSource: HubRecentFilesProviding {
         }
         try read.checkpoint()
         let gathering = query.isGathering
-        let message = gathering ? "正在读取最近使用的文件…" : files.isEmpty ? "暂无最近使用的文件。结果取决于 Spotlight 索引。" : nil
+        let message = gathering ? L("正在读取最近使用的文件…") : files.isEmpty ? L("暂无最近使用的文件。结果取决于 Spotlight 索引。") : nil
         return .init(files: HubRecentFilesPolicy.sorted(files), gathering: gathering, message: message)
     }
 
@@ -278,7 +278,7 @@ final class HubRecentFilesSource: HubRecentFilesProviding {
         if current != nil { refreshPending = true; return }
         guard jobs.count < 2 else {
             needsRetry = true
-            receive?(.init(files: lastFiles, gathering: false, message: "仍有最近使用查询等待系统响应。请稍后重试。")); return
+            receive?(.init(files: lastFiles, gathering: false, message: L("仍有最近使用查询等待系统响应。请稍后重试。"))); return
         }
         let id = UUID(), epoch = generation
         let read = HubRecentQueryRead(query), timeout = timeout
@@ -291,7 +291,7 @@ final class HubRecentFilesSource: HubRecentFilesProviding {
                 job.read.cancel(); job.timedOut = true; job.deadline = nil
                 self.jobs[id] = job; self.needsRetry = true; self.refreshPending = false
                 self.receive?(.init(files: self.lastFiles, gathering: false,
-                                   message: "最近使用读取暂时无响应。可以切换工作区，或点击刷新重试。"))
+                                   message: L("最近使用读取暂时无响应。可以切换工作区，或点击刷新重试。")))
                 return
             }
         }

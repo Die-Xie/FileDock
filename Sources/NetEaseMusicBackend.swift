@@ -50,7 +50,7 @@ final class HubNetEaseMusicBackend: HubQQMusicBackend {
             let reader = Reader()
             let capture = try playbackMenu(pid: pid, reader: reader)
             guard let toggle = HubNetEaseMusicAccessibility.uniqueCommand(.toggle, in: capture.labels) else {
-                throw HubQQMusicFailure.unavailable("网易云音乐未提供可用的播放菜单，请打开主窗口。")
+                throw HubQQMusicFailure.unavailable(L("网易云音乐未提供可用的播放菜单，请打开主窗口。"))
             }
             var track: (title: String, artist: String)?
             let application = AXUIElementCreateApplication(pid)
@@ -61,19 +61,19 @@ final class HubNetEaseMusicBackend: HubQQMusicBackend {
             return .success(HubQQMusicSnapshot(pid: pid, title: track?.title ?? "", artist: track?.artist ?? "",
                                                isPlaying: HubNetEaseMusicAccessibility.state(capture.labels[toggle].title)))
         } catch let error as HubQQMusicFailure { return .failure(error) }
-        catch { return .failure(.unavailable("网易云音乐暂时没有响应，请稍后重试。")) }
+        catch { return .failure(.unavailable(L("网易云音乐暂时没有响应，请稍后重试。"))) }
     }
     func perform(_ action: HubQQMusicAction, for pid: pid_t) -> Result<HubQQMusicSnapshot, HubQQMusicFailure> {
         do {
             let reader = Reader(), capture = try playbackMenu(pid: pid, reader: reader)
             guard let index = HubNetEaseMusicAccessibility.uniqueCommand(action, in: capture.labels) else {
-                throw HubQQMusicFailure.unavailable("网易云音乐当前未提供唯一、可用的播放控制。")
+                throw HubQQMusicFailure.unavailable(L("网易云音乐当前未提供唯一、可用的播放控制。"))
             }
             let item = capture.items[index]
             let title = try reader.string(item, kAXTitleAttribute)
             guard title == capture.labels[index].title, HubNetEaseMusicAccessibility.matches(action, title: title),
                   try reader.enabled(item), try reader.string(item, kAXRoleAttribute) == kAXMenuItemRole else {
-                throw HubQQMusicFailure.unavailable("网易云音乐播放菜单已变化，请重试。")
+                throw HubQQMusicFailure.unavailable(L("网易云音乐播放菜单已变化，请重试。"))
             }
             var actualPID: pid_t = 0
             guard AXUIElementGetPid(item, &actualPID) == .success, actualPID == pid else { throw HubQQMusicFailure.wrongTarget }
@@ -81,11 +81,11 @@ final class HubNetEaseMusicBackend: HubQQMusicBackend {
             AXUIElementSetMessagingTimeout(item, 0.3)
             let error = AXUIElementPerformAction(item, kAXPressAction as CFString)
             guard error == .success else {
-                throw error == .apiDisabled ? HubQQMusicFailure.permission : .unavailable("网易云音乐当前不接受播放控制。")
+                throw error == .apiDisabled ? HubQQMusicFailure.permission : .unavailable(L("网易云音乐当前不接受播放控制。"))
             }
             return snapshot(for: pid)
         } catch let error as HubQQMusicFailure { return .failure(error) }
-        catch { return .failure(.unavailable("网易云音乐暂时没有响应，请稍后重试。")) }
+        catch { return .failure(.unavailable(L("网易云音乐暂时没有响应，请稍后重试。"))) }
     }
     private struct Menu {
         let items: [AXUIElement]
@@ -95,7 +95,7 @@ final class HubNetEaseMusicBackend: HubQQMusicBackend {
         try validate(pid)
         let application = AXUIElementCreateApplication(pid)
         guard let bar = try reader.element(application, kAXMenuBarAttribute) else {
-            throw HubQQMusicFailure.unavailable("网易云音乐当前没有提供原生菜单。")
+            throw HubQQMusicFailure.unavailable(L("网易云音乐当前没有提供原生菜单。"))
         }
         var matches: [Menu] = []
         for menuItem in try reader.elements(bar, kAXChildrenAttribute, limit: 16) {
@@ -111,7 +111,7 @@ final class HubNetEaseMusicBackend: HubQQMusicBackend {
             }
         }
         guard matches.count == 1 else {
-            throw HubQQMusicFailure.unavailable("未找到网易云音乐的唯一播放菜单，请打开主窗口后重新检测。")
+            throw HubQQMusicFailure.unavailable(L("未找到网易云音乐的唯一播放菜单，请打开主窗口后重新检测。"))
         }
         return matches[0]
     }
@@ -123,14 +123,14 @@ final class HubNetEaseMusicBackend: HubQQMusicBackend {
     private final class Reader {
         private let deadline = ProcessInfo.processInfo.systemUptime + 1.2
         private func value(_ element: AXUIElement, _ attribute: String) throws -> CFTypeRef? {
-            guard ProcessInfo.processInfo.systemUptime < deadline else { throw HubQQMusicFailure.unavailable("网易云音乐响应较慢，请稍后重试。") }
+            guard ProcessInfo.processInfo.systemUptime < deadline else { throw HubQQMusicFailure.unavailable(L("网易云音乐响应较慢，请稍后重试。")) }
             AXUIElementSetMessagingTimeout(element, 0.3)
             var result: CFTypeRef?
             switch AXUIElementCopyAttributeValue(element, attribute as CFString, &result) {
             case .success: return result
             case .noValue, .attributeUnsupported: return nil
             case .apiDisabled: throw HubQQMusicFailure.permission
-            default: throw HubQQMusicFailure.unavailable("网易云音乐暂时没有响应，请稍后重试。")
+            default: throw HubQQMusicFailure.unavailable(L("网易云音乐暂时没有响应，请稍后重试。"))
             }
         }
         func string(_ element: AXUIElement, _ attribute: String) throws -> String {

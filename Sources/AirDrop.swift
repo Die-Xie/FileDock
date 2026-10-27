@@ -7,15 +7,15 @@ enum HubAirDropError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .emptySelection: return "请先选择要通过 AirDrop 发送的文件或文件夹。"
-        case .invalidURL: return "AirDrop 仅支持本机文件和文件夹，请先将链接内容保存为文件。"
-        case .tooManyItems: return "一次最多发送 1000 个项目，请分批发送或先压缩为一个文件。"
-        case .busy: return "AirDrop 正在处理另一批文件，请稍后重试。"
-        case .timedOut: return "准备 AirDrop 文件超时，请检查文件所在磁盘或网络位置后重试。"
-        case .unavailable: return "当前无法使用 AirDrop。请确认 Mac 支持 AirDrop，并已开启 Wi-Fi 和蓝牙。"
-        case .missing(let name): return "“\(name)”已被移动或删除，请刷新后重新选择。"
-        case .unreadable(let name): return "无法读取“\(name)”，请检查文件权限或所在磁盘是否可用。"
-        case .unsupported(let name): return "“\(name)”不是可发送的普通文件或文件夹。"
+        case .emptySelection: return L("请先选择要通过 AirDrop 发送的文件或文件夹。")
+        case .invalidURL: return L("AirDrop 仅支持本机文件和文件夹，请先将链接内容保存为文件。")
+        case .tooManyItems: return L("一次最多发送 1000 个项目，请分批发送或先压缩为一个文件。")
+        case .busy: return L("AirDrop 正在处理另一批文件，请稍后重试。")
+        case .timedOut: return L("准备 AirDrop 文件超时，请检查文件所在磁盘或网络位置后重试。")
+        case .unavailable: return L("当前无法使用 AirDrop。请确认 Mac 支持 AirDrop，并已开启 Wi-Fi 和蓝牙。")
+        case .missing(let name): return L("“\(name)”已被移动或删除，请刷新后重新选择。")
+        case .unreadable(let name): return L("无法读取“\(name)”，请检查文件权限或所在磁盘是否可用。")
+        case .unsupported(let name): return L("“\(name)”不是可发送的普通文件或文件夹。")
         }
     }
 }

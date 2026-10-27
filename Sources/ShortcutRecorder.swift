@@ -97,7 +97,7 @@ struct HubShortcutRecorder: NSViewRepresentable {
                 if event.keyCode == 51 || event.keyCode == 117 { self.stage(nil, keyCode: event.keyCode); return nil }
                 let shortcut = HubShortcut(keyCode: UInt32(event.keyCode), modifiers: modifiers)
                 if shortcut.validationError != nil {
-                    self.prompt = "请包含 ⌘ / ⌃ / ⌥"
+                    self.prompt = L("请包含 ⌘ / ⌃ / ⌥")
                     self.refreshTitle()
                 } else { self.stage(shortcut, keyCode: event.keyCode) }
                 return nil
@@ -107,7 +107,7 @@ struct HubShortcutRecorder: NSViewRepresentable {
         private func stage(_ value: HubShortcut?, keyCode: UInt16) {
             pendingShortcut = value
             pendingKeyCode = keyCode
-            prompt = "松开按键以保存…"
+            prompt = L("松开按键以保存…")
             refreshTitle()
         }
 
@@ -124,11 +124,11 @@ struct HubShortcutRecorder: NSViewRepresentable {
         }
 
         fileprivate func refreshTitle() {
-            title = isRecording ? (prompt ?? "请按快捷键…") : (shortcut?.displayString ?? "未设置 · 点击录制")
+            title = isRecording ? (prompt ?? L("请按快捷键…")) : (shortcut?.displayString ?? L("未设置 · 点击录制"))
             contentTintColor = isRecording ? .controlAccentColor : nil
-            setAccessibilityLabel("\(recordingName)快捷键")
-            setAccessibilityValue(isRecording ? "正在录制，按 Escape 取消，按 Delete 清除" : title)
-            setAccessibilityHelp("点击录制，组合至少包含 Command、Control 或 Option。点击其他位置取消。")
+            setAccessibilityLabel(L("\(recordingName)快捷键"))
+            setAccessibilityValue(isRecording ? L("正在录制，按 Escape 取消，按 Delete 清除") : title)
+            setAccessibilityHelp(L("点击录制，组合至少包含 Command、Control 或 Option。点击其他位置取消。"))
         }
 
         fileprivate func removeObservers() {

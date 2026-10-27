@@ -2,6 +2,7 @@ import SwiftUI
 
 @MainActor
 struct HubQQMusicBar: View {
+    @Environment(\.locale) private var locale
     @ObservedObject var controller: HubQQMusicController
     var compact = false
     var compactWidth: CGFloat = HubEmbeddedMusicLayout.controlWidth
@@ -14,6 +15,7 @@ struct HubQQMusicBar: View {
     @FocusState private var focusedCompactControl: Int?
 
     @ViewBuilder var body: some View {
+        let _ = locale // Refresh localized controls without resetting hover or focus.
         if compact { compactBar } else { fullBar }
     }
 
@@ -35,17 +37,17 @@ struct HubQQMusicBar: View {
                     .disabled(controller.setupAction == nil)
             }
             HStack(spacing: 3) {
-                control("backward.end.fill", label: "\(controller.playerName)上一首") { controller.previousTrack() }
+                control("backward.end.fill", label: L("\(controller.playerName)上一首")) { controller.previousTrack() }
                 control(playSymbol, label: playLabel, prominent: true) { controller.togglePlayback() }
-                control("forward.end.fill", label: "\(controller.playerName)下一首") { controller.nextTrack() }
+                control("forward.end.fill", label: L("\(controller.playerName)下一首")) { controller.nextTrack() }
             }.disabled(controller.status != .ready)
             Button(action: showConnectionSettings) {
                 Image(systemName: "gearshape").frame(width: 24, height: 30)
-            }.buttonStyle(.plain).help("音乐连接设置").accessibilityLabel("音乐连接设置")
+            }.buttonStyle(.plain).help(L("音乐连接设置")).accessibilityLabel(L("音乐连接设置"))
             Button { controller.openPlayer() } label: {
                 Image(systemName: "arrow.up.right.square").font(.system(size: 13)).frame(width: 24, height: 30)
-            }.buttonStyle(.plain).foregroundStyle(.secondary).help("打开\(controller.playerName)窗口")
-                .accessibilityLabel("打开\(controller.playerName)窗口").disabled(controller.status == .notInstalled)
+            }.buttonStyle(.plain).foregroundStyle(.secondary).help(L("打开\(controller.playerName)窗口"))
+                .accessibilityLabel(L("打开\(controller.playerName)窗口")).disabled(controller.status == .notInstalled)
         }.padding(.horizontal, 16).padding(.vertical, 10)
         .accessibilityElement(children: .contain)
     }
@@ -64,9 +66,9 @@ struct HubQQMusicBar: View {
                             .allowsHitTesting(false)
                             .accessibilityHidden(showCompactControls)
                         HStack(spacing: 4) {
-                            compactControl("backward.end.fill", label: "\(controller.playerName)上一首", focus: 0) { controller.previousTrack() }
+                            compactControl("backward.end.fill", label: L("\(controller.playerName)上一首"), focus: 0) { controller.previousTrack() }
                             compactControl(playSymbol, label: playLabel, prominent: true, focus: 1) { controller.togglePlayback() }
-                            compactControl("forward.end.fill", label: "\(controller.playerName)下一首", focus: 2) { controller.nextTrack() }
+                            compactControl("forward.end.fill", label: L("\(controller.playerName)下一首"), focus: 2) { controller.nextTrack() }
                         }.opacity(showCompactControls ? 1 : 0)
                             .allowsHitTesting(showCompactControls)
                             .accessibilityHidden(!showCompactControls)
@@ -107,12 +109,12 @@ struct HubQQMusicBar: View {
             Text(controller.title.isEmpty ? controller.playerName : controller.title)
             Text(subtitle)
             Divider()
-            Button("音乐连接设置…", action: showConnectionSettings)
-            Button("打开\(controller.playerName)") { controller.openPlayer() }.disabled(controller.status == .notInstalled)
+            Button(L("音乐连接设置…"), action: showConnectionSettings)
+            Button(L("打开\(controller.playerName)")) { controller.openPlayer() }.disabled(controller.status == .notInstalled)
             if controller.status == .needsPermission {
-                Button("连接\(controller.playerName)") { controller.requestAccess() }
+                Button(L("连接\(controller.playerName)")) { controller.requestAccess() }
             } else if controller.status == .unavailable {
-                Button("重新连接") { controller.reconnect() }
+                Button(L("重新连接")) { controller.reconnect() }
             }
         }
     }
@@ -135,11 +137,11 @@ struct HubQQMusicBar: View {
 
     private var connectionLabel: String {
         switch controller.status {
-        case .needsPermission: return "授权\(controller.playerName)控制"
-        case .notRunning: return "连接\(controller.playerName)"
-        case .unavailable: return "修复\(controller.playerName)连接"
-        case .notInstalled: return "未安装\(controller.playerName)"
-        case .connecting: return "正在连接…"
+        case .needsPermission: return L("授权\(controller.playerName)控制")
+        case .notRunning: return L("连接\(controller.playerName)")
+        case .unavailable: return L("修复\(controller.playerName)连接")
+        case .notInstalled: return L("未安装\(controller.playerName)")
+        case .connecting: return L("正在连接…")
         case .ready: return controller.playerName
         }
     }
@@ -168,20 +170,20 @@ struct HubQQMusicBar: View {
     }
 
     private var playLabel: String {
-        guard let playing = controller.isPlaying else { return "播放或暂停\(controller.playerName)" }
-        return playing ? "暂停\(controller.playerName)" : "播放\(controller.playerName)"
+        guard let playing = controller.isPlaying else { return L("播放或暂停\(controller.playerName)") }
+        return playing ? L("暂停\(controller.playerName)") : L("播放\(controller.playerName)")
     }
 
     private var subtitle: String {
         if let message = controller.message, !message.isEmpty { return message }
         switch controller.status {
-        case .notInstalled: return "尚未安装\(controller.playerName)"
-        case .notRunning: return "打开\(controller.playerName)，继续你的播放列表"
-        case .needsPermission: return controller.usesAutomationPermission ? "首次连接需要自动化权限" : "首次连接需要辅助功能权限"
-        case .connecting: return "正在连接\(controller.playerName)…"
-        case .unavailable: return "暂时无法读取播放状态"
+        case .notInstalled: return L("尚未安装\(controller.playerName)")
+        case .notRunning: return L("打开\(controller.playerName)，继续你的播放列表")
+        case .needsPermission: return controller.usesAutomationPermission ? L("首次连接需要自动化权限") : L("首次连接需要辅助功能权限")
+        case .connecting: return L("正在连接\(controller.playerName)…")
+        case .unavailable: return L("暂时无法读取播放状态")
         case .ready:
-            let state = controller.isPlaying.map { $0 ? "正在播放" : "已暂停" } ?? controller.playerName
+            let state = controller.isPlaying.map { $0 ? L("正在播放") : L("已暂停") } ?? controller.playerName
             return controller.artist.isEmpty ? state : "\(controller.artist) · \(state)"
         }
     }

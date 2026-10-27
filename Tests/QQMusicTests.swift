@@ -64,6 +64,13 @@ struct QQMusicTests {
     }
 
     @MainActor static func main() async throws {
+        // FileDock's language cannot change the external player's AX protocol.
+        for language in [HubLanguage.english, .simplifiedChinese] {
+            HubLocalization.select(language)
+            precondition(HubQQMusicAccessibility.parseTrack("歌曲名：Song - 歌手名：Artist")?.title == "Song")
+            precondition(HubQQMusicAccessibility.isPlaybackPanel(role: kAXGroupRole, names: ["播放控制栏"]))
+            precondition(HubNetEaseMusicAccessibility.matches(.toggle, title: "播放"))
+        }
         let track = HubQQMusicAccessibility.parseTrack("歌曲名：Ton Chin Kan - 歌手名：AKASAKI")
         precondition(track?.title == "Ton Chin Kan" && track?.artist == "AKASAKI")
         let unicode = HubQQMusicAccessibility.parseTrack(" 歌曲名： 春天 - Live 🌸 - 歌手名：歌手 A / 歌手 B \n")

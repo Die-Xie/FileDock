@@ -8,13 +8,13 @@ struct HubShortcut: Codable, Equatable {
     static let modifierMask = UInt32(cmdKey | controlKey | optionKey | shiftKey)
 
     var validationError: String? {
-        guard keyCode <= 127 else { return "此按键无法用作全局快捷键，请重新录制。" }
+        guard keyCode <= 127 else { return L("此按键无法用作全局快捷键，请重新录制。") }
         guard ![54, 55, 56, 57, 58, 59, 60, 61, 62, 63].contains(keyCode) else {
-            return "请再按一个字母、数字、方向键或功能键。"
+            return L("请再按一个字母、数字、方向键或功能键。")
         }
-        guard modifiers & ~Self.modifierMask == 0 else { return "包含暂不支持的修饰键，请重新录制。" }
+        guard modifiers & ~Self.modifierMask == 0 else { return L("包含暂不支持的修饰键，请重新录制。") }
         guard modifiers & UInt32(cmdKey | controlKey | optionKey) != 0 else {
-            return "请至少包含 ⌘、⌃ 或 ⌥ 中的一个修饰键。"
+            return L("请至少包含 ⌘、⌃ 或 ⌥ 中的一个修饰键。")
         }
         return nil
     }
@@ -38,7 +38,7 @@ struct HubShortcut: Codable, Equatable {
     }
 
     private static func keyLabel(_ code: UInt32) -> String {
-        let named: [UInt32: String] = [36: "↩", 48: "⇥", 49: "空格", 51: "⌫", 53: "⎋", 71: "⌧", 76: "⌤",
+        let named: [UInt32: String] = [36: "↩", 48: "⇥", 49: L("空格"), 51: "⌫", 53: "⎋", 71: "⌧", 76: "⌤",
                                         115: "↖", 116: "⇞", 117: "⌦", 119: "↘", 121: "⇟", 123: "←", 124: "→", 125: "↓", 126: "↑",
                                         122: "F1", 120: "F2", 99: "F3", 118: "F4", 96: "F5", 97: "F6", 98: "F7", 100: "F8", 101: "F9", 109: "F10",
                                         103: "F11", 111: "F12", 105: "F13", 107: "F14", 113: "F15", 106: "F16", 64: "F17", 79: "F18", 80: "F19", 90: "F20"]
@@ -64,7 +64,7 @@ struct HubShortcut: Codable, Equatable {
             }
             if let translated { return translated }
         }
-        return "键 \(code)"
+        return L("键 \(code)")
     }
 }
 
@@ -81,8 +81,8 @@ struct HubGlobalShortcuts: Codable, Equatable {
         if let error = top?.validationError { errors["top"] = error }
         if let error = cursor?.validationError { errors["cursor"] = error }
         if let top, let cursor, top == cursor, top.validationError == nil {
-            errors["top"] = "与“光标旁呼出”重复，请更换其中一个。"
-            errors["cursor"] = "与“在触发位置呼出”重复，请更换其中一个。"
+            errors["top"] = L("与“光标旁呼出”重复，请更换其中一个。")
+            errors["cursor"] = L("与“在触发位置呼出”重复，请更换其中一个。")
         }
         return errors
     }

@@ -35,6 +35,7 @@ struct HubView: View {
     @ObservedObject var model: HubModel
     @ObservedObject var presentation: HubPresentationState
     let music: HubQQMusicController
+    private var locale: Locale { model.settings.resolvedLanguage.locale }
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Namespace private var leftTabSelection
@@ -46,7 +47,7 @@ struct HubView: View {
     var onClose: () -> Void
     @State private var editingWorkspace: Workspace?
     @State private var newFolder = false
-    @State private var folderName = "新建文件夹"
+    @State private var folderName = L("新建文件夹")
     @State private var pendingTrash: [URL] = []
     @State private var dropTargeted = false
     @State private var stagingDropTargeted = false
@@ -81,7 +82,7 @@ struct HubView: View {
                     Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange)
                     Text(message).font(.caption).fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 0)
-                    Button("重试") { model.retryDirectoryLoad() }.controlSize(.small)
+                    Button(L("重试")) { model.retryDirectoryLoad() }.controlSize(.small)
                 }.padding(.horizontal, 16).padding(.vertical, 8)
             }
             if model.isStagingRoot { stagingActions }
@@ -104,6 +105,7 @@ struct HubView: View {
             footer
         }
         .font(.system(size: model.settings.fontSize))
+        .environment(\.locale, model.settings.resolvedLanguage.locale)
         .environment(\.hubInterfaceMotion, interfaceMotion)
         .background(backgroundColor)
         .background(HubKeyMonitor(handler: handleKey))
@@ -136,7 +138,7 @@ struct HubView: View {
         .overlay(alignment: .bottom) {
             ZStack {
                 if showsAirDropHint || (airDropTargeted && fileDropFeedback == nil) {
-                    Text(showsAirDropHint ? "将文件拖到 AirDrop 图标，或先选中文件再点按" : "松开以通过 AirDrop 发送")
+                    Text(showsAirDropHint ? L("将文件拖到 AirDrop 图标，或先选中文件再点按") : L("松开以通过 AirDrop 发送"))
                         .font(.caption).multilineTextAlignment(.center)
                         .padding(.horizontal, 14).padding(.vertical, 9)
                         .background(.regularMaterial, in: Capsule())
@@ -202,28 +204,28 @@ struct HubView: View {
         .onChange(of: model.viewMode) { _ in renameEntry = nil }
         .onChange(of: dropTargeted) { if $0 { presentation.setFileDragActive(true) } }
         .sheet(item: $editingWorkspace) { WorkspaceEditor(model: model, workspace: $0) }
-        .alert("新建文件夹", isPresented: $newFolder) {
-            TextField("名称", text: $folderName)
-            Button("取消", role: .cancel) { }
-            Button("创建") { model.createFolder(named: folderName) }
+        .alert(L("新建文件夹"), isPresented: $newFolder) {
+            TextField(L("名称"), text: $folderName)
+            Button(L("取消"), role: .cancel) { }
+            Button(L("创建")) { model.createFolder(named: folderName) }
         }
-        .alert("更改文件扩展名？", isPresented: Binding(get: { extensionRename != nil }, set: { if !$0 { extensionRename = nil } })) {
-            Button("取消", role: .cancel) { extensionRename = nil }
-            Button("保留原扩展名") {
+        .alert(L("更改文件扩展名？"), isPresented: Binding(get: { extensionRename != nil }, set: { if !$0 { extensionRename = nil } })) {
+            Button(L("取消"), role: .cancel) { extensionRename = nil }
+            Button(L("保留原扩展名")) {
                 if let request = extensionRename {
                     model.rename(request.entry, to: HubFileNameEditing.keepingExtension(from: request.entry.url.lastPathComponent, in: request.name))
                 }
                 extensionRename = nil
             }
-            Button("使用新名称") { if let request = extensionRename { model.rename(request.entry, to: request.name) }; extensionRename = nil }
+            Button(L("使用新名称")) { if let request = extensionRename { model.rename(request.entry, to: request.name) }; extensionRename = nil }
                 .keyboardShortcut(.defaultAction)
-        } message: { Text("更改扩展名可能导致原来的应用无法识别文件，不会转换文件格式。") }
-        .alert("移到废纸篓？", isPresented: Binding(get: { !pendingTrash.isEmpty }, set: { if !$0 { pendingTrash = [] } })) {
-            Button("取消", role: .cancel) { pendingTrash = [] }
-            Button("移到废纸篓", role: .destructive) { let urls = pendingTrash; pendingTrash = []; model.trash(urls) }
-        } message: { Text("将 \(pendingTrash.count) 个项目移到系统废纸篓。可以在访达中恢复。") }
-        .alert("操作未完成", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {
-            Button("好") { model.errorMessage = nil }
+        } message: { Text(L("更改扩展名可能导致原来的应用无法识别文件，不会转换文件格式。")) }
+        .alert(L("移到废纸篓？"), isPresented: Binding(get: { !pendingTrash.isEmpty }, set: { if !$0 { pendingTrash = [] } })) {
+            Button(L("取消"), role: .cancel) { pendingTrash = [] }
+            Button(L("移到废纸篓"), role: .destructive) { let urls = pendingTrash; pendingTrash = []; model.trash(urls) }
+        } message: { Text(L("将 \(pendingTrash.count) 个项目移到系统废纸篓。可以在访达中恢复。")) }
+        .alert(L("操作未完成"), isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {
+            Button(L("好")) { model.errorMessage = nil }
         } message: { Text(model.errorMessage ?? "") }
     }
 
@@ -242,7 +244,7 @@ struct HubView: View {
                         ProgressView().controlSize(.small).opacity(activityActive ? 1 : 0)
                         Image(systemName: "checkmark").font(.caption).opacity(activityActive ? 0 : 1)
                     }.frame(width: 14, height: 14)
-                    Text(!activityActive ? "已完成" : model.fileOperationsInProgress > 0 ? "正在处理文件…" : model.entries.isEmpty ? "正在读取…" : "已读取 \(model.entries.count) 项…")
+                    Text(!activityActive ? L("已完成") : model.fileOperationsInProgress > 0 ? L("正在处理文件…") : model.entries.isEmpty ? L("正在读取…") : L("已读取 \(model.entries.count) 项…"))
                         .font(.caption)
                 }.padding(.horizontal, 10).padding(.vertical, 6)
                     .background(.regularMaterial, in: Capsule()).padding(10)
@@ -306,7 +308,7 @@ struct HubView: View {
                             workspaceLeading(rightWorkspaces, selectionNamespace: rightTabSelection, availableWidth: layout.rightViewportWidth)
                                 .frame(width: layout.rightViewportWidth, alignment: .leading).clipped()
                         }
-                        HubWindowDragHandle().frame(width: layout.dragWidth, height: 30).help("拖动窗口")
+                        HubWindowDragHandle().frame(width: layout.dragWidth, height: 30).help(L("拖动窗口"))
                         HStack(spacing: 4) { workspaceControls }
                             .animation(interfaceMotion.selection, value: model.selectedWorkspaceID)
                             .animation(nil, value: interfaceMotion.enabled)
@@ -332,7 +334,7 @@ struct HubView: View {
         } else {
             HStack(spacing: 8) {
                 workspaceLeading(model.tabWorkspaces, selectionNamespace: floatingTabSelection)
-                HubWindowDragHandle().frame(minWidth: 32, maxWidth: .infinity, minHeight: 30, maxHeight: 30).help("拖动窗口")
+                HubWindowDragHandle().frame(minWidth: 32, maxWidth: .infinity, minHeight: 30, maxHeight: 30).help(L("拖动窗口"))
                 HStack(spacing: 4) { workspaceControls }.fixedSize()
                     .animation(interfaceMotion.selection, value: model.selectedWorkspaceID)
                     .animation(nil, value: interfaceMotion.enabled)
@@ -433,14 +435,14 @@ struct HubView: View {
                                               targeted: workspaceSpringLoader.target == favorite.id,
                                               selectionNamespace: shortcutSelection)
                 }.buttonStyle(.plain)
-                    .accessibilityLabel("收藏：\(favorite.name)")
-                    .help("\(favorite.name) · 右键可隐藏快捷入口")
+                    .accessibilityLabel(L("收藏：\(model.displayName(for: favorite))"))
+                    .help(L("\(model.displayName(for: favorite)) · 右键可隐藏快捷入口"))
                     .onHover { shortcutHover($0, key: favorite.id, action: { model.selectWorkspace(favorite.id) }) }
                     .onDrop(of: HubWorkspaceFileDropDelegate.contentTypes, delegate: workspaceFileDrop(favorite))
                     .anchorPreference(key: HubFileDropRegionKey.self, value: .bounds) { [.workspace(favorite.id): $0] }
                     .contextMenu {
-                        HubMenuButton("编辑收藏…", systemImage: "pencil") { editingWorkspace = favorite }
-                        HubMenuButton("隐藏收藏快捷入口", systemImage: "eye.slash") { model.setFavoriteShortcutVisible(false) }
+                        HubMenuButton(L("编辑收藏…"), systemImage: "pencil") { editingWorkspace = favorite }
+                        HubMenuButton(L("隐藏收藏快捷入口"), systemImage: "eye.slash") { model.setFavoriteShortcutVisible(false) }
                     }
             }
         case .airDrop:
@@ -449,7 +451,7 @@ struct HubView: View {
                     .buttonStyle(.plain)
                     .disabled(!canReceiveAirDrop)
                     .accessibilityLabel("AirDrop")
-                    .help("AirDrop · 拖入文件，或先选择文件后点按")
+                    .help(L("AirDrop · 拖入文件，或先选择文件后点按"))
                     .onDrop(of: HubAirDropFileDropDelegate.contentTypes, delegate: HubAirDropFileDropDelegate(
                         canReceive: { presentation.previewVisible && canReceiveAirDrop && !HubWorkspaceDragState.isDragging },
                         targeted: { active in
@@ -476,13 +478,13 @@ struct HubView: View {
                                               targeted: workspaceSpringLoader.target == recent.id,
                                               selectionNamespace: shortcutSelection)
                 }.buttonStyle(.plain)
-                    .accessibilityLabel("最近使用：\(recent.name)")
-                    .help("\(recent.name) · 右键可隐藏快捷入口")
+                    .accessibilityLabel(L("最近使用：\(model.displayName(for: recent))"))
+                    .help(L("\(model.displayName(for: recent)) · 右键可隐藏快捷入口"))
                     .onHover { shortcutHover($0, key: recent.id, action: { model.selectWorkspace(recent.id) }) }
                     .onDrop(of: HubWorkspaceFileDropDelegate.contentTypes, delegate: workspaceFileDrop(recent))
                     .anchorPreference(key: HubFileDropRegionKey.self, value: .bounds) { [.workspace(recent.id): $0] }
                     .contextMenu {
-                        HubMenuButton("隐藏最近使用快捷入口", systemImage: "eye.slash") { model.setRecentShortcutVisible(false) }
+                        HubMenuButton(L("隐藏最近使用快捷入口"), systemImage: "eye.slash") { model.setRecentShortcutVisible(false) }
                     }
             }
         case .staging:
@@ -492,8 +494,8 @@ struct HubView: View {
                                               count: model.stagedURLs.count, selected: model.isStagingWorkspace,
                                               targeted: stagingDropTargeted, selectionNamespace: shortcutSelection)
                 }.buttonStyle(.plain)
-                    .accessibilityLabel("暂存区，\(model.stagedURLs.count) 个项目")
-                    .help("暂存区 · 拖入文件暂存引用，点击查看，右键快速转移")
+                    .accessibilityLabel(L("暂存区，\(model.stagedURLs.count) 个项目"))
+                    .help(L("暂存区 · 拖入文件暂存引用，点击查看，右键快速转移"))
                     .onHover { shortcutHover($0, key: model.settings.stagingWorkspaceID ?? stagingHoverID, action: { model.openStagingWorkspace() }) }
                     .onDrop(of: HubWorkspaceFileDropDelegate.contentTypes, delegate: HubWorkspaceFileDropDelegate(
                         id: model.settings.stagingWorkspaceID ?? stagingHoverID, loader: workspaceSpringLoader,
@@ -503,21 +505,21 @@ struct HubView: View {
                         targeted: { stagingDropTargeted = $0; if $0 { presentation.setFileDragActive(true) } }, receive: receiveStagingDrop))
                     .anchorPreference(key: HubFileDropRegionKey.self, value: .bounds) { [.staging: $0] }
                     .contextMenu {
-                        HubMenuButton("打开暂存区", systemImage: "tray") { model.openStagingWorkspace() }
+                        HubMenuButton(L("打开暂存区"), systemImage: "tray") { model.openStagingWorkspace() }
                         if model.currentURL != nil {
-                            HubMenuButton("复制全部到当前文件夹", systemImage: "doc.on.doc") { model.transferStagingToCurrentFolder(copy: true) }
+                            HubMenuButton(L("复制全部到当前文件夹"), systemImage: "doc.on.doc") { model.transferStagingToCurrentFolder(copy: true) }
                                 .disabled(model.stagedURLs.isEmpty || model.stagingTransferInProgress)
-                            HubMenuButton("移动全部到当前文件夹", systemImage: "folder") { model.transferStagingToCurrentFolder(copy: false) }
+                            HubMenuButton(L("移动全部到当前文件夹"), systemImage: "folder") { model.transferStagingToCurrentFolder(copy: false) }
                                 .disabled(model.stagedURLs.isEmpty || model.stagingTransferInProgress)
                         }
-                        HubMenuButton("复制全部到…", systemImage: "doc.on.doc") { model.chooseStagingTransfer(copy: true, urls: model.stagedURLs) }
+                        HubMenuButton(L("复制全部到…"), systemImage: "doc.on.doc") { model.chooseStagingTransfer(copy: true, urls: model.stagedURLs) }
                             .disabled(model.stagedURLs.isEmpty || model.stagingTransferInProgress)
-                        HubMenuButton("移动全部到…", systemImage: "folder") { model.chooseStagingTransfer(copy: false, urls: model.stagedURLs) }
+                        HubMenuButton(L("移动全部到…"), systemImage: "folder") { model.chooseStagingTransfer(copy: false, urls: model.stagedURLs) }
                             .disabled(model.stagedURLs.isEmpty || model.stagingTransferInProgress)
                         Divider()
-                        HubMenuButton("清空暂存引用", systemImage: "minus.circle") { model.clearStagedFiles() }
+                        HubMenuButton(L("清空暂存引用"), systemImage: "minus.circle") { model.clearStagedFiles() }
                             .disabled(model.stagedURLs.isEmpty || model.stagingTransferInProgress)
-                        HubMenuButton("关闭暂存区", systemImage: "eye.slash") { model.setStagingEnabled(false) }
+                        HubMenuButton(L("关闭暂存区"), systemImage: "eye.slash") { model.setStagingEnabled(false) }
                     }
             }
         }
@@ -525,10 +527,10 @@ struct HubView: View {
 
     private func shortcutTitle(_ item: HubShortcutItem) -> String {
         switch item {
-        case .favorite: return model.fixedFavoriteWorkspace?.name ?? "收藏"
+        case .favorite: return model.fixedFavoriteWorkspace.map { model.displayName(for: $0) } ?? L("收藏")
         case .airDrop: return "AirDrop"
-        case .recents: return model.fixedRecentWorkspace?.name ?? "最近使用"
-        case .staging: return "暂存区"
+        case .recents: return model.fixedRecentWorkspace.map { model.displayName(for: $0) } ?? L("最近使用")
+        case .staging: return L("暂存区")
         }
     }
 
@@ -579,27 +581,27 @@ struct HubView: View {
                 }
         }
         Menu {
-            Toggle("固定收藏到右上角", isOn: Binding(
+            Toggle(L("固定收藏到右上角"), isOn: Binding(
                 get: { model.fixedFavoriteWorkspace != nil },
                 set: { model.setFavoriteShortcutVisible($0) }))
-            Toggle("固定最近使用到右上角", isOn: Binding(
+            Toggle(L("固定最近使用到右上角"), isOn: Binding(
                 get: { model.settings.resolvedRecentShortcutEnabled },
                 set: { model.setRecentShortcutVisible($0) }))
-            Toggle("显示文件暂存区", isOn: Binding(
+            Toggle(L("显示文件暂存区"), isOn: Binding(
                 get: { model.settings.resolvedStagingEnabled },
                 set: { model.setStagingEnabled($0) }))
-            Toggle("启用 AirDrop", isOn: Binding(
+            Toggle(L("启用 AirDrop"), isOn: Binding(
                 get: { model.settings.resolvedAirDropEnabled },
                 set: { model.settings.airDropEnabled = $0 }))
             Divider()
-            HubMenuButton("文件夹工作区…", systemImage: "folder.badge.plus") { model.chooseWorkspace(mode: .folder) }
-            HubMenuButton("文件与文件夹合集…", systemImage: "square.stack.3d.up") { model.chooseWorkspace(mode: .references) }
+            HubMenuButton(L("文件夹工作区…"), systemImage: "folder.badge.plus") { model.chooseWorkspace(mode: .folder) }
+            HubMenuButton(L("文件与文件夹合集…"), systemImage: "square.stack.3d.up") { model.chooseWorkspace(mode: .references) }
         } label: { Image(systemName: "plus").font(.system(size: 14, weight: .medium)).frame(width: HubWorkspaceShortcutLabel.width, height: HubWorkspaceShortcutLabel.height) }
             .menuStyle(.borderlessButton).menuIndicator(.hidden)
             .frame(width: HubWorkspaceShortcutLabel.width, height: HubWorkspaceShortcutLabel.height).clipped()
-            .accessibilityLabel("添加工作区").help("添加工作区")
+            .accessibilityLabel(L("添加工作区")).help(L("添加工作区"))
         if presentation.windowMoving ? presentation.movingPinned : model.pinned {
-            Button { onClose() } label: { Image(systemName: "xmark").font(.system(size: 10, weight: .semibold)).frame(width: HubWorkspaceShortcutLabel.width, height: HubWorkspaceShortcutLabel.height) }.buttonStyle(.plain).foregroundStyle(.secondary).help("收起 (Esc)")
+            Button { onClose() } label: { Image(systemName: "xmark").font(.system(size: 10, weight: .semibold)).frame(width: HubWorkspaceShortcutLabel.width, height: HubWorkspaceShortcutLabel.height) }.buttonStyle(.plain).foregroundStyle(.secondary).help(L("收起 (Esc)"))
         }
     }
 
@@ -607,24 +609,24 @@ struct HubView: View {
         HStack(spacing: 10) {
             if model.stagingTransferInProgress {
                 ProgressView().controlSize(.small)
-                Text("正在转移文件…").foregroundStyle(.secondary)
+                Text(L("正在转移文件…")).foregroundStyle(.secondary)
             } else {
-                Text("仅保存引用 · 清空暂存不会删除原文件").font(.caption).foregroundStyle(.secondary)
+                Text(L("仅保存引用 · 清空暂存不会删除原文件")).font(.caption).foregroundStyle(.secondary)
             }
             Spacer(minLength: 6)
-            Button(model.selectedURLs.isEmpty ? "复制全部到…" : "复制所选到…") { model.chooseStagingTransfer(copy: true) }
+            Button(model.selectedURLs.isEmpty ? L("复制全部到…") : L("复制所选到…")) { model.chooseStagingTransfer(copy: true) }
                 .disabled(model.stagedURLs.isEmpty || model.stagingTransferInProgress)
-            Button(model.selectedURLs.isEmpty ? "移动全部到…" : "移动所选到…") { model.chooseStagingTransfer(copy: false) }
+            Button(model.selectedURLs.isEmpty ? L("移动全部到…") : L("移动所选到…")) { model.chooseStagingTransfer(copy: false) }
                 .disabled(model.stagedURLs.isEmpty || model.stagingTransferInProgress)
             Button { model.clearStagedFiles() } label: { Image(systemName: "minus.circle") }
                 .disabled(model.stagedURLs.isEmpty || model.stagingTransferInProgress)
-                .help("清空暂存引用，保留原文件").accessibilityLabel("清空暂存引用")
+                .help(L("清空暂存引用，保留原文件")).accessibilityLabel(L("清空暂存引用"))
         }.padding(.horizontal, 14).padding(.vertical, 7)
     }
 
     private func workspaceTabWidth(_ workspace: Workspace) -> CGFloat {
         let font = NSFont.systemFont(ofSize: model.settings.fontSize)
-        return 40 + (workspace.iconOnly == true || workspace.name.isEmpty ? 0 : 6 + (workspace.name as NSString).size(withAttributes: [.font: font]).width)
+        return 40 + (workspace.iconOnly == true || workspace.name.isEmpty ? 0 : 6 + (model.displayName(for: workspace) as NSString).size(withAttributes: [.font: font]).width)
     }
 
     private func workspaceTabsWidth(_ workspaces: [Workspace]) -> CGFloat {
@@ -640,7 +642,7 @@ struct HubView: View {
         Button { model.selectWorkspace(workspace.id) } label: {
             HStack(spacing: 6) {
                 workspaceIcon(workspace).frame(width: 16, height: 16)
-                if workspace.iconOnly != true && !workspace.name.isEmpty { Text(workspace.name).lineLimit(1).truncationMode(.tail) }
+                if workspace.iconOnly != true && !workspace.name.isEmpty { Text(model.displayName(for: workspace)).lineLimit(1).truncationMode(.tail) }
             }
             .frame(maxWidth: maximumWidth.map { max(24, $0 - 24) }, alignment: .leading)
             .padding(.horizontal, 12).padding(.vertical, 8)
@@ -648,8 +650,8 @@ struct HubView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(workspace.name.isEmpty ? workspace.mode.title : workspace.name)
-        .help(workspace.name + "\n" + (workspace.mode == .recents ? "自动更新最近使用的文件" : workspace.rootPath ?? "文件与文件夹合集"))
+        .accessibilityLabel(workspace.name.isEmpty ? workspace.mode.title : model.displayName(for: workspace))
+        .help(model.displayName(for: workspace) + "\n" + (workspace.mode == .recents ? L("自动更新最近使用的文件") : workspace.rootPath ?? L("文件与文件夹合集")))
         .onHover { isOver in
             guard !HubWorkspaceDragState.isDragging, !HubFileDragState.isDragging else {
                 hoverTask?.cancel()
@@ -672,18 +674,18 @@ struct HubView: View {
             }
         }
         .contextMenu {
-            HubMenuButton("编辑工作区…", systemImage: "pencil") { editingWorkspace = workspace }
-            Toggle("仅显示图标", isOn: Binding(
+            HubMenuButton(L("编辑工作区…"), systemImage: "pencil") { editingWorkspace = workspace }
+            Toggle(L("仅显示图标"), isOn: Binding(
                 get: { model.workspaces.first(where: { $0.id == workspace.id })?.iconOnly == true },
                 set: { model.setWorkspaceIconOnly(id: workspace.id, enabled: $0) }))
             if let index = model.tabWorkspaces.firstIndex(where: { $0.id == workspace.id }) {
-                HubMenuButton("向左移动", systemImage: "arrow.left") {
+                HubMenuButton(L("向左移动"), systemImage: "arrow.left") {
                     let tabs = model.tabWorkspaces
                     if let current = tabs.firstIndex(where: { $0.id == workspace.id }), current > 0 {
                         model.reorderWorkspace(workspace.id, relativeTo: tabs[current - 1].id, after: false)
                     }
                 }.disabled(index == 0)
-                HubMenuButton("向右移动", systemImage: "arrow.right") {
+                HubMenuButton(L("向右移动"), systemImage: "arrow.right") {
                     let tabs = model.tabWorkspaces
                     if let current = tabs.firstIndex(where: { $0.id == workspace.id }), current + 1 < tabs.count {
                         model.reorderWorkspace(workspace.id, relativeTo: tabs[current + 1].id, after: true)
@@ -691,11 +693,11 @@ struct HubView: View {
                 }.disabled(index == model.tabWorkspaces.count - 1)
             }
             Divider()
-            HubMenuButton("移除工作区", systemImage: "minus.circle") { model.removeWorkspace(workspace.id) }
+            HubMenuButton(L("移除工作区"), systemImage: "minus.circle") { model.removeWorkspace(workspace.id) }
         }
         .overlay(HubWorkspaceDragBridge(
             workspaceID: workspace.id,
-            title: workspace.name.isEmpty ? "工作区" : workspace.name,
+            title: workspace.name.isEmpty ? L("工作区") : model.displayName(for: workspace),
             acceptsReorderDrops: false,
             onSelect: { model.selectWorkspace(workspace.id) },
             onReorder: { source, target, after in model.reorderWorkspace(source, relativeTo: target, after: after) },
@@ -806,7 +808,7 @@ struct HubView: View {
                 if region == .staging { return model.stageFiles(urls) }
                 let accepted = model.acceptFileDrop(urls, workspaceID: plan.workspaceID, directory: plan.directory, copy: copy,
                     insertionOrder: plan.slot == nil ? nil : order, before: plan.slot?.before)
-                if !accepted && model.errorMessage == nil { model.errorMessage = "目标暂时不可用，文件尚未转移。请等待正在进行的操作完成后重试。" }
+                if !accepted && model.errorMessage == nil { model.errorMessage = L("目标暂时不可用，文件尚未转移。请等待正在进行的操作完成后重试。") }
                 return accepted
             })
     }
@@ -840,7 +842,7 @@ struct HubView: View {
         // activity tickets before presenting the system sharing window.
         DispatchQueue.main.async {
             guard canReceiveAirDrop else {
-                model.errorMessage = "AirDrop 暂时不可用，请等待文件操作完成后重试。"
+                model.errorMessage = L("AirDrop 暂时不可用，请等待文件操作完成后重试。")
                 return
             }
             NotificationCenter.default.post(name: Notification.Name("HubAirDropFiles"), object: nil, userInfo: ["urls": files])
@@ -856,10 +858,10 @@ struct HubView: View {
         case .workspace(let id):
             guard let workspace = model.workspaces.first(where: { $0.id == id }), workspace.mode != .recents else { return nil }
             return HubFileDropPlan(workspaceID: id, directory: workspace.rootURL, item: nil,
-                title: workspace.name, action: workspace.mode == .references ? .reference : copy ? .copy : .move)
+                title: model.displayName(for: workspace), action: workspace.mode == .references ? .reference : copy ? .copy : .move)
         case .staging:
             guard model.settings.resolvedStagingEnabled, !model.stagingTransferInProgress else { return nil }
-            return HubFileDropPlan(workspaceID: model.settings.stagingWorkspaceID, directory: nil, item: nil, title: "暂存区", action: .reference)
+            return HubFileDropPlan(workspaceID: model.settings.stagingWorkspaceID, directory: nil, item: nil, title: L("暂存区"), action: .reference)
         case .content:
             guard let id = model.selectedWorkspaceID, !model.isRecentsRoot else { return nil }
             let hit = frames.first(where: { $0.value.contains(point) })?.key
@@ -875,7 +877,7 @@ struct HubView: View {
                 excluding: reorder ? Set(payload?.urls ?? []) : []) : nil
             return HubFileDropPlan(workspaceID: id, directory: reference ? nil : folder ?? model.currentURL,
                 item: folder,
-                title: folder?.lastPathComponent ?? model.currentURL?.lastPathComponent ?? model.selectedWorkspace?.name ?? "当前工作区",
+                title: folder?.lastPathComponent ?? model.currentURL?.lastPathComponent ?? model.selectedWorkspace.map { model.displayName(for: $0) } ?? L("当前工作区"),
                 action: reorder ? .reorder : reference ? .reference : copy ? .copy : .move, slot: slot)
         case .item, .tabViewport: return nil
         }
@@ -909,37 +911,37 @@ struct HubView: View {
 
     private var browserBar: some View {
         HStack(spacing: 8) {
-            iconButton("chevron.left", "后退", disabled: !model.canGoBack) { model.goBack() }
-            iconButton("chevron.right", "前进", disabled: !model.canGoForward) { model.goForward() }
+            iconButton("chevron.left", L("后退"), disabled: !model.canGoBack) { model.goBack() }
+            iconButton("chevron.right", L("前进"), disabled: !model.canGoForward) { model.goForward() }
             HubPathBar(model: model)
                 .frame(minWidth: 40, maxWidth: .infinity)
                 .layoutPriority(1)
             HStack(spacing: 5) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                TextField(model.isRecentsRoot ? "搜索最近使用" : "搜索当前文件夹", text: $model.search).textFieldStyle(.plain).font(.system(size: 11))
+                TextField(model.isRecentsRoot ? L("搜索最近使用") : L("搜索当前文件夹"), text: $model.search).textFieldStyle(.plain).font(.system(size: 11))
                 if !model.search.isEmpty { Button { model.search = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }.buttonStyle(.plain) }
             }.padding(.horizontal, 8).padding(.vertical, 6).background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 6)).frame(minWidth: 100, maxWidth: 210).layoutPriority(2)
             HStack(spacing: 1) {
-                viewButton(.grid, symbol: "square.grid.2x2", label: "图标视图")
-                viewButton(.list, symbol: "list.bullet", label: "列表视图")
-                viewButton(.columns, symbol: "rectangle.split.3x1", label: "分栏视图")
+                viewButton(.grid, symbol: "square.grid.2x2", label: L("图标视图"))
+                viewButton(.list, symbol: "list.bullet", label: L("列表视图"))
+                viewButton(.columns, symbol: "rectangle.split.3x1", label: L("分栏视图"))
             }.padding(2).background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
                 .animation(interfaceMotion.selection, value: model.viewMode)
                 .animation(nil, value: interfaceMotion.enabled)
             Menu {
-                Picker("排序方式", selection: $model.sortKey) {
-                    Text("名称").tag(SortKey.name); Text("种类").tag(SortKey.kind); Text("大小").tag(SortKey.size)
-                    Text("修改日期").tag(SortKey.modified); Text("创建日期").tag(SortKey.created); Text("添加日期").tag(SortKey.added)
+                Picker(L("排序方式"), selection: $model.sortKey) {
+                    Text(L("名称")).tag(SortKey.name); Text(L("种类")).tag(SortKey.kind); Text(L("大小")).tag(SortKey.size)
+                    Text(L("修改日期")).tag(SortKey.modified); Text(L("创建日期")).tag(SortKey.created); Text(L("添加日期")).tag(SortKey.added)
                 }
                 Divider()
-                Toggle("升序", isOn: $model.ascending)
-                Toggle("文件夹优先", isOn: Binding(get: { model.settings.resolvedFoldersFirst },
+                Toggle(L("升序"), isOn: $model.ascending)
+                Toggle(L("文件夹优先"), isOn: Binding(get: { model.settings.resolvedFoldersFirst },
                     set: { model.settings.foldersFirst = $0 })).disabled(model.isManualEntryOrder)
-                Toggle("按手动顺序显示", isOn: Binding(get: { model.isManualEntryOrder }, set: { model.setManualEntryOrder($0) }))
+                Toggle(L("按手动顺序显示"), isOn: Binding(get: { model.isManualEntryOrder }, set: { model.setManualEntryOrder($0) }))
             } label: { Image(systemName: "arrow.up.arrow.down").frame(width: 28, height: 27) }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                .accessibilityLabel(model.isRecentsRoot ? "按最近使用时间排序" : "排序")
-                .help(model.isRecentsRoot ? "最近使用按最近打开时间排列，最新的在前" : "排序")
+                .accessibilityLabel(model.isRecentsRoot ? L("按最近使用时间排序") : L("排序"))
+                .help(model.isRecentsRoot ? L("最近使用按最近打开时间排列，最新的在前") : L("排序"))
                 .disabled(model.isRecentsRoot)
         }.buttonStyle(.plain).padding(.horizontal, 14).padding(.vertical, 9)
     }
@@ -948,17 +950,17 @@ struct HubView: View {
         if model.selectedWorkspace == nil {
             VStack(spacing: 15) {
                 Image(systemName: "folder.badge.plus").font(.system(size: 46, weight: .light)).foregroundStyle(.secondary)
-                Text("把常用文件放到触手可及的地方").font(.system(size: 16, weight: .medium))
-                Text("添加文件夹，或创建只保存文件引用的合集。").foregroundStyle(.secondary)
-                HStack { Button("添加文件夹…") { model.chooseWorkspace(mode: .folder) }; Button("创建合集…") { model.chooseWorkspace(mode: .references) } }
-                Text("可通过触发位置、菜单栏或自定义快捷键呼出").font(.system(size: 11)).foregroundStyle(.tertiary).padding(.top, 8)
+                Text(L("把常用文件放到触手可及的地方")).font(.system(size: 16, weight: .medium))
+                Text(L("添加文件夹，或创建只保存文件引用的合集。")).foregroundStyle(.secondary)
+                HStack { Button(L("添加文件夹…")) { model.chooseWorkspace(mode: .folder) }; Button(L("创建合集…")) { model.chooseWorkspace(mode: .references) } }
+                Text(L("可通过触发位置、菜单栏或自定义快捷键呼出")).font(.system(size: 11)).foregroundStyle(.tertiary).padding(.top, 8)
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if model.visibleEntries.isEmpty {
             VStack(spacing: 12) {
                 Image(systemName: model.search.isEmpty ? model.isRecentsRoot ? "clock" : "tray" : "magnifyingglass").font(.system(size: 38, weight: .light)).foregroundStyle(.secondary)
                 Text(emptyTitle).font(.system(size: 14, weight: .medium))
                 Text(emptyDetail).foregroundStyle(.secondary)
-                if model.search.isEmpty && model.selectedWorkspace?.mode == .references && model.currentURL == nil { Button("添加项目…") { model.addReferences() } }
+                if model.search.isEmpty && model.selectedWorkspace?.mode == .references && model.currentURL == nil { Button(L("添加项目…")) { model.addReferences() } }
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
                 .opacity(model.directoryLoading && !activityVisibility.visible ? 0 : 1)
                 .animation(interfaceMotion.feedback, value: activityVisibility.visible)
@@ -975,19 +977,19 @@ struct HubView: View {
     }
 
     private var emptyTitle: String {
-        if model.directoryLoading { return "正在读取文件信息…" }
-        if model.directoryLoadMessage != nil { return "暂时无法读取内容" }
-        if !model.search.isEmpty { return "没有匹配的项目" }
-        if model.isRecentsRoot { return model.recentFilesLoading ? "正在读取最近使用…" : "暂无最近使用的文件" }
-        return "这里还没有项目"
+        if model.directoryLoading { return L("正在读取文件信息…") }
+        if model.directoryLoadMessage != nil { return L("暂时无法读取内容") }
+        if !model.search.isEmpty { return L("没有匹配的项目") }
+        if model.isRecentsRoot { return model.recentFilesLoading ? L("正在读取最近使用…") : L("暂无最近使用的文件") }
+        return L("这里还没有项目")
     }
 
     private var emptyDetail: String {
-        if model.directoryLoading { return "文件读取在后台进行，你可以随时切换工作区。" }
-        if model.directoryLoadMessage != nil { return "请稍后重试，或通过上方标签切换到其他工作区。" }
-        if !model.search.isEmpty { return "试试其他名称" }
-        if model.isRecentsRoot { return model.recentFilesMessage ?? "最近打开的文件会自动出现在这里。结果取决于系统索引。" }
-        return model.isReferenceRoot ? "拖入文件或文件夹以添加引用" : "拖入文件以移动，按住 ⌥ 键以复制"
+        if model.directoryLoading { return L("文件读取在后台进行，你可以随时切换工作区。") }
+        if model.directoryLoadMessage != nil { return L("请稍后重试，或通过上方标签切换到其他工作区。") }
+        if !model.search.isEmpty { return L("试试其他名称") }
+        if model.isRecentsRoot { return model.recentFilesMessage ?? L("最近打开的文件会自动出现在这里。结果取决于系统索引。") }
+        return model.isReferenceRoot ? L("拖入文件或文件夹以添加引用") : L("拖入文件以移动，按住 ⌥ 键以复制")
     }
 
     private var grid: some View {
@@ -1025,10 +1027,10 @@ struct HubView: View {
     private var list: some View {
         VStack(spacing: 0) {
             HStack {
-                listSortColumn("名称", key: .name).frame(maxWidth: .infinity, alignment: .leading)
-                listSortColumn(model.isRecentsRoot ? "最近使用" : "修改日期", key: .modified).frame(width: 120)
-                listSortColumn("种类", key: .kind).frame(width: 80)
-                listSortColumn("大小", key: .size, alignment: .trailing).frame(width: 66)
+                listSortColumn(L("名称"), key: .name).frame(maxWidth: .infinity, alignment: .leading)
+                listSortColumn(model.isRecentsRoot ? L("最近使用") : L("修改日期"), key: .modified).frame(width: 120)
+                listSortColumn(L("种类"), key: .kind).frame(width: 80)
+                listSortColumn(L("大小"), key: .size, alignment: .trailing).frame(width: 66)
             }.font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary).padding(.horizontal, 24).padding(.vertical, 7).background(Color.primary.opacity(0.025))
             ScrollView(.vertical, showsIndicators: model.settings.showScrollbar) {
                 LazyVStack(spacing: 1) {
@@ -1036,8 +1038,8 @@ struct HubView: View {
                         HStack(spacing: 9) {
                             HubFileIcon(entry: entry, size: 22, allowsThumbnail: false, lightweight: presentation.defersFileRendering)
                             fileName(entry)
-                            Text((model.isRecentsRoot ? model.lastUsedDate(for: entry.url) : entry.modified)?.formatted(date: .abbreviated, time: .shortened) ?? "—").font(.system(size: 10)).foregroundStyle(.secondary).frame(width: 120, alignment: .leading)
-                            Text(model.isCloudPlaceholder(entry) ? "仅在云端" : entry.kind).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1).frame(width: 80, alignment: .leading)
+                            Text((model.isRecentsRoot ? model.lastUsedDate(for: entry.url) : entry.modified)?.formatted(.dateTime.locale(locale).year().month(.abbreviated).day().hour().minute()) ?? "—").font(.system(size: 10)).foregroundStyle(.secondary).frame(width: 120, alignment: .leading)
+                            Text(model.isCloudPlaceholder(entry) ? L("仅在云端") : entry.kind).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1).frame(width: 80, alignment: .leading)
                             Text(entry.isDirectory || model.isCloudPlaceholder(entry) ? "—" : ByteCountFormatter.string(fromByteCount: entry.size, countStyle: .file)).font(.system(size: 10)).foregroundStyle(.secondary).frame(width: 66, alignment: .trailing)
                         }
                         .padding(.horizontal, 12).padding(.vertical, 5)
@@ -1064,9 +1066,9 @@ struct HubView: View {
                     .font(.system(size: 8, weight: .semibold)).frame(width: 8).opacity(active ? 1 : 0)
             }.frame(maxWidth: .infinity, alignment: alignment).contentShape(Rectangle())
         }.buttonStyle(.plain).disabled(model.isRecentsRoot)
-            .accessibilityLabel("按\(title)排序")
-            .accessibilityValue(active ? model.ascending ? "升序" : "降序" : "未排序")
-            .help(model.isRecentsRoot ? "最近使用按最近打开时间排列" : "按\(title)排序，再次点击切换升降序")
+            .accessibilityLabel(L("按\(title)排序"))
+            .accessibilityValue(active ? model.ascending ? L("升序") : L("降序") : L("未排序"))
+            .help(model.isRecentsRoot ? L("最近使用按最近打开时间排列") : L("按\(title)排序，再次点击切换升降序"))
     }
 
     private var columns: some View {
@@ -1100,7 +1102,7 @@ struct HubView: View {
                         Divider().frame(width: layout.separatorWidth)
                     }
                     VStack(alignment: .leading, spacing: 0) {
-                        Text(model.currentURL?.lastPathComponent ?? model.selectedWorkspace?.name ?? "项目").font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary).padding(10)
+                        Text(model.currentURL?.lastPathComponent ?? model.selectedWorkspace.map { model.displayName(for: $0) } ?? L("项目")).font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary).padding(10)
                         Divider()
                         ScrollView(showsIndicators: model.settings.showScrollbar) {
                             LazyVStack(spacing: 1) {
@@ -1128,7 +1130,7 @@ struct HubView: View {
                     } else {
                         VStack(spacing: 9) {
                             Image(systemName: "doc.text.magnifyingglass").font(.system(size: 32, weight: .light))
-                            Text("选择文件以预览")
+                            Text(L("选择文件以预览"))
                         }.foregroundStyle(.tertiary).frame(width: layout.previewWidth, height: geometry.size.height)
                     }
                 }
@@ -1145,15 +1147,15 @@ struct HubView: View {
             HStack(spacing: 8) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(entry.name).font(.system(size: 11, weight: .medium)).lineLimit(1).truncationMode(.middle)
-                    Text(model.isCloudPlaceholder(entry) ? "仅在云端" : entry.isDirectory ? entry.kind : "\(entry.kind) · \(entry.sizeText)")
+                    Text(model.isCloudPlaceholder(entry) ? L("仅在云端") : entry.isDirectory ? entry.kind : "\(entry.kind) · \(entry.sizeText)")
                         .font(.system(size: 9)).foregroundStyle(.secondary).lineLimit(1)
                 }.frame(maxWidth: .infinity, alignment: .leading)
                 Button { preview([entry.url]) } label: {
                     Image(systemName: "arrow.up.left.and.arrow.down.right").frame(width: 24, height: 24)
-                }.buttonStyle(.plain).help("在独立窗口快速查看").accessibilityLabel("放大预览").disabled(!entry.exists || model.isCloudPlaceholder(entry) || HubInlinePreviewPolicy.isExecutableBundle(entry.url))
+                }.buttonStyle(.plain).help(L("在独立窗口快速查看")).accessibilityLabel(L("放大预览")).disabled(!entry.exists || model.isCloudPlaceholder(entry) || HubInlinePreviewPolicy.isExecutableBundle(entry.url))
                 Button { model.openExternally(entry.url) } label: {
                     Image(systemName: "arrow.up.right.square").frame(width: 24, height: 24)
-                }.buttonStyle(.plain).help("在默认应用中打开").accessibilityLabel("打开文件").disabled(!model.canOpen(entry))
+                }.buttonStyle(.plain).help(L("在默认应用中打开")).accessibilityLabel(L("打开文件")).disabled(!model.canOpen(entry))
             }.padding(.horizontal, 12).padding(.vertical, 7)
             Divider()
             switch HubInlinePreviewPolicy.disposition(for: candidate) {
@@ -1164,18 +1166,18 @@ struct HubView: View {
                 VStack(spacing: 12) {
                     HubFileIcon(entry: entry, size: 96, allowsThumbnail: false, lightweight: presentation.defersFileRendering)
                     Text(entry.name).font(.headline).lineLimit(2)
-                    Text("应用程序").font(.caption).foregroundStyle(.secondary)
+                    Text(L("应用程序")).font(.caption).foregroundStyle(.secondary)
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
             case .directory:
-                previewPlaceholder("folder", title: entry.name, detail: "在左侧选择文件以预览内容")
+                previewPlaceholder("folder", title: entry.name, detail: L("在左侧选择文件以预览内容"))
             case .unavailable:
                 if model.isCloudPlaceholder(entry) {
-                    previewPlaceholder("icloud.and.arrow.down", title: "文件尚未下载", detail: "点击右上角打开文件，由系统下载后查看")
+                    previewPlaceholder("icloud.and.arrow.down", title: L("文件尚未下载"), detail: L("点击右上角打开文件，由系统下载后查看"))
                 } else {
-                    previewPlaceholder("doc.badge.ellipsis", title: "文件暂时不可用", detail: "文件可能已移动，或当前无法访问")
+                    previewPlaceholder("doc.badge.ellipsis", title: L("文件暂时不可用"), detail: L("文件可能已移动，或当前无法访问"))
                 }
             case .empty:
-                previewPlaceholder("doc.text.magnifyingglass", title: "选择文件以预览", detail: "")
+                previewPlaceholder("doc.text.magnifyingglass", title: L("选择文件以预览"), detail: "")
             }
         }
     }
@@ -1190,52 +1192,52 @@ struct HubView: View {
 
     private var footer: some View {
         HStack(spacing: 10) {
-            iconButton("arrow.up", "上一级", disabled: !model.canGoUp) { model.goUp() }
+            iconButton("arrow.up", L("上一级"), disabled: !model.canGoUp) { model.goUp() }
             Text(model.currentLocationDescription)
-                .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle).help(model.currentURL?.path ?? (model.isRecentsRoot ? "最近使用不接收文件拖入，原文件保留在原位置" : ""))
+                .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle).help(model.currentURL?.path ?? (model.isRecentsRoot ? L("最近使用不接收文件拖入，原文件保留在原位置") : ""))
             Spacer(minLength: 6)
-            Text(model.selectedIDs.isEmpty ? "\(model.visibleEntries.count) 个项目" : "已选 \(model.selectedIDs.count) / \(model.visibleEntries.count)").font(.system(size: 10)).foregroundStyle(.secondary).fixedSize()
-            iconButton("arrow.clockwise", "刷新") { model.refresh() }
-            Button { model.pinned.toggle() } label: { Image(systemName: model.pinned ? "pin.fill" : "pin").foregroundStyle(model.pinned ? Color.accentColor : Color.secondary).frame(width: 24, height: 23) }.buttonStyle(.plain).help(model.pinned ? "取消固定" : "固定窗口")
-            iconButton("gearshape", "设置") { onSettings() }
+            Text(model.selectedIDs.isEmpty ? L("\(model.visibleEntries.count) 个项目") : L("已选 \(model.selectedIDs.count) / \(model.visibleEntries.count)")).font(.system(size: 10)).foregroundStyle(.secondary).fixedSize()
+            iconButton("arrow.clockwise", L("刷新")) { model.refresh() }
+            Button { model.pinned.toggle() } label: { Image(systemName: model.pinned ? "pin.fill" : "pin").foregroundStyle(model.pinned ? Color.accentColor : Color.secondary).frame(width: 24, height: 23) }.buttonStyle(.plain).help(model.pinned ? L("取消固定") : L("固定窗口"))
+            iconButton("gearshape", L("设置")) { onSettings() }
         }.padding(.horizontal, 13).padding(.vertical, 7)
     }
 
     @ViewBuilder private var backgroundMenu: some View {
-        if model.canPasteFiles { HubMenuButton("粘贴", systemImage: "doc.on.clipboard") { model.pasteFiles() } }
-        if model.currentURL != nil { HubMenuButton("新建文件夹…", systemImage: "folder.badge.plus") { folderName = "新建文件夹"; newFolder = true }; HubMenuButton("在访达中打开", systemImage: "folder") { if let url = model.currentURL { NSWorkspace.shared.open(url) } } }
-        if model.selectedWorkspace?.mode == .references && model.currentURL == nil { HubMenuButton("添加项目…", systemImage: "plus") { model.addReferences() } }
-        HubMenuButton("刷新", systemImage: "arrow.clockwise") { model.refresh() }
+        if model.canPasteFiles { HubMenuButton(L("粘贴"), systemImage: "doc.on.clipboard") { model.pasteFiles() } }
+        if model.currentURL != nil { HubMenuButton(L("新建文件夹…"), systemImage: "folder.badge.plus") { folderName = L("新建文件夹"); newFolder = true }; HubMenuButton(L("在访达中打开"), systemImage: "folder") { if let url = model.currentURL { NSWorkspace.shared.open(url) } } }
+        if model.selectedWorkspace?.mode == .references && model.currentURL == nil { HubMenuButton(L("添加项目…"), systemImage: "plus") { model.addReferences() } }
+        HubMenuButton(L("刷新"), systemImage: "arrow.clockwise") { model.refresh() }
     }
 
     @ViewBuilder private func fileMenu(_ entry: FileEntry) -> some View {
         let urls = model.selectedIDs.contains(entry.url) && model.selectedIDs.count > 1 ? model.selectedURLs : [entry.url]
-        HubMenuButton("打开", systemImage: "arrow.up.forward.square") { if urls.count == 1 { model.open(entry) } else { urls.forEach { NSWorkspace.shared.open($0) } } }
+        HubMenuButton(L("打开"), systemImage: "arrow.up.forward.square") { if urls.count == 1 { model.open(entry) } else { urls.forEach { NSWorkspace.shared.open($0) } } }
         if !entry.isDirectory || entry.isPackage {
-            Menu("打开方式") {
+            Menu(L("打开方式")) {
                 ForEach(NSWorkspace.shared.urlsForApplications(toOpen: entry.url), id: \.self) { application in
                     Button { NSWorkspace.shared.open([entry.url], withApplicationAt: application, configuration: NSWorkspace.OpenConfiguration()) } label: { Text(application.deletingPathExtension().lastPathComponent) }
                 }
-                Button("其他应用…") { chooseApplication(for: entry.url) }
+                Button(L("其他应用…")) { chooseApplication(for: entry.url) }
             }
         }
-        HubMenuButton("快速查看", systemImage: "eye") { preview(urls) }.disabled(HubInlinePreviewPolicy.quickLookURLs(urls).isEmpty)
-        HubMenuButton("在访达中显示", systemImage: "folder") { NSWorkspace.shared.activateFileViewerSelecting(urls) }
-        if urls.count == 1 { HubMenuButton("重新命名…", systemImage: "pencil") { beginRename(entry) }.disabled(model.isStagingRoot && model.stagingTransferInProgress) }
+        HubMenuButton(L("快速查看"), systemImage: "eye") { preview(urls) }.disabled(HubInlinePreviewPolicy.quickLookURLs(urls).isEmpty)
+        HubMenuButton(L("在访达中显示"), systemImage: "folder") { NSWorkspace.shared.activateFileViewerSelecting(urls) }
+        if urls.count == 1 { HubMenuButton(L("重新命名…"), systemImage: "pencil") { beginRename(entry) }.disabled(model.isStagingRoot && model.stagingTransferInProgress) }
         Divider()
-        HubMenuButton("复制", systemImage: "doc.on.doc") { model.copyFiles(urls) }
-        HubMenuButton("复制路径", systemImage: "link") { model.copyPath(urls) }
+        HubMenuButton(L("复制"), systemImage: "doc.on.doc") { model.copyFiles(urls) }
+        HubMenuButton(L("复制路径"), systemImage: "link") { model.copyPath(urls) }
         if model.settings.resolvedStagingEnabled && !model.isStagingRoot {
-            HubMenuButton("添加到暂存区", systemImage: "tray.and.arrow.down") { model.stageFiles(urls) }
+            HubMenuButton(L("添加到暂存区"), systemImage: "tray.and.arrow.down") { model.stageFiles(urls) }
                 .disabled(model.stagingTransferInProgress)
         }
         if model.isStagingRoot {
-            HubMenuButton("复制到文件夹…", systemImage: "doc.on.doc") { model.chooseStagingTransfer(copy: true, urls: urls) }
+            HubMenuButton(L("复制到文件夹…"), systemImage: "doc.on.doc") { model.chooseStagingTransfer(copy: true, urls: urls) }
                 .disabled(model.stagingTransferInProgress)
-            HubMenuButton("移动到文件夹…", systemImage: "folder") { model.chooseStagingTransfer(copy: false, urls: urls) }
+            HubMenuButton(L("移动到文件夹…"), systemImage: "folder") { model.chooseStagingTransfer(copy: false, urls: urls) }
                 .disabled(model.stagingTransferInProgress)
         }
-        HubMenuButton("共享…", systemImage: "square.and.arrow.up") { NotificationCenter.default.post(name: Notification.Name("HubShare"), object: nil, userInfo: ["urls": urls]) }
+        HubMenuButton(L("共享…"), systemImage: "square.and.arrow.up") { NotificationCenter.default.post(name: Notification.Name("HubShare"), object: nil, userInfo: ["urls": urls]) }
             .disabled(model.sharingInProgress || model.stagingTransferInProgress || model.fileOperationsInProgress > 0)
         if model.settings.resolvedAirDropEnabled {
             HubMenuButton("AirDrop…", systemImage: "airplayaudio") { NotificationCenter.default.post(name: Notification.Name("HubAirDrop"), object: nil, userInfo: ["urls": urls]) }
@@ -1244,15 +1246,15 @@ struct HubView: View {
         if model.selectedWorkspace?.mode == .references && model.currentURL == nil {
             Divider()
             if let paths = model.selectedWorkspace?.referencePaths, let index = paths.firstIndex(of: entry.url.path) {
-                HubMenuButton("向前移动", systemImage: "arrow.left") { if index > 0 { model.reorderReference(entry.url, before: URL(fileURLWithPath: paths[index - 1])) } }.disabled(index == 0)
-                HubMenuButton("向后移动", systemImage: "arrow.right") { if index + 1 < paths.count { model.reorderReference(URL(fileURLWithPath: paths[index + 1]), before: entry.url) } }.disabled(index + 1 >= paths.count)
+                HubMenuButton(L("向前移动"), systemImage: "arrow.left") { if index > 0 { model.reorderReference(entry.url, before: URL(fileURLWithPath: paths[index - 1])) } }.disabled(index == 0)
+                HubMenuButton(L("向后移动"), systemImage: "arrow.right") { if index + 1 < paths.count { model.reorderReference(URL(fileURLWithPath: paths[index + 1]), before: entry.url) } }.disabled(index + 1 >= paths.count)
             }
-            HubMenuButton(model.isStagingRoot ? "从暂存区移除引用" : "从合集中移除引用", systemImage: "minus.circle") { model.removeReferences(urls) }
+            HubMenuButton(model.isStagingRoot ? L("从暂存区移除引用") : L("从合集中移除引用"), systemImage: "minus.circle") { model.removeReferences(urls) }
                 .disabled(model.isStagingRoot && model.stagingTransferInProgress)
         }
         if !model.isStagingRoot {
             Divider()
-            HubMenuButton("移到废纸篓…", systemImage: "trash", role: .destructive) { pendingTrash = urls }
+            HubMenuButton(L("移到废纸篓…"), systemImage: "trash", role: .destructive) { pendingTrash = urls }
         }
     }
 
@@ -1277,7 +1279,7 @@ struct HubView: View {
     private func selectForDrag(_ entry: FileEntry) { if !model.selectedIDs.contains(entry.url) { model.selectedIDs = [entry.url] } }
     private func preview(_ urls: [URL]) { NotificationCenter.default.post(name: Notification.Name("HubPreview"), object: nil, userInfo: ["urls": urls]) }
     private func chooseApplication(for url: URL) {
-        let panel = NSOpenPanel(); panel.canChooseFiles = true; panel.canChooseDirectories = false; panel.allowedContentTypes = [.application]; panel.directoryURL = URL(fileURLWithPath: "/Applications"); panel.prompt = "打开"
+        let panel = NSOpenPanel(); panel.canChooseFiles = true; panel.canChooseDirectories = false; panel.allowedContentTypes = [.application]; panel.directoryURL = URL(fileURLWithPath: "/Applications"); panel.prompt = L("打开")
         if HubWindowPresentation.runModal(panel) == .OK, let application = panel.url { NSWorkspace.shared.open([url], withApplicationAt: application, configuration: NSWorkspace.OpenConfiguration()) }
     }
 
@@ -1334,9 +1336,9 @@ struct HubView: View {
         let workspaceID = model.selectedWorkspaceID
         let batch = HubDropBatch(count: fileProviders.count) { urls in
             HubImportActivity.end(ticket)
-            guard !urls.isEmpty else { model.errorMessage = "无法读取拖入的文件地址。"; return }
+            guard !urls.isEmpty else { model.errorMessage = L("无法读取拖入的文件地址。"); return }
             if !model.acceptFileDrop(urls, workspaceID: workspaceID, directory: destination, copy: copy) {
-                model.errorMessage = "目标工作区已不可用，或已有多个文件传输正在进行。"
+                model.errorMessage = L("目标工作区已不可用，或已有多个文件传输正在进行。")
             }
         }
         for (index, provider) in fileProviders.enumerated() {
@@ -1357,7 +1359,7 @@ struct HubView: View {
         guard !HubFileDragState.isDragging else { return false }
         return HubStagingDropReceiver.receive(providers) { urls, failures in
             if !urls.isEmpty, !model.stageFiles(urls) {
-                model.errorMessage = "暂存区当前不可用。导入的文件已保留，请重新开启暂存区后添加。"
+                model.errorMessage = L("暂存区当前不可用。导入的文件已保留，请重新开启暂存区后添加。")
             } else if !failures.isEmpty {
                 model.errorMessage = failures.joined(separator: "\n")
             }
@@ -1370,7 +1372,7 @@ struct HubView: View {
         // content and a captured folder remains the target after navigation.
         return HubStagingDropReceiver.receive(providers) { urls, failures in
             if !urls.isEmpty, !model.acceptFileDrop(urls, workspaceID: workspaceID, directory: destination, copy: true) {
-                model.errorMessage = "目标工作区已不可用。导入内容已保留在本机暂存目录。"
+                model.errorMessage = L("目标工作区已不可用。导入内容已保留在本机暂存目录。")
             } else if !failures.isEmpty { model.errorMessage = failures.joined(separator: "\n") }
         }
     }
@@ -1462,7 +1464,7 @@ struct HubView: View {
         if plainCommand && (event.charactersIgnoringModifiers == "[" || event.keyCode == 33) { model.goBack(); return true }
         if plainCommand && (event.charactersIgnoringModifiers == "]" || event.keyCode == 30) { model.goForward(); return true }
         if command && event.charactersIgnoringModifiers == "r" { model.refresh(); return true }
-        if command && flags.contains(.shift) && event.charactersIgnoringModifiers == "n" { folderName = "新建文件夹"; newFolder = true; return true }
+        if command && flags.contains(.shift) && event.charactersIgnoringModifiers == "n" { folderName = L("新建文件夹"); newFolder = true; return true }
         if flags.contains(.option) && !command && event.keyCode == 123 { model.goBack(); return true }
         if flags.contains(.option) && !command && event.keyCode == 124 { model.goForward(); return true }
         guard !command && !flags.contains(.control) && !flags.contains(.option) else { return false }
@@ -1518,13 +1520,13 @@ struct HubKeyMonitor: NSViewRepresentable {
     private let symbols = ["folder", "folder.fill", "folder.badge.gearshape", "tray.and.arrow.down", "desktopcomputer", "doc", "doc.text", "doc.richtext", "photo", "photo.on.rectangle", "music.note", "play.rectangle", "hammer", "terminal", "chevron.left.forwardslash.chevron.right", "book", "books.vertical", "pencil", "paintpalette", "briefcase", "archivebox", "square.stack.3d.up", "star", "heart", "bookmark", "house", "globe", "paperplane", "cloud", "externaldrive", "internaldrive", "server.rack", "person", "person.2", "lightbulb", "sparkles", "calendar", "clock", "checkmark.circle", "flag", "bolt", "leaf", "pawprint", "gamecontroller", "graduationcap", "brain", "chart.bar", "chart.pie", "camera", "film", "gift", "cart", "building.2", "network", "link", "shippingbox", "note.text", "list.bullet", "square.grid.2x2", "rectangle.stack", "cube", "atom", "app", "gearshape", "wrench.and.screwdriver", "scissors", "paperclip", "tag", "pin", "map", "location", "airplane", "car", "bicycle", "figure.walk", "sun.max", "moon", "flame", "drop", "snowflake", "tree", "mountain.2", "waveform", "headphones", "mic", "keyboard", "display", "iphone", "ipad", "laptopcomputer", "printer", "scanner", "wifi", "antenna.radiowaves.left.and.right", "lock", "key", "shield", "hand.thumbsup", "face.smiling", "cup.and.saucer", "fork.knife", "bed.double", "cross.case", "stethoscope"]
     var body: some View {
         VStack(alignment: .leading, spacing: 17) {
-            Text("编辑工作区").font(.title3.bold())
+            Text(L("编辑工作区")).font(.title3.bold())
             HStack(spacing: 12) {
                 if let path = workspace.customIconPath { HubWorkspaceCustomIcon(path: path, fallbackSymbol: workspace.symbol, tint: .accentColor).frame(width: 36, height: 36) } else { Image(systemName: workspace.symbol).font(.system(size: 30)).foregroundStyle(Color.accentColor).frame(width: 42) }
-                TextField("工作区名称", text: $workspace.name).textFieldStyle(.roundedBorder)
+                TextField(L("工作区名称"), text: $workspace.name).textFieldStyle(.roundedBorder)
             }
-            Text(workspace.mode == .folder ? "文件夹：\(workspace.rootPath ?? "未选择")" : workspace.mode == .recents ? "最近使用 · 自动更新最近打开的文件" : "文件与文件夹合集 · \(workspace.referencePaths.count) 个引用").font(.caption).foregroundStyle(.secondary).lineLimit(2)
-            TextField("搜索图标名称，或直接输入 SF Symbol 名称", text: $symbolSearch).textFieldStyle(.roundedBorder)
+            Text(workspace.mode == .folder ? L("文件夹：\(workspace.rootPath ?? L("未选择"))") : workspace.mode == .recents ? L("最近使用 · 自动更新最近打开的文件") : L("文件与文件夹合集 · \(workspace.referencePaths.count) 个引用")).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+            TextField(L("搜索图标名称，或直接输入 SF Symbol 名称"), text: $symbolSearch).textFieldStyle(.roundedBorder)
             ScrollView {
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 9), spacing: 9) {
                     ForEach(symbols.filter { symbolSearch.isEmpty || $0.localizedCaseInsensitiveContains(symbolSearch) }, id: \.self) { symbol in
@@ -1533,11 +1535,11 @@ struct HubKeyMonitor: NSViewRepresentable {
                 }
             }.frame(height: 165)
             HStack {
-                Button("自定义图片…") { chooseImage() }
-                if !symbolSearch.isEmpty, NSImage(systemSymbolName: symbolSearch, accessibilityDescription: nil) != nil { Button("使用此符号") { workspace.symbol = symbolSearch; workspace.customIconPath = nil } }
+                Button(L("自定义图片…")) { chooseImage() }
+                if !symbolSearch.isEmpty, NSImage(systemSymbolName: symbolSearch, accessibilityDescription: nil) != nil { Button(L("使用此符号")) { workspace.symbol = symbolSearch; workspace.customIconPath = nil } }
                 Spacer()
-                Button("取消") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("保存") { workspace.name = workspace.name.trimmingCharacters(in: .whitespacesAndNewlines); model.updateWorkspace(workspace); dismiss() }.keyboardShortcut(.defaultAction).disabled(workspace.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && workspace.symbol.isEmpty && workspace.customIconPath == nil)
+                Button(L("取消")) { dismiss() }.keyboardShortcut(.cancelAction)
+                Button(L("保存")) { workspace.name = workspace.name.trimmingCharacters(in: .whitespacesAndNewlines); model.updateWorkspace(workspace); dismiss() }.keyboardShortcut(.defaultAction).disabled(workspace.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && workspace.symbol.isEmpty && workspace.customIconPath == nil)
             }
         }.padding(24).frame(width: 460)
     }

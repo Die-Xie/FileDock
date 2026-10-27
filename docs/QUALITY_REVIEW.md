@@ -37,7 +37,7 @@
 
 ```sh
 mkdir -p .build
-swiftc -swift-version 5 -O -parse-as-library Sources/HubModel.swift Sources/DirectoryLoader.swift Sources/FileAppearance.swift Sources/RecentFiles.swift Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift scripts/BenchmarkStaging.swift -o .build/benchmark-staging -framework AppKit -framework Combine -framework Carbon -framework UniformTypeIdentifiers
+swiftc -swift-version 5 -O -parse-as-library Sources/Localization.swift Sources/LocalizationCatalog.swift Sources/HubModel.swift Sources/DirectoryLoader.swift Sources/FileAppearance.swift Sources/RecentFiles.swift Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift scripts/BenchmarkStaging.swift -o .build/benchmark-staging -framework AppKit -framework Combine -framework Carbon -framework UniformTypeIdentifiers
 .build/benchmark-staging
 ```
 
@@ -316,3 +316,15 @@ NativeFileDragTests补充外部/内部能力、未提供处理器、取消/复�
 复用原有本地与全局左键监听，扩展到当前所选边角，不新增事件tap、透明窗口、权限申请或定时器。关闭点按及回退开关时立即退出监听回调；其他点击先检查事件类型／修饰键和实际区域，只在符合区域时查询既有缓存抑制策略。使用事件自身屏幕位置，本地窗口坐标先转换，显示位置也沿用这一坐标，避免异步监听时读到后来移走的鼠标。修饰键点击和拖动／松手事件不呼出。
 
 TriggerSuppressionTests覆盖黑名单和全屏两类证据的禁用／回退、正常策略恢复、普通刘海点按保留、仅快捷键和另一显示器隔离；隐藏NSWindow与真实NSEvent验证本地／全局坐标及修饰键排除。ModelTests覆盖关闭默认、启用后保存／重启和旧配置缺字段；HoverActivation及七分类SettingsLayout回归通过。设置浅／深布局截图与逐文件diff已检查，空白检查通过。四套定向回归与通用构建用于本轮验证，未重复所有无关测试；没有切换用户游戏／播放器至全屏或宣称自动化完成所有客户端的真实点击验证。
+
+
+## 1.28.0：中英文界面与呼出设置文案（2026-10-27）
+
+- 将“命中例外”等实现术语改成「全屏与应用限制」「全屏时限制自动展开」「限制期间的打开方式」，明确区分快捷键／菜单栏与点击触发区域，不改变现有触发策略。
+- 新增可持久保存的界面语言：简体中文、English、跟随系统。旧配置缺失语言字段时保留中文；非法值归一为跟随系统。切换只写语言字段，不改工作区名称、书签、路径、顺序或其他偏好。
+- 用户文案集中于编译进应用的翻译表，无运行时文件访问、网络请求或新增计时器。语言状态使用短锁供后台错误与主线程界面读取；只有语言变化才更新全局选择与原生菜单。
+- 文案插值与用户数据分离，按模板一次插入参数，不使用用户文本作格式串、不反复替换，文件名中的 `%@`、`{0}`、Unicode 与反斜杠保持字面值。
+- QQ／网易云的辅助功能匹配字符串、bundle ID、快捷键注册标识和其他协议值保持原样；应用语言不会影响外部播放器的中文菜单识别。
+- 内置收藏、最近使用、暂存与应用程序标签只在展示时翻译，存储名称不变；普通自定义标签与文件名不翻译。列表日期使用所选界面语言，macOS 自身的选择器／权限／文件类型文字仍由系统提供。
+- 增加翻译键与参数完整性检查、语言解析与并发读写测试、配置重启／旧格式／非法值回归，以及中英文七页设置在明暗两种外观下的隐藏原生窗口渲染和实时切换检查。
+- 逐文件审阅 `git diff`，另将新增 `L(...)` 包装剥离后逐文件对照，确认文件操作、拖放、预览与播放器后端行为只增加文案包装。全量回归结果记录在本次交付日志；窗口渲染不是实际屏幕帧率基准。

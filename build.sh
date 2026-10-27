@@ -31,6 +31,9 @@ cp LICENSE NOTICE "$TASK_APP/Contents/Resources/"
 if [[ -f Resources/AppIcon.icns ]]; then
     cp Resources/AppIcon.icns "$TASK_APP/Contents/Resources/AppIcon.icns"
 fi
+for TASK_LOCALIZATION in Resources/*.lproj; do
+    ditto "$TASK_LOCALIZATION" "$TASK_APP/Contents/Resources/${TASK_LOCALIZATION:t}"
+done
 ./sign.sh "$TASK_APP"
 codesign --verify --deep --strict "$TASK_APP"
 print -r -- "$PWD/$TASK_APP"

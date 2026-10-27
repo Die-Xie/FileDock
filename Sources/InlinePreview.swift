@@ -52,7 +52,7 @@ final class HubInlinePreviewHostView: NSView {
             preview.topAnchor.constraint(equalTo: topAnchor),
             preview.bottomAnchor.constraint(equalTo: bottomAnchor)
         ])
-        setAccessibilityLabel("文件内容预览")
+        setAccessibilityLabel(L("文件内容预览"))
     }
 
     convenience init() { self.init(frame: .zero) }

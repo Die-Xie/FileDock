@@ -7,10 +7,10 @@ enum HubStagingImportError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .invalidLocation: return "暂存文件必须保存在本地目录。"
-        case .unsupportedSource: return "无法保存此临时文件，请拖入普通文件或文件夹。"
-        case .recursiveCopy: return "暂存目录不能位于待复制的文件夹内部。"
-        case .dataTooLarge: return "临时文件数据超过 32 MB，未保存。"
+        case .invalidLocation: return L("暂存文件必须保存在本地目录。")
+        case .unsupportedSource: return L("无法保存此临时文件，请拖入普通文件或文件夹。")
+        case .recursiveCopy: return L("暂存目录不能位于待复制的文件夹内部。")
+        case .dataTooLarge: return L("临时文件数据超过 32 MB，未保存。")
         }
     }
 }
@@ -33,9 +33,9 @@ struct HubStagingImportStore: Sendable {
     func saveImage(data: Data, suggestedName: String? = nil) throws -> URL {
         // Validate and normalize first; a rejected image leaves no empty import.
         let png = try HubImageImport.pngData(from: data)
-        let safeName = Self.safeName(suggestedName, fallback: "拖入的图片")
+        let safeName = Self.safeName(suggestedName, fallback: L("拖入的图片"))
         let stem = (safeName as NSString).deletingPathExtension
-        let name = (stem.isEmpty ? "拖入的图片" : stem) + ".png"
+        let name = (stem.isEmpty ? L("拖入的图片") : stem) + ".png"
         return try store(name: name) { destination in
             try png.write(to: destination, options: .withoutOverwriting)
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: destination.path)
@@ -47,8 +47,8 @@ struct HubStagingImportStore: Sendable {
     func saveFileData(_ data: Data, typeIdentifier: String, suggestedName: String? = nil) throws -> URL {
         guard data.count <= 32 * 1024 * 1024 else { throw HubStagingImportError.dataTooLarge }
         let suffix = UTType(typeIdentifier)?.preferredFilenameExtension ?? "data"
-        var name = Self.safeName(suggestedName, fallback: "暂存文件")
-        if (name as NSString).pathExtension.isEmpty { name = Self.safeName(name + "." + suffix, fallback: "暂存文件.data") }
+        var name = Self.safeName(suggestedName, fallback: L("暂存文件"))
+        if (name as NSString).pathExtension.isEmpty { name = Self.safeName(name + "." + suffix, fallback: L("暂存文件.data")) }
         return try store(name: name) { destination in
             try data.write(to: destination, options: .withoutOverwriting)
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: destination.path)
@@ -68,7 +68,7 @@ struct HubStagingImportStore: Sendable {
             let prefix = sourceURL.path == "/" ? "/" : sourceURL.path + "/"
             guard root != sourceURL.path && !root.hasPrefix(prefix) else { throw HubStagingImportError.recursiveCopy }
         }
-        var name = Self.safeName(suggestedName, fallback: Self.safeName(source.lastPathComponent, fallback: "暂存文件"))
+        var name = Self.safeName(suggestedName, fallback: Self.safeName(source.lastPathComponent, fallback: L("暂存文件")))
         let sourceExtension = sourceURL.pathExtension
         if (name as NSString).pathExtension.isEmpty, !sourceExtension.isEmpty, sourceExtension.utf8.count <= 32 {
             name = Self.safeName(name + "." + sourceExtension, fallback: name)

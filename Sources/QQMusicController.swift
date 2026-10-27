@@ -214,7 +214,7 @@ final class HubQQMusicController: ObservableObject {
         playerSelection = selection
         if let player = selection.player { activePlayer = player }
         connectionProbe = nil
-        clear(status: .connecting, message: "正在检测播放器…")
+        clear(status: .connecting, message: L("正在检测播放器…"))
         updatePolling()
     }
 
@@ -223,7 +223,7 @@ final class HubQQMusicController: ObservableObject {
     func openPlayer() {
         let player = activePlayer
         guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: player.bundleID) else {
-            clear(status: .notInstalled, message: "尚未安装\(player.name)。")
+            clear(status: .notInstalled, message: L("尚未安装\(player.name)。"))
             return
         }
         status = .connecting
@@ -233,7 +233,7 @@ final class HubQQMusicController: ObservableObject {
             DispatchQueue.main.async {
                 guard let self, self.playerSelection == selection, self.activePlayer == player else { return }
                 if let error {
-                    self.clear(status: .unavailable, message: "无法打开\(player.name)：\(error.localizedDescription)")
+                    self.clear(status: .unavailable, message: L("无法打开\(player.name)：\(error.localizedDescription)"))
                 } else if self.canObserve {
                     self.generation = self.epoch.advance()
                     self.requestKind = nil
@@ -267,11 +267,11 @@ final class HubQQMusicController: ObservableObject {
     }
     var setupActionTitle: String {
         switch setupAction {
-        case .authorize: return "打开授权设置"
-        case .launch: return "打开\(playerName)"
-        case .recover: return "打开主窗口并重连"
-        case .check: return "检查连接"
-        case nil: return status == .notInstalled ? "未安装\(playerName)" : "正在连接…"
+        case .authorize: return L("打开授权设置")
+        case .launch: return L("打开\(playerName)")
+        case .recover: return L("打开主窗口并重连")
+        case .check: return L("检查连接")
+        case nil: return status == .notInstalled ? L("未安装\(playerName)") : L("正在连接…")
         }
     }
     func performSetupAction() {
@@ -332,7 +332,7 @@ final class HubQQMusicController: ObservableObject {
                 DispatchQueue.main.async {
                     guard let self, self.generation == request, self.canObserve else { return }
                     self.requestKind = nil
-                    self.clear(status: .notInstalled, message: "未检测到支持的播放器。")
+                    self.clear(status: .notInstalled, message: L("未检测到支持的播放器。"))
                 }
                 return
             }
@@ -356,8 +356,8 @@ final class HubQQMusicController: ObservableObject {
 
     private func accept(probe: HubQQMusicProbe, result: Result<HubQQMusicSnapshot, HubQQMusicFailure>?) {
         if connectionProbe != probe { connectionProbe = probe }
-        guard probe.installed else { clear(status: .notInstalled, message: "尚未安装\(playerName)。"); return }
-        guard let pid = probe.pid else { clear(status: .notRunning, message: "打开\(playerName)后即可连接。"); return }
+        guard probe.installed else { clear(status: .notInstalled, message: L("尚未安装\(playerName)。")); return }
+        guard let pid = probe.pid else { clear(status: .notRunning, message: L("打开\(playerName)后即可连接。")); return }
         guard probe.trusted else {
             clear(status: .needsPermission, message: permissionMessage)
             return
@@ -366,7 +366,7 @@ final class HubQQMusicController: ObservableObject {
         switch result {
         case .success(let snapshot):
             guard snapshot.pid == pid else {
-                clear(status: .unavailable, message: "\(playerName)进程已变化，请稍后重试。")
+                clear(status: .unavailable, message: L("\(playerName)进程已变化，请稍后重试。"))
                 return
             }
             targetPID = pid
@@ -383,8 +383,8 @@ final class HubQQMusicController: ObservableObject {
             case .permission:
                 connectionProbe = HubQQMusicProbe(installed: probe.installed, pid: probe.pid, trusted: false)
                 clear(status: .needsPermission, message: permissionMessage)
-            case .notRunning: clear(status: .notRunning, message: "打开\(playerName)后即可连接。")
-            case .wrongTarget: clear(status: .unavailable, message: "\(playerName)进程已变化，请稍后重试。")
+            case .notRunning: clear(status: .notRunning, message: L("打开\(playerName)后即可连接。"))
+            case .wrongTarget: clear(status: .unavailable, message: L("\(playerName)进程已变化，请稍后重试。"))
             case .unavailable(let detail): clear(status: .unavailable, message: detail)
             }
         }
@@ -392,8 +392,8 @@ final class HubQQMusicController: ObservableObject {
 
     private var permissionMessage: String {
         usesAutomationPermission
-            ? "请允许 FileDock 控制“音乐”。点下方授权按钮，在系统提示中确认；已有授权可在隐私与安全性 → 自动化中检查。"
-            : "连接需要辅助功能权限。请在系统设置 → 隐私与安全性 → 辅助功能中允许 FileDock。"
+            ? L("请允许 FileDock 控制“音乐”。点下方授权按钮，在系统提示中确认；已有授权可在隐私与安全性 → 自动化中检查。")
+            : L("连接需要辅助功能权限。请在系统设置 → 隐私与安全性 → 辅助功能中允许 FileDock。")
     }
 
     private func clear(status: Status, message: String) {
@@ -437,22 +437,22 @@ final class HubQQMusicAXBackend: HubQQMusicBackend {
             let application = AXUIElementCreateApplication(pid)
             guard let menuBar = try reader.element(application, kAXMenuBarAttribute),
                   try reader.string(menuBar, kAXRoleAttribute) == kAXMenuBarRole else {
-                throw HubQQMusicFailure.unavailable("QQ 音乐当前未提供原生播放菜单。")
+                throw HubQQMusicFailure.unavailable(L("QQ 音乐当前未提供原生播放菜单。"))
             }
             let menuBarItems = try reader.elements(menuBar, kAXChildrenAttribute, limit: 16)
             let menuBarLabels = try menuBarItems.map { (role: try reader.string($0, kAXRoleAttribute), title: try reader.string($0, kAXTitleAttribute)) }
             guard let menuIndex = HubQQMusicAccessibility.uniquePlaybackMenuIndex(in: menuBarLabels) else {
-                throw HubQQMusicFailure.unavailable("无法唯一识别 QQ 音乐的“播放控制”菜单。")
+                throw HubQQMusicFailure.unavailable(L("无法唯一识别 QQ 音乐的“播放控制”菜单。"))
             }
             // Only this exact menu is inspected. Do not open the menu, descend
             // into other menus, or attempt the unsupported custom player button.
             let menus = try reader.elements(menuBarItems[menuIndex], kAXChildrenAttribute, limit: 4)
                 .filter { try reader.string($0, kAXRoleAttribute) == kAXMenuRole }
-            guard menus.count == 1 else { throw HubQQMusicFailure.unavailable("QQ 音乐播放菜单暂时不可用。") }
+            guard menus.count == 1 else { throw HubQQMusicFailure.unavailable(L("QQ 音乐播放菜单暂时不可用。")) }
             let items = try reader.elements(menus[0], kAXChildrenAttribute, limit: 32)
             let labels = try items.map { (role: try reader.string($0, kAXRoleAttribute), title: try reader.string($0, kAXTitleAttribute)) }
             guard let itemIndex = HubQQMusicAccessibility.uniqueMenuCommandIndex(for: action, in: labels, isPlaying: currentState) else {
-                throw HubQQMusicFailure.unavailable("无法唯一识别 QQ 音乐的播放菜单项。")
+                throw HubQQMusicFailure.unavailable(L("无法唯一识别 QQ 音乐的播放菜单项。"))
             }
             let item = items[itemIndex]
             let role = try reader.string(item, kAXRoleAttribute)
@@ -460,7 +460,7 @@ final class HubQQMusicAXBackend: HubQQMusicBackend {
             guard title == labels[itemIndex].title,
                   HubQQMusicAccessibility.matchesMenuCommand(action, role: role, title: title),
                   try reader.explicitlyEnabled(item) else {
-                throw HubQQMusicFailure.unavailable("QQ 音乐当前的播放菜单项不可用，请重试。")
+                throw HubQQMusicFailure.unavailable(L("QQ 音乐当前的播放菜单项不可用，请重试。"))
             }
             var actualPID: pid_t = 0
             guard AXUIElementGetPid(item, &actualPID) == .success, actualPID == pid else { throw HubQQMusicFailure.wrongTarget }
@@ -469,12 +469,12 @@ final class HubQQMusicAXBackend: HubQQMusicBackend {
             // after an action error or a delayed readback.
             let error = AXUIElementPerformAction(item, kAXPressAction as CFString)
             Self.logger.debug("Native playback menu action result=\(error.rawValue)")
-            if error == .actionUnsupported { throw HubQQMusicFailure.unavailable("QQ 音乐原生菜单暂不接受播放控制。") }
+            if error == .actionUnsupported { throw HubQQMusicFailure.unavailable(L("QQ 音乐原生菜单暂不接受播放控制。")) }
             guard error == .success else { throw failure(error) }
             // A readback (or the next poll) supplies state; never optimistically flip playback.
             return snapshot(for: pid)
         } catch let error as HubQQMusicFailure { return .failure(error) }
-        catch { return .failure(.unavailable("暂时无法连接 QQ 音乐。")) }
+        catch { return .failure(.unavailable(L("暂时无法连接 QQ 音乐。"))) }
     }
 
     private struct Button {
@@ -543,7 +543,7 @@ final class HubQQMusicAXBackend: HubQQMusicBackend {
                 let identifiers = windowIDs.joined(separator: ",")
                 let roles = childRoles.keys.sorted().map { "\($0):\(childRoles[$0]!)" }.joined(separator: ",")
                 Self.logger.debug("Playback layout unavailable: pid=\(pid) appRole=\(appRole, privacy: .public) windows=\(windows.count) ids=\(identifiers, privacy: .public) main=\(mainFound) roles=\(roles, privacy: .public) exactPanel=\(exactPanelName)")
-                throw HubQQMusicFailure.unavailable("未找到 QQ 音乐播放控制栏，请打开 QQ 音乐主窗口。")
+                throw HubQQMusicFailure.unavailable(L("未找到 QQ 音乐播放控制栏，请打开 QQ 音乐主窗口。"))
             }
             var pending: [(AXUIElement, Int)] = [(playbackPanel, 0)]
             var index = 0, title = "", artist = ""
@@ -565,12 +565,12 @@ final class HubQQMusicAXBackend: HubQQMusicBackend {
                     pending.append(contentsOf: try reader.elements(element, kAXChildrenAttribute, limit: 40 - pending.count).map { ($0, depth + 1) })
                 }
             }
-            guard !buttons.isEmpty else { throw HubQQMusicFailure.unavailable("QQ 音乐播放控制栏暂时不可用。") }
+            guard !buttons.isEmpty else { throw HubQQMusicFailure.unavailable(L("QQ 音乐播放控制栏暂时不可用。")) }
             try validate(pid)
             let playing = HubQQMusicAccessibility.playbackState(controls: buttons.map { ($0.role, $0.names) })
             return .success(Capture(snapshot: HubQQMusicSnapshot(pid: pid, title: title, artist: artist, isPlaying: playing), buttons: buttons))
         } catch let error as HubQQMusicFailure { return .failure(error) }
-        catch { return .failure(.unavailable("暂时无法读取 QQ 音乐。")) }
+        catch { return .failure(.unavailable(L("暂时无法读取 QQ 音乐。"))) }
     }
 
     private func validate(_ pid: pid_t) throws {
@@ -581,8 +581,8 @@ final class HubQQMusicAXBackend: HubQQMusicBackend {
 
     private func failure(_ error: AXError) -> HubQQMusicFailure {
         if error == .apiDisabled { return .permission }
-        if error == .actionUnsupported { return .unavailable("QQ 音乐当前不接受播放控制。") }
-        return .unavailable("QQ 音乐暂时没有响应，请稍后重试。")
+        if error == .actionUnsupported { return .unavailable(L("QQ 音乐当前不接受播放控制。")) }
+        return .unavailable(L("QQ 音乐暂时没有响应，请稍后重试。"))
     }
 
     private final class Reader {
@@ -591,7 +591,7 @@ final class HubQQMusicAXBackend: HubQQMusicBackend {
         init(timeout: Float) { self.timeout = timeout }
 
         private func value(_ element: AXUIElement, _ attribute: String) throws -> CFTypeRef? {
-            guard ProcessInfo.processInfo.systemUptime < deadline else { throw HubQQMusicFailure.unavailable("QQ 音乐响应较慢，请稍后重试。") }
+            guard ProcessInfo.processInfo.systemUptime < deadline else { throw HubQQMusicFailure.unavailable(L("QQ 音乐响应较慢，请稍后重试。")) }
             AXUIElementSetMessagingTimeout(element, timeout)
             var value: CFTypeRef?
             let error = AXUIElementCopyAttributeValue(element, attribute as CFString, &value)
@@ -599,7 +599,7 @@ final class HubQQMusicAXBackend: HubQQMusicBackend {
             case .success: return value
             case .attributeUnsupported, .noValue: return nil
             case .apiDisabled: throw HubQQMusicFailure.permission
-            default: throw HubQQMusicFailure.unavailable("QQ 音乐暂时没有响应，请稍后重试。")
+            default: throw HubQQMusicFailure.unavailable(L("QQ 音乐暂时没有响应，请稍后重试。"))
             }
         }
 

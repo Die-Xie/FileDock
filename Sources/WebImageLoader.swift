@@ -40,13 +40,13 @@ private enum HubImageDownloadError: LocalizedError {
     case invalidURL, invalidResponse, notImage, tooLarge, redirectLimit, emptyImage, busy
     var errorDescription: String? {
         switch self {
-        case .busy: return "已有图片正在下载，请稍后重试。"
-        case .invalidURL: return "图片地址必须是有效的 HTTP 或 HTTPS 地址，且不能包含登录凭据。"
-        case .invalidResponse: return "图片服务器未返回成功响应。"
-        case .notImage: return "此地址没有返回图片。"
-        case .tooLarge: return "图片超过 32 MiB，未保存。"
-        case .redirectLimit: return "图片地址重定向次数过多。"
-        case .emptyImage: return "图片服务器返回了空内容。"
+        case .busy: return L("已有图片正在下载，请稍后重试。")
+        case .invalidURL: return L("图片地址必须是有效的 HTTP 或 HTTPS 地址，且不能包含登录凭据。")
+        case .invalidResponse: return L("图片服务器未返回成功响应。")
+        case .notImage: return L("此地址没有返回图片。")
+        case .tooLarge: return L("图片超过 32 MiB，未保存。")
+        case .redirectLimit: return L("图片地址重定向次数过多。")
+        case .emptyImage: return L("图片服务器返回了空内容。")
         }
     }
 }

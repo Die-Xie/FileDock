@@ -97,8 +97,8 @@ enum HubDirectoryLoadError: LocalizedError {
     case timeout, busy
     var errorDescription: String? {
         switch self {
-        case .timeout: return "目录读取暂时无响应。已读内容仍可使用，可以切换工作区或稍后重试。"
-        case .busy: return "仍有目录等待系统响应。请稍后重试；界面仍可正常操作。"
+        case .timeout: return L("目录读取暂时无响应。已读内容仍可使用，可以切换工作区或稍后重试。")
+        case .busy: return L("仍有目录等待系统响应。请稍后重试；界面仍可正常操作。")
         }
     }
 }
@@ -217,7 +217,7 @@ extension HubDirectoryLoading {
             // preserving the metadata prefetched by the filesystem in this scan.
             let root = URL(fileURLWithPath: directory.path, isDirectory: true)
             guard try root.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true else {
-                throw CocoaError(.fileReadUnknown, userInfo: [NSLocalizedDescriptionKey: "目标不是文件夹。"])
+                throw CocoaError(.fileReadUnknown, userInfo: [NSLocalizedDescriptionKey: L("目标不是文件夹。")])
             }
             var enumerationError: Error?
             var options: FileManager.DirectoryEnumerationOptions = [.skipsSubdirectoryDescendants, .skipsPackageDescendants]

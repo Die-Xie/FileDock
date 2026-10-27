@@ -66,7 +66,7 @@ enum HubFileNameEditing {
             textColor = .textColor; focusRingType = .exterior
             usesSingleLineMode = true
             cell?.isScrollable = true
-            setAccessibilityLabel("文件名")
+            setAccessibilityLabel(L("文件名"))
             setAccessibilityIdentifier("filedock.inline-rename")
         }
         required init?(coder: NSCoder) { nil }

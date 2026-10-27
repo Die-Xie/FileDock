@@ -6,9 +6,9 @@ enum HubImageImportError: LocalizedError {
     case tooLarge, invalid, dimensions
     var errorDescription: String? {
         switch self {
-        case .tooLarge: return "图片文件超过 32 MB，未保存。"
-        case .invalid: return "无法读取拖入的图片。"
-        case .dimensions: return "图片尺寸超过 8192 像素或 2400 万像素，未保存。"
+        case .tooLarge: return L("图片文件超过 32 MB，未保存。")
+        case .invalid: return L("无法读取拖入的图片。")
+        case .dimensions: return L("图片尺寸超过 8192 像素或 2400 万像素，未保存。")
         }
     }
 }

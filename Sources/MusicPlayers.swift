@@ -6,7 +6,7 @@ import Carbon
 enum HubMusicPlayer: String, CaseIterable, Sendable {
     case qqMusic, appleMusic, neteaseMusic
     var name: String {
-        switch self { case .qqMusic: return "QQ 音乐"; case .appleMusic: return "音乐"; case .neteaseMusic: return "网易云音乐" }
+        switch self { case .qqMusic: return L("QQ 音乐"); case .appleMusic: return L("音乐"); case .neteaseMusic: return L("网易云音乐") }
     }
     var bundleID: String {
         switch self {
@@ -20,7 +20,7 @@ enum HubMusicPlayer: String, CaseIterable, Sendable {
 enum HubMusicPlayerSelection: String, CaseIterable, Sendable {
     case automatic, qqMusic, appleMusic, neteaseMusic
     var player: HubMusicPlayer? { HubMusicPlayer(rawValue: rawValue) }
-    var title: String { player?.name ?? "自动选择" }
+    var title: String { player?.name ?? L("自动选择") }
 }
 
 struct HubMusicCandidate: Sendable {
@@ -62,7 +62,7 @@ final class HubAppleMusicBackend: HubQQMusicBackend {
         record.setDescriptor(NSAppleEventDescriptor(typeCode: code), forKeyword: AEKeyword(keyAEKeyData))
         record.setDescriptor(container, forKeyword: AEKeyword(keyAEContainer))
         guard let descriptor = record.coerce(toDescriptorType: DescType(typeObjectSpecifier)) else {
-            throw HubQQMusicFailure.unavailable("暂时无法读取音乐。")
+            throw HubQQMusicFailure.unavailable(L("暂时无法读取音乐。"))
         }
         return descriptor
     }
@@ -91,7 +91,7 @@ final class HubAppleMusicBackend: HubQQMusicBackend {
             switch state {
             case Self.code("kPSP"), Self.code("kPSF"), Self.code("kPSR"): playing = true
             case Self.code("kPSS"), Self.code("kPSp"): playing = false
-            default: throw HubQQMusicFailure.unavailable("音乐当前未提供播放状态。")
+            default: throw HubQQMusicFailure.unavailable(L("音乐当前未提供播放状态。"))
             }
             let track = try Self.property(Self.code("pTrk"))
             var title = "", artist = ""
@@ -115,7 +115,7 @@ final class HubAppleMusicBackend: HubQQMusicBackend {
             try validate(pid)
             return .success(HubQQMusicSnapshot(pid: pid, title: title, artist: artist, isPlaying: playing, progress: progress))
         } catch let error as HubQQMusicFailure { return .failure(error) }
-        catch { return .failure(.unavailable("音乐暂时没有响应，请稍后重试。")) }
+        catch { return .failure(.unavailable(L("音乐暂时没有响应，请稍后重试。"))) }
     }
     func perform(_ action: HubQQMusicAction, for pid: pid_t) -> Result<HubQQMusicSnapshot, HubQQMusicFailure> {
         do {
@@ -124,7 +124,7 @@ final class HubAppleMusicBackend: HubQQMusicBackend {
             // Never retry a command after a timeout: it may already have run.
             return snapshot(for: pid)
         } catch let error as HubQQMusicFailure { return .failure(error) }
-        catch { return .failure(.unavailable("音乐暂时没有响应，请稍后重试。")) }
+        catch { return .failure(.unavailable(L("音乐暂时没有响应，请稍后重试。"))) }
     }
     private func validate(_ pid: pid_t) throws {
         guard let app = NSRunningApplication(processIdentifier: pid), !app.isTerminated else { throw HubQQMusicFailure.notRunning }
@@ -139,7 +139,7 @@ final class HubAppleMusicBackend: HubQQMusicBackend {
         try validate(pid)
         guard permission(for: pid, prompt: false) == noErr else { throw HubQQMusicFailure.permission }
         let remaining = deadline - ProcessInfo.processInfo.systemUptime
-        guard remaining > 0 else { throw HubQQMusicFailure.unavailable("音乐响应较慢，请稍后重试。") }
+        guard remaining > 0 else { throw HubQQMusicFailure.unavailable(L("音乐响应较慢，请稍后重试。")) }
         let event = NSAppleEventDescriptor(eventClass: eventClass, eventID: eventID,
                                           targetDescriptor: NSAppleEventDescriptor(processIdentifier: pid),
                                           returnID: AEReturnID(kAutoGenerateReturnID), transactionID: AETransactionID(kAnyTransactionID))
@@ -155,6 +155,6 @@ final class HubAppleMusicBackend: HubQQMusicBackend {
     private func failure(_ code: OSStatus) -> HubQQMusicFailure {
         if code == errAEEventNotPermitted || code == -1744 { return .permission }
         if code == procNotFound { return .notRunning }
-        return .unavailable("音乐暂时没有响应，请稍后重试。")
+        return .unavailable(L("音乐暂时没有响应，请稍后重试。"))
     }
 }

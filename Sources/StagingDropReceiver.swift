@@ -56,9 +56,9 @@ enum HubStagingDropReceiver {
         case unsupported, invalidFileURL, unavailable
         var errorDescription: String? {
             switch self {
-            case .unsupported: return "此项目没有可读取的文件表示。"
-            case .invalidFileURL: return "无法读取拖入的本地文件地址。"
-            case .unavailable: return "拖入的项目未返回可读取的内容。"
+            case .unsupported: return L("此项目没有可读取的文件表示。")
+            case .invalidFileURL: return L("无法读取拖入的本地文件地址。")
+            case .unavailable: return L("拖入的项目未返回可读取的内容。")
             }
         }
     }
@@ -123,7 +123,7 @@ enum HubStagingDropReceiver {
                 do { try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000)) } catch { return }
                 guard completion != nil else { return }
                 providerProgress?.cancel()
-                failures.append("导入等待超时，未完成的项目可重新拖入。")
+                failures.append(L("导入等待超时，未完成的项目可重新拖入。"))
                 complete()
             }
             advance()
@@ -237,7 +237,7 @@ enum HubStagingDropReceiver {
             switch result {
             case .success(let url): urls.append(url)
             case .failure(let error):
-                let name = providers[index].suggestedName.flatMap { $0.isEmpty ? nil : $0 } ?? "第 \(index + 1) 项"
+                let name = providers[index].suggestedName.flatMap { $0.isEmpty ? nil : $0 } ?? L("第 \(index + 1) 项")
                 failures.append("\(name)：\(error.localizedDescription)")
             }
             index += 1

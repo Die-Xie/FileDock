@@ -6,8 +6,8 @@ import UniformTypeIdentifiers
 enum WorkspaceMode: String, Codable, CaseIterable, Identifiable {
     case folder, references, recents
     var id: String { rawValue }
-    var title: String { self == .folder ? "子文件夹" : self == .recents ? "最近使用" : "文件夹与文件" }
-    var description: String { self == .folder ? "浏览文件夹中的全部项目，新文件自动出现。" : self == .recents ? "自动显示最近打开过的文件。" : "收藏所选文件与文件夹，只保存引用。" }
+    var title: String { self == .folder ? L("子文件夹") : self == .recents ? L("最近使用") : L("文件夹与文件") }
+    var description: String { self == .folder ? L("浏览文件夹中的全部项目，新文件自动出现。") : self == .recents ? L("自动显示最近打开过的文件。") : L("收藏所选文件与文件夹，只保存引用。") }
 }
 
 enum SortKey: String, Codable, CaseIterable, Identifiable {
@@ -15,12 +15,12 @@ enum SortKey: String, Codable, CaseIterable, Identifiable {
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .name: return "名称"
-        case .size: return "大小"
-        case .kind: return "种类"
-        case .created: return "创建日期"
-        case .modified: return "修改日期"
-        case .added: return "添加日期"
+        case .name: return L("名称")
+        case .size: return L("大小")
+        case .kind: return L("种类")
+        case .created: return L("创建日期")
+        case .modified: return L("修改日期")
+        case .added: return L("添加日期")
         }
     }
 }
@@ -28,20 +28,20 @@ enum SortKey: String, Codable, CaseIterable, Identifiable {
 enum HubViewMode: String, Codable, CaseIterable, Identifiable {
     case grid, list, columns
     var id: String { rawValue }
-    var title: String { self == .grid ? "图标" : self == .list ? "列表" : "分栏" }
+    var title: String { self == .grid ? L("图标") : self == .list ? L("列表") : L("分栏") }
     var symbol: String { self == .grid ? "square.grid.2x2" : self == .list ? "list.bullet" : "rectangle.split.3x1" }
 }
 
 enum HubAppearance: String, Codable, CaseIterable, Identifiable {
     case system, dark, light
     var id: String { rawValue }
-    var title: String { self == .system ? "跟随系统" : self == .dark ? "深色" : "浅色" }
+    var title: String { self == .system ? L("跟随系统") : self == .dark ? L("深色") : L("浅色") }
 }
 
 enum TriggerMode: String, Codable, CaseIterable, Identifiable {
     case both, hover, keyboard
     var id: String { rawValue }
-    var title: String { self == .both ? "鼠标与快捷键" : self == .hover ? "仅鼠标" : "仅快捷键" }
+    var title: String { self == .both ? L("鼠标与快捷键") : self == .hover ? L("仅鼠标") : L("仅快捷键") }
 }
 
 enum HotCorner: String, Codable, CaseIterable, Identifiable {
@@ -49,16 +49,19 @@ enum HotCorner: String, Codable, CaseIterable, Identifiable {
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .notch: return "顶部居中 / 刘海"
-        case .topLeft: return "左上角"
-        case .topRight: return "右上角"
-        case .bottomLeft: return "左下角"
-        case .bottomRight: return "右下角"
+        case .notch: return L("顶部居中 / 刘海")
+        case .topLeft: return L("左上角")
+        case .topRight: return L("右上角")
+        case .bottomLeft: return L("左下角")
+        case .bottomRight: return L("右下角")
         }
     }
 }
 
 struct HubSettings: Codable, Equatable {
+    // Missing in older configurations: preserve the existing Chinese interface.
+    var language: String? = "system"
+    var resolvedLanguage: HubLanguage { language.flatMap(HubLanguage.init(rawValue:)) ?? .simplifiedChinese }
     var appearance: String = "system"
     var backgroundTheme: String? = "liquidGlass"
     var fontSize: Double = 13
@@ -130,6 +133,7 @@ struct HubSettings: Codable, Equatable {
     var resolvedHideOnFileDragExit: Bool { hideOnFileDragExit ?? true }
 
     mutating func normalize() {
+        if let language, HubLanguage(rawValue: language) == nil { self.language = "system" }
         if shortcutOrder != nil { shortcutOrder = resolvedShortcutOrder.map(\.rawValue) }
         if !["system", "dark", "light"].contains(appearance) { appearance = "dark" }
         if backgroundTheme != nil { backgroundTheme = resolvedBackgroundTheme }
@@ -227,7 +231,7 @@ struct FileEntry: Identifiable, Hashable, Sendable {
         isDirectory = values?.isDirectory ?? false
         isPackage = values?.isPackage ?? false
         size = Int64(values?.fileSize ?? 0)
-        kind = exists ? (values?.localizedTypeDescription ?? (isDirectory ? "文件夹" : url.pathExtension.uppercased() + " 文件")) : "项目不可用"
+        kind = exists ? (values?.localizedTypeDescription ?? (isDirectory ? L("文件夹") : url.pathExtension.uppercased() + L(" 文件"))) : L("项目不可用")
         created = values?.creationDate
         modified = values?.contentModificationDate
         added = values?.addedToDirectoryDate
@@ -242,13 +246,13 @@ enum HubFileError: LocalizedError {
     case missing(URL), invalidDestination, descendant, invalidName, noWorkspace, corruptConfig, configurationTooLarge, partial([String])
     var errorDescription: String? {
         switch self {
-        case .missing(let url): return "找不到项目：\(url.lastPathComponent)"
-        case .invalidDestination: return "请选择可写入的目标文件夹。"
-        case .descendant: return "不能把文件夹放入它自己或它的子文件夹。"
-        case .invalidName: return "名称不能为空，也不能包含 /、:，或使用 . 与 ..。"
-        case .noWorkspace: return "请先选择或添加一个工作区。"
-        case .corruptConfig: return "配置文件格式无效。"
-        case .configurationTooLarge: return "配置超过 16 MiB，未覆盖原有设置。请减少工作区或文件引用后重试。"
+        case .missing(let url): return L("找不到项目：\(url.lastPathComponent)")
+        case .invalidDestination: return L("请选择可写入的目标文件夹。")
+        case .descendant: return L("不能把文件夹放入它自己或它的子文件夹。")
+        case .invalidName: return L("名称不能为空，也不能包含 /、:，或使用 . 与 ..。")
+        case .noWorkspace: return L("请先选择或添加一个工作区。")
+        case .corruptConfig: return L("配置文件格式无效。")
+        case .configurationTooLarge: return L("配置超过 16 MiB，未覆盖原有设置。请减少工作区或文件引用后重试。")
         case .partial(let messages): return messages.joined(separator: "\n")
         }
     }
@@ -347,6 +351,7 @@ enum HubFileOperations {
     @Published var referenceManualOrder = true { didSet { invalidateEntryOrder(); persistIfReady() } }
     @Published var viewMode: HubViewMode = .grid { didSet { persistIfReady() } }
     @Published var settings = HubSettings() { didSet {
+        if settings.resolvedLanguage != oldValue.resolvedLanguage { HubLocalization.select(settings.resolvedLanguage) }
         if settings.resolvedFoldersFirst != oldValue.resolvedFoldersFirst { invalidateEntryOrder() }
         if settings.stagingWorkspaceID != oldValue.stagingWorkspaceID || settings.favoriteWorkspaceID != oldValue.favoriteWorkspaceID { cachedStagedURLs = nil }
         persistIfReady()
@@ -437,7 +442,7 @@ enum HubFileOperations {
             let legacy = support.deletingLastPathComponent().appendingPathComponent("FolderHubReplica", isDirectory: true)
             if !fm.fileExists(atPath: support.path), fm.fileExists(atPath: legacy.path) {
                 do { try fm.moveItem(at: legacy, to: support) }
-                catch { errorMessage = "旧配置迁移失败：\(error.localizedDescription)"; return }
+                catch { errorMessage = L("旧配置迁移失败：\(error.localizedDescription)"); return }
             }
         }
 
@@ -449,10 +454,10 @@ enum HubFileOperations {
                 loadedConfiguration = true
             }
             catch {
-                errorMessage = "配置未能读取：\(error.localizedDescription)。原文件已保留。"
+                errorMessage = L("配置未能读取：\(error.localizedDescription)。原文件已保留。")
                 let backup = self.configurationURL.deletingPathExtension().appendingPathExtension("unreadable-\(UUID().uuidString).json")
                 do { try fm.copyItem(at: self.configurationURL, to: backup) }
-                catch { errorMessage = "配置未能读取，且无法保存备份。请检查文件权限。"; return }
+                catch { errorMessage = L("配置未能读取，且无法保存备份。请检查文件权限。"); return }
             }
         }
         if workspaces.isEmpty && !loadedConfiguration {
@@ -465,6 +470,7 @@ enum HubFileOperations {
             }
         }
         bindFavoriteWorkspaceIfNeeded()
+        HubLocalization.select(settings.resolvedLanguage)
         let initial = availableWorkspaces.first(where: { $0.id == selectedWorkspaceID }) ?? availableWorkspaces.first
         selectedWorkspaceID = initial?.id
         currentURL = initial?.mode == .folder ? initial?.rootURL : nil
@@ -486,6 +492,15 @@ enum HubFileOperations {
     }
 
     var selectedWorkspace: Workspace? { workspaces.first { $0.id == selectedWorkspaceID } }
+    /// Translate only built-in labels. Persisted names and user-created
+    /// collections are never rewritten when the interface language changes.
+    func displayName(for workspace: Workspace) -> String {
+        if workspace.mode == .recents && workspace.name == "最近使用" { return L("最近使用") }
+        if workspace.id == settings.stagingWorkspaceID && workspace.name == "暂存区" { return L("暂存区") }
+        if workspace.name == "收藏" && workspace.id == favoriteWorkspace?.id { return L("收藏") }
+        if workspace.rootPath == "/Applications" && workspace.name == "应用程序" { return L("应用程序") }
+        return workspace.name
+    }
     var favoriteWorkspace: Workspace? {
         if let id = settings.favoriteWorkspaceID,
            let workspace = workspaces.first(where: { $0.id == id && $0.mode == .references }) { return workspace }
@@ -563,7 +578,7 @@ enum HubFileOperations {
     var canReorderEntries: Bool { isReferenceRoot || currentURL != nil }
     var currentLocationDescription: String {
         currentURL?.path.replacingOccurrences(of: fm.homeDirectoryForCurrentUser.path, with: "~")
-            ?? (isStagingRoot ? "暂存文件引用 · 拖出或选择复制／移动到文件夹" : isRecentsRoot ? "最近使用 · 按最近打开时间排列" : "文件引用 · 原文件保持在原位置")
+            ?? (isStagingRoot ? L("暂存文件引用 · 拖出或选择复制／移动到文件夹") : isRecentsRoot ? L("最近使用 · 按最近打开时间排列") : L("文件引用 · 原文件保持在原位置"))
     }
     func lastUsedDate(for url: URL) -> Date? {
         isRecentsRoot ? recentRecords.first { $0.url == url.standardizedFileURL }?.lastUsed : nil
@@ -588,7 +603,7 @@ enum HubFileOperations {
         var components: [HubPathComponent] = []
         if isVirtualWorkspace {
             components.append(HubPathComponent(id: prefix + ":" + workspace.mode.rawValue,
-                                               title: workspace.name.isEmpty ? workspace.mode == .recents ? "最近使用" : "文件合集" : workspace.name, url: nil))
+                                               title: workspace.name.isEmpty ? workspace.mode == .recents ? L("最近使用") : L("文件合集") : displayName(for: workspace), url: nil))
         }
         components.append(contentsOf: breadcrumbs.map { url in
             HubPathComponent(id: prefix + ":file:" + url.path,
@@ -921,9 +936,9 @@ enum HubFileOperations {
         let files = urls ?? (isStagingRoot && !selectedURLs.isEmpty ? selectedURLs : stagedURLs)
         guard !files.isEmpty else { return }
         let panel = NSOpenPanel()
-        panel.title = copy ? "复制暂存文件到…" : "移动暂存文件到…"
-        panel.prompt = copy ? "复制到这里" : "移动到这里"
-        panel.message = "成功转移的项目会从暂存区移除。同名文件会自动改名，保留目标文件。"
+        panel.title = copy ? L("复制暂存文件到…") : L("移动暂存文件到…")
+        panel.prompt = copy ? L("复制到这里") : L("移动到这里")
+        panel.message = L("成功转移的项目会从暂存区移除。同名文件会自动改名，保留目标文件。")
         panel.canChooseFiles = false; panel.canChooseDirectories = true; panel.allowsMultipleSelection = false
         guard HubWindowPresentation.runModal(panel) == .OK, let directory = panel.url else { return }
         transferStagingFilesToFolder(files, directory: directory, copy: copy)
@@ -957,7 +972,7 @@ enum HubFileOperations {
             updated.rootPath = nil; updated.referencePaths = []; updated.directoryOrders = nil
         }
         updated.name = workspace.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        if updated.name.isEmpty && updated.symbol.isEmpty && updated.customIconPath == nil { errorMessage = "请至少保留工作区名称或图标。"; return }
+        if updated.name.isEmpty && updated.symbol.isEmpty && updated.customIconPath == nil { errorMessage = L("请至少保留工作区名称或图标。"); return }
         updated.referencePaths = uniquePaths(updated.referencePaths)
         guard canStoreReferences(updated.referencePaths) else { return }
         // Capture a legacy name-based favorite only after admission succeeds.
@@ -1015,7 +1030,7 @@ enum HubFileOperations {
     func chooseWorkspace(mode: WorkspaceMode = .folder) {
         if mode == .recents { addRecentWorkspace(); return }
         let panel = NSOpenPanel()
-        panel.title = mode == .folder ? "选择工作区文件夹" : "选择文件或文件夹"
+        panel.title = mode == .folder ? L("选择工作区文件夹") : L("选择文件或文件夹")
         panel.canChooseDirectories = true
         panel.canChooseFiles = mode == .references
         panel.allowsMultipleSelection = mode == .references
@@ -1029,7 +1044,7 @@ enum HubFileOperations {
         guard var workspace = selectedWorkspace else { errorMessage = HubFileError.noWorkspace.localizedDescription; return }
         guard workspace.mode != .recents else { return }
         let panel = NSOpenPanel()
-        panel.title = "选择文件夹并授权访问"
+        panel.title = L("选择文件夹并授权访问")
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.directoryURL = workspace.rootURL
@@ -1376,9 +1391,9 @@ enum HubFileOperations {
     func open(_ entry: FileEntry) {
         guard canOpen(entry) else { errorMessage = HubFileError.missing(entry.url).localizedDescription; return }
         if entry.canNavigate { navigate(to: entry.url) }
-        else if !NSWorkspace.shared.open(entry.url) { errorMessage = "无法打开 \(entry.name)。" }
+        else if !NSWorkspace.shared.open(entry.url) { errorMessage = L("无法打开 \(entry.name)。") }
     }
-    func openExternally(_ url: URL) { if !NSWorkspace.shared.open(url) { errorMessage = "无法打开 \(url.lastPathComponent)。" } }
+    func openExternally(_ url: URL) { if !NSWorkspace.shared.open(url) { errorMessage = L("无法打开 \(url.lastPathComponent)。") } }
     func openWith(_ urls: [URL], application: URL) {
         NSWorkspace.shared.open(urls, withApplicationAt: application, configuration: .init()) { [weak self] _, error in
             if let error { Task { @MainActor in self?.errorMessage = error.localizedDescription } }
@@ -1404,7 +1419,7 @@ enum HubFileOperations {
     private func performFileWork<Value: Sendable>(scopes: [URL],
         work: @escaping @Sendable () throws -> Value,
         complete: @escaping @MainActor (Result<Value, Error>) -> Void) {
-        guard fileOperationsInProgress < 3 else { errorMessage = "已有文件操作正在进行，请稍后重试。"; return }
+        guard fileOperationsInProgress < 3 else { errorMessage = L("已有文件操作正在进行，请稍后重试。"); return }
         let id = UUID()
         dropScopeURLs[id] = scopes
         beginPersistenceTransaction()
@@ -1422,7 +1437,7 @@ enum HubFileOperations {
         }
     }
 
-    func createFolder(named name: String = "未命名文件夹") {
+    func createFolder(named name: String = L("未命名文件夹")) {
         guard let directory = currentURL else { errorMessage = HubFileError.invalidDestination.localizedDescription; return }
         do { try HubFileOperations.validateName(name) } catch { errorMessage = error.localizedDescription; return }
         let workspaceID = selectedWorkspaceID, selection = selectedIDs
@@ -1480,7 +1495,7 @@ enum HubFileOperations {
     /// The system Trash destination refers to the real files even if the
     /// source was a staging/favorite reference or navigation changed mid-drag.
     func trashDraggedFiles(_ urls: [URL]) {
-        guard !stagingTransferInProgress else { errorMessage = "请等待暂存文件传输完成后再移到废纸篓。"; return }
+        guard !stagingTransferInProgress else { errorMessage = L("请等待暂存文件传输完成后再移到废纸篓。"); return }
         let files = urls.filter(\.isFileURL)
         guard !files.isEmpty else { return }
         performFileWork(scopes: files, work: {
@@ -1628,14 +1643,14 @@ enum HubFileOperations {
 
     private func canAddWorkspace() -> Bool {
         guard workspaces.count < Self.maximumWorkspaces else {
-            errorMessage = "最多可添加 \(Self.maximumWorkspaces) 个工作区。"; return false
+            errorMessage = L("最多可添加 \(Self.maximumWorkspaces) 个工作区。"); return false
         }
         return true
     }
 
     private func canStoreReferences(_ paths: [String]) -> Bool {
         guard paths.count <= Self.maximumReferences else {
-            errorMessage = "合集或暂存区最多可容纳 \(Self.maximumReferences) 个项目。"; return false
+            errorMessage = L("合集或暂存区最多可容纳 \(Self.maximumReferences) 个项目。"); return false
         }
         return true
     }
@@ -1797,17 +1812,17 @@ enum HubFileOperations {
             try data.write(to: configurationURL, options: .atomic)
             try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: configurationURL.path)
             configurationWriteCount += 1
-        } catch { errorMessage = "无法保存设置：\(error.localizedDescription)" }
+        } catch { errorMessage = L("无法保存设置：\(error.localizedDescription)") }
     }
 
     func exportConfiguration() {
-        let panel = NSSavePanel(); panel.nameFieldStringValue = "FileDock 配置.json"; panel.allowedContentTypes = [.json]
+        let panel = NSSavePanel(); panel.nameFieldStringValue = L("FileDock 配置.json"); panel.allowedContentTypes = [.json]
         guard HubWindowPresentation.runModal(panel) == .OK, let url = panel.url else { return }
         do { try encodedConfiguration().write(to: url, options: .atomic) }
         catch { errorMessage = error.localizedDescription }
     }
     func importConfiguration() {
-        guard !configurationImportIsBlocked else { errorMessage = "请等文件操作或分享完成后再导入配置。"; return }
+        guard !configurationImportIsBlocked else { errorMessage = L("请等文件操作或分享完成后再导入配置。"); return }
         let panel = NSOpenPanel(); panel.allowedContentTypes = [.json]; panel.canChooseDirectories = false
         guard HubWindowPresentation.runModal(panel) == .OK, let url = panel.url else { return }
         do {
@@ -1817,7 +1832,7 @@ enum HubFileOperations {
 
     /// Shared by file import and configuration round-trip tests.
     func importConfiguration(data: Data) throws {
-        guard !configurationImportIsBlocked else { throw HubFileError.partial(["请等文件操作或分享完成后再导入配置。"]) }
+        guard !configurationImportIsBlocked else { throw HubFileError.partial([L("请等文件操作或分享完成后再导入配置。")]) }
         let wasReady = readyToSave
         readyToSave = false
         defer { readyToSave = wasReady }
@@ -1848,6 +1863,6 @@ enum HubFileOperations {
                           Workspace(name: "文稿", symbol: "doc.text", rootPath: root.appendingPathComponent("Documents").path),
                           Workspace(name: "应用程序", symbol: "app.dashed", rootPath: "/Applications"),
                           Workspace(name: "收藏", symbol: "star", mode: .references, referencePaths: [root.appendingPathComponent("Project Notes.md").path])]
-        } catch { errorMessage = "无法创建演示目录：\(error.localizedDescription)" }
+        } catch { errorMessage = L("无法创建演示目录：\(error.localizedDescription)") }
     }
 }

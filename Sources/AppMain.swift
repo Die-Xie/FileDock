@@ -80,6 +80,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
     private var cornerKeepAliveFrame: NSRect?
     private var lastRefresh = Date.distantPast
     private var lastSettingsData: Data?
+    private var interfaceLanguage: HubLanguage?
     private var previewURLs: [URL] = []
     private var shownFromHover = false
     private var restoringSize = false
@@ -234,23 +235,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         let menuBar = NSMenu()
         let appItem = NSMenuItem()
         let appMenu = NSMenu(title: "FileDock")
-        let preferences = NSMenuItem(title: "设置…", action: #selector(showSettings), keyEquivalent: ",")
+        let preferences = NSMenuItem(title: L("设置…"), action: #selector(showSettings), keyEquivalent: ",")
         preferences.target = self
         appMenu.addItem(preferences)
-        let update = NSMenuItem(title: "检查更新…", action: #selector(checkForUpdates), keyEquivalent: "")
+        let update = NSMenuItem(title: L("检查更新…"), action: #selector(checkForUpdates), keyEquivalent: "")
         update.target = self
         appMenu.addItem(update)
         appMenu.addItem(.separator())
-        let hide = NSMenuItem(title: "收起窗口", action: #selector(hideApplicationWindows), keyEquivalent: "h")
+        let hide = NSMenuItem(title: L("收起窗口"), action: #selector(hideApplicationWindows), keyEquivalent: "h")
         hide.target = self
         appMenu.addItem(hide)
-        appMenu.addItem(withTitle: "退出 FileDock", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenu.addItem(withTitle: L("退出 FileDock"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
         menuBar.addItem(appItem)
         let editItem = NSMenuItem()
-        let editMenu = NSMenu(title: "编辑")
-        for (title, action, key) in [("撤销", "undo:", "z"), ("剪切", "cut:", "x"), ("复制", "copy:", "c"),
-                                     ("粘贴", "paste:", "v"), ("全选", "selectAll:", "a")] {
+        let editMenu = NSMenu(title: L("编辑"))
+        for (title, action, key) in [(L("撤销"), "undo:", "z"), (L("剪切"), "cut:", "x"), (L("复制"), "copy:", "c"),
+                                     (L("粘贴"), "paste:", "v"), (L("全选"), "selectAll:", "a")] {
             editMenu.addItem(withTitle: title, action: Selector(action), keyEquivalent: key)
         }
         editItem.submenu = editMenu
@@ -263,7 +264,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         if let button = statusItem.button {
             button.image = FileDockMenuBarIcon.make()
             button.image?.isTemplate = true
-            button.toolTip = "FileDock · 右键打开菜单"
+            button.toolTip = L("FileDock · 右键打开菜单")
             button.target = self
             button.action = #selector(statusClicked(_:))
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
@@ -273,14 +274,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
     @objc private func statusClicked(_ sender: Any?) {
         if NSApp.currentEvent?.type == .rightMouseUp {
             let menu = NSMenu()
-            menu.addItem(withTitle: "显示 / 隐藏面板", action: #selector(toggleFromMenu), keyEquivalent: "")
-            menu.addItem(withTitle: "在光标位置显示", action: #selector(showAtCursor), keyEquivalent: "")
+            menu.addItem(withTitle: L("显示 / 隐藏面板"), action: #selector(toggleFromMenu), keyEquivalent: "")
+            menu.addItem(withTitle: L("在光标位置显示"), action: #selector(showAtCursor), keyEquivalent: "")
             menu.addItem(.separator())
-            menu.addItem(withTitle: "设置…", action: #selector(showSettings), keyEquivalent: ",")
-            menu.addItem(withTitle: "检查更新…", action: #selector(checkForUpdates), keyEquivalent: "")
-            menu.addItem(withTitle: "使用说明", action: #selector(showHelp), keyEquivalent: "")
+            menu.addItem(withTitle: L("设置…"), action: #selector(showSettings), keyEquivalent: ",")
+            menu.addItem(withTitle: L("检查更新…"), action: #selector(checkForUpdates), keyEquivalent: "")
+            menu.addItem(withTitle: L("使用说明"), action: #selector(showHelp), keyEquivalent: "")
             menu.addItem(.separator())
-            menu.addItem(withTitle: "退出 FileDock", action: #selector(quit), keyEquivalent: "q")
+            menu.addItem(withTitle: L("退出 FileDock"), action: #selector(quit), keyEquivalent: "q")
             for item in menu.items { item.target = self }
             statusItem.menu = menu
             statusItem.button?.performClick(nil)
@@ -310,8 +311,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         registeredTriggerMode = model.settings.triggerMode
         let shortcuts = model.settings.resolvedGlobalShortcuts
         registeredShortcuts = shortcuts
-        let topLabel = shortcuts.top.map { " · \($0.displayString) 显示 / 隐藏" } ?? ""
-        statusItem?.button?.toolTip = "FileDock\(topLabel) · 右键打开菜单"
+        let topLabel = shortcuts.top.map { L(" · \($0.displayString) 显示 / 隐藏") } ?? ""
+        statusItem?.button?.toolTip = L("FileDock\(topLabel) · 右键打开菜单")
         guard !HubWindowPresentation.isPresentingDialog, !shortcutRecordingActive else { return }
         model.shortcutRegistrationErrors = [:]
         guard model.settings.triggerMode != "hover" else { return }
@@ -332,7 +333,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         let installed = InstallEventHandler(GetApplicationEventTarget(), callback, 1, &event,
                                            Unmanaged.passUnretained(self).toOpaque(), &hotKeyHandler)
         guard installed == noErr else {
-            model.shortcutRegistrationErrors = ["top": "无法注册快捷键（\(installed)），可通过菜单栏呼出。"]
+            model.shortcutRegistrationErrors = ["top": L("无法注册快捷键（\(installed)），可通过菜单栏呼出。")]
             return
         }
         var accepted: [HubShortcut] = []
@@ -343,7 +344,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
                 continue
             }
             guard !accepted.contains(shortcut) else {
-                model.shortcutRegistrationErrors[name] = "两个呼出动作不能使用同一个快捷键。"
+                model.shortcutRegistrationErrors[name] = L("两个呼出动作不能使用同一个快捷键。")
                 continue
             }
             accepted.append(shortcut)
@@ -357,7 +358,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
                 hotKeys.append(ref)
                 registeredActions[id] = atCursor
             } else {
-                model.shortcutRegistrationErrors[name] = "\(shortcut.displayString) 未能注册，可能已被系统或其他应用占用。请录制其他组合。"
+                model.shortcutRegistrationErrors[name] = L("\(shortcut.displayString) 未能注册，可能已被系统或其他应用占用。请录制其他组合。")
             }
         }
     }
@@ -924,6 +925,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
 
     private func applySettings() {
         guard model != nil, panel != nil else { return }
+        let language = model.settings.resolvedLanguage.resolved()
+        if interfaceLanguage != language {
+            interfaceLanguage = language
+            configureMainMenu()
+            settingsWindow?.title = L("FileDock 设置")
+            let shortcut = model.settings.resolvedGlobalShortcuts.top.map { L(" · \($0.displayString) 显示 / 隐藏") } ?? ""
+            statusItem?.button?.toolTip = L("FileDock\(shortcut) · 右键打开菜单")
+        }
         music.setPlayerSelection(HubMusicPlayerSelection(rawValue: model.settings.resolvedMusicPlayer) ?? .automatic)
         music.setEnabled(model.settings.resolvedQQMusicEnabled)
         if registeredTriggerMode != model.settings.triggerMode || registeredShortcuts != model.settings.resolvedGlobalShortcuts { configureHotKeys() }
@@ -1016,7 +1025,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         if settingsWindow == nil {
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 780, height: 600),
                                   styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
-            window.title = "FileDock 设置"
+            window.title = L("FileDock 设置")
             window.level = .floating
             window.collectionBehavior = [.fullScreenAuxiliary]
             window.isReleasedWhenClosed = false
@@ -1052,9 +1061,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
             if enabled { try SMAppService.mainApp.register() }
             else { try SMAppService.mainApp.unregister() }
             if SMAppService.mainApp.status == .requiresApproval {
-                model.errorMessage = "请在系统设置 → 通用 → 登录项中允许 FileDock。"
+                model.errorMessage = L("请在系统设置 → 通用 → 登录项中允许 FileDock。")
             }
-        } catch { model.errorMessage = "开机启动设置失败：\(error.localizedDescription)" }
+        } catch { model.errorMessage = L("开机启动设置失败：\(error.localizedDescription)") }
         model.settings.launchAtLogin = SMAppService.mainApp.status == .enabled
     }
 
@@ -1091,7 +1100,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
     private func sendAirDrop(_ urls: [URL]) {
         guard !urls.isEmpty else { return }
         guard !hasActiveDialog else {
-            model.errorMessage = "请先完成或取消当前共享或对话框，再使用 AirDrop。"
+            model.errorMessage = L("请先完成或取消当前共享或对话框，再使用 AirDrop。")
             return
         }
         guard model.settings.resolvedAirDropEnabled else { return }
@@ -1101,7 +1110,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
 
     private var canStartSharing: Bool {
         guard model.fileOperationsInProgress == 0, !model.stagingTransferInProgress, !HubImportActivity.isBusy else {
-            model.errorMessage = "请等待当前文件操作完成后再共享。"
+            model.errorMessage = L("请等待当前文件操作完成后再共享。")
             return false
         }
         return true
@@ -1135,9 +1144,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         let alert = NSAlert()
         alert.messageText = "FileDock"
         let shortcuts = model.settings.resolvedGlobalShortcuts
-        let topKey = shortcuts.top?.displayString ?? "未设置"
-        let cursorKey = shortcuts.cursor?.displayString ?? "未设置"
-        alert.informativeText = """
+        let topKey = shortcuts.top?.displayString ?? L("未设置")
+        let cursorKey = shortcuts.cursor?.displayString ?? L("未设置")
+        alert.informativeText = L("""
         将鼠标移至设置中选择的触发位置，或使用全局快捷键。在触发位置呼出：\(topKey)；光标旁呼出：\(cursorKey)。可在「设置 → 快捷键」中点击录制。
 
         文件夹工作区实时浏览目录；收藏工作区只保留文件引用。拖入文件夹默认移动，按住 Option 则复制；拖入收藏仅添加引用。通过「＋ → 固定最近使用到右上角」开启最近使用时钟入口，最近打开的文件排在前面。
@@ -1151,8 +1160,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         双击打开 · 空格预览 · ⌘C 复制 · ⌘⌥C 复制路径 · ⌘⌫ 移到废纸篓（确认后） · ⌘⇧[ / ] 切换工作区。
 
         面板可以拖动和调整大小。图钉使其保持显示。设置提供外观、触发位置、延迟、滚动和图标大小。
-        """
-        alert.addButton(withTitle: "知道了")
+        """)
+        alert.addButton(withTitle: L("知道了"))
         if panel.isVisible { alert.beginSheetModal(for: panel) } else { _ = HubWindowPresentation.runModal(alert) }
     }
 

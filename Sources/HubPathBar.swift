@@ -38,12 +38,12 @@ struct HubPathBar: View {
                         .buttonStyle(.plain)
                         .disabled(current)
                         .help(component.url?.path ?? component.title)
-                        .accessibilityLabel(current ? "当前位置：\(component.title)" : "前往\(component.title)")
+                        .accessibilityLabel(current ? L("当前位置：\(component.title)") : L("前往\(component.title)"))
                         .onHover { hoveredID = $0 ? component.id : nil }
                         .id(component.id)
                     }
                     if components.isEmpty {
-                        Text("未选择工作区").font(.system(size: 11)).foregroundStyle(.secondary)
+                        Text(L("未选择工作区")).font(.system(size: 11)).foregroundStyle(.secondary)
                     }
                 }
             }
@@ -56,7 +56,7 @@ struct HubPathBar: View {
             .onDisappear { revealTask?.cancel() }
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("当前位置路径")
+        .accessibilityLabel(L("当前位置路径"))
     }
 
     private func revealCurrent(_ components: [HubPathComponent], using proxy: ScrollViewProxy) {

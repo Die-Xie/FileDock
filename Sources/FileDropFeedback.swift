@@ -53,11 +53,11 @@ struct HubFileDropFeedback: Equatable {
 
     private var verb: String {
         switch action {
-        case .move: return "移动"
-        case .copy: return "复制"
-        case .reference: return "添加引用"
-        case .reorder: return "调整顺序"
-        case .airDrop: return "通过 AirDrop 发送"
+        case .move: return L("移动")
+        case .copy: return L("复制")
+        case .reference: return L("添加引用")
+        case .reorder: return L("调整顺序")
+        case .airDrop: return L("通过 AirDrop 发送")
         }
     }
     private var symbol: String {
@@ -70,7 +70,7 @@ struct HubFileDropFeedback: Equatable {
         }
     }
     var prompt: String {
-        action == .airDrop ? "松开以通过 AirDrop 发送 \(count) 项" : "松开以\(verb) \(count) 项 · \(title)"
+        action == .airDrop ? L("松开以通过 AirDrop 发送 \(count) 项") : L("松开以\(verb) \(count) 项 · \(title)")
     }
     func overlay(in size: CGSize) -> some View {
         ZStack(alignment: .topLeading) {
@@ -89,7 +89,7 @@ struct HubFileDropFeedback: Equatable {
             HStack(spacing: 7) {
                 Image(systemName: symbol)
                 Text(prompt).lineLimit(1).truncationMode(.middle)
-                if action == .move { Text("⌥ 复制").foregroundStyle(.secondary) }
+                if action == .move { Text(L("⌥ 复制")).foregroundStyle(.secondary) }
             }
             .font(.system(size: 11, weight: .medium))
             .padding(.horizontal, 12).padding(.vertical, 8)

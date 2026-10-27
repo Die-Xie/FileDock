@@ -119,9 +119,9 @@ import UniformTypeIdentifiers
             // Release our own ticket before the final busy check. Other file
             // work still blocks delivery, while this batch cannot block itself.
             endActivity(ticket)
-            guard canReceive() else { onError("AirDrop 已关闭或正忙，本次拖入未发送。"); return }
+            guard canReceive() else { onError(L("AirDrop 已关闭或正忙，本次拖入未发送。")); return }
             guard !urls.isEmpty else {
-                onError("无法读取全部拖入的文件地址，或等待已超时。未发送任何项目。"); return
+                onError(L("无法读取全部拖入的文件地址，或等待已超时。未发送任何项目。")); return
             }
             do { completion(try HubAirDropPolicy.uniqueFiles(urls)) }
             catch { onError(error.localizedDescription) }
