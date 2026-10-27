@@ -69,6 +69,11 @@ struct HubSettings: Codable, Equatable {
     var horizontalScroll = false
     var showScrollbar = true
     var notchClickToWake: Bool? = false
+    var notchEntryThreshold: Double? = 0.75
+    var resolvedNotchEntryThreshold: Double {
+        let value = notchEntryThreshold ?? 0.75
+        return value.isFinite ? min(2, max(0.01, value)) : 0.75
+    }
     var usesNotchClickToWake: Bool { hotCorner == "notch" && notchClickToWake == true }
     var hoverDelay: Double = 0
     var autoHideDelay: Double? = 0
@@ -148,6 +153,7 @@ struct HubSettings: Codable, Equatable {
         if animationSpeed != nil { animationSpeed = resolvedAnimationSpeed }
         if notchIntegrationStyle != nil { notchIntegrationStyle = resolvedNotchIntegrationStyle }
         if autoHideDelay != nil { autoHideDelay = resolvedAutoHideDelay }
+        if notchEntryThreshold != nil { notchEntryThreshold = resolvedNotchEntryThreshold }
         if musicPlayer != nil { musicPlayer = resolvedMusicPlayer }
         if blockedApplicationBundleIDs != nil { blockedApplicationBundleIDs = resolvedBlockedApplicationBundleIDs }
     }

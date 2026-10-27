@@ -54,6 +54,7 @@ struct HubSettingsView: View {
     @State private var switchDelayDraft: Double?
     @State private var hoverDelayDraft: Double?
     @State private var autoHideDelayDraft: Double?
+    @State private var notchEntryThresholdDraft: Double?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(model: HubModel, music: HubQQMusicController, updater: FileDockUpdater, page: HubSettingsPage = .general) {
@@ -71,7 +72,7 @@ struct HubSettingsView: View {
                 }.listStyle(.sidebar).accessibilityLabel(L("设置分类"))
                 Divider()
                 Button {
-                    commitDelayEdits()
+                    commitInteractionEdits()
                     NSApp.terminate(nil)
                 } label: {
                     Label(L("退出 FileDock"), systemImage: "power")
@@ -100,8 +101,8 @@ struct HubSettingsView: View {
             .background(Color(nsColor: .windowBackgroundColor))
             .environment(\.hubInterfaceMotion, HubInterfaceMotion(enabled: !reduceMotion, speed: model.settings.resolvedAnimationSpeed))
             .onReceive(NotificationCenter.default.publisher(for: Notification.Name("HubSelectMusicSettings"))) { _ in selectedPage = .music }
-            .onChange(of: selectedPage) { _ in commitDelayEdits() }
-            .onDisappear { commitDelayEdits() }
+            .onChange(of: selectedPage) { _ in commitInteractionEdits() }
+            .onDisappear { commitInteractionEdits() }
     }
 
     @ViewBuilder private var pageContent: some View {
@@ -158,7 +159,22 @@ struct HubSettingsView: View {
                 if model.settings.hotCorner == "notch" {
                     Toggle(L("点按刘海呼出"), isOn: Binding(get: { model.settings.notchClickToWake ?? false }, set: { model.settings.notchClickToWake = $0 }))
                         .disabled(model.settings.triggerMode == "keyboard")
-                    note(L("关闭后使用悬停呼出；鼠标大部分进入刘海后才开始计时。"))
+                    note(L("关闭后使用悬停呼出。"))
+                    VStack(alignment: .leading, spacing: 7) {
+                        settingsRow(L("鼠标进入比例")) {
+                            Text(notchEntryThreshold.wrappedValue, format: .percent.precision(.fractionLength(0...1)))
+                                .monospacedDigit().foregroundStyle(.secondary)
+                            Button(L("恢复 75%")) { notchEntryThreshold.wrappedValue = 0.75 }
+                                .font(.caption)
+                        }
+                        Slider(value: notchEntryThreshold, in: 0.01...2, onEditingChanged: { editing in
+                            if editing { notchEntryThresholdDraft = model.settings.resolvedNotchEntryThreshold }
+                            else { commitInteractionEdits() }
+                        }).accessibilityLabel(L("鼠标进入比例"))
+                            .accessibilityValue(Text(notchEntryThreshold.wrappedValue, format: .percent.precision(.fractionLength(0...1))))
+                            .accessibilityIdentifier("filedock.settings.notch-entry-threshold")
+                        note(L("1%–100% 按鼠标可见面积判定；超过 100% 须完全进入后继续向上深入，200% 需到屏幕顶边。达到后才开始计时或响应点击，仅对真实刘海生效。"))
+                    }.disabled(model.settings.triggerMode == "keyboard")
                 }
                 Toggle(L("在副显示器上启用触发区域"), isOn: $model.settings.secondaryScreens)
                     .disabled(model.settings.triggerMode == "keyboard")
@@ -168,20 +184,20 @@ struct HubSettingsView: View {
                 delayEditor(L("悬停后展开"), value: hoverMilliseconds, range: 0...1500,
                             detail: L("0 ms 表示立即展开；点按呼出时不使用此延迟。"), onEditingChanged: { editing in
                                 if editing { hoverDelayDraft = model.settings.hoverDelay }
-                                else { commitDelayEdits() }
+                                else { commitInteractionEdits() }
                             })
                     .disabled(model.settings.triggerMode == "keyboard" || model.settings.usesNotchClickToWake)
                 Divider()
                 delayEditor(L("鼠标移开后收起"), value: autoHideMilliseconds, range: 0...3000,
                             detail: L("返回面板会取消收起；已固定的面板保持显示。"), onEditingChanged: { editing in
                                 if editing { autoHideDelayDraft = model.settings.resolvedAutoHideDelay }
-                                else { commitDelayEdits() }
+                                else { commitInteractionEdits() }
                             })
                 Divider()
                 delayEditor(L("悬停切换工作区"), value: Binding(get: { switchDelay.wrappedValue * 1000 }, set: { switchDelay.wrappedValue = $0 / 1000 }), range: 0...1500,
                             detail: L("0 ms 关闭普通悬停切换；拖着文件时仍可悬停跳转。"), onEditingChanged: { editing in
                                 if editing { switchDelayDraft = model.settings.switchDelay }
-                                else { commitDelayEdits() }
+                                else { commitInteractionEdits() }
                             })
             }
             section(L("全屏与应用限制")) {
@@ -480,12 +496,22 @@ struct HubSettingsView: View {
             else if model.settings.switchDelay != delay { model.settings.switchDelay = delay }
         })
     }
-    private func commitDelayEdits() {
+    private var notchEntryThreshold: Binding<Double> {
+        Binding(get: { notchEntryThresholdDraft ?? model.settings.resolvedNotchEntryThreshold }, set: { value in
+            guard value.isFinite else { return }
+            let overlap = min(2, max(0.01, value))
+            if notchEntryThresholdDraft != nil { notchEntryThresholdDraft = overlap }
+            else if model.settings.resolvedNotchEntryThreshold != overlap { model.settings.notchEntryThreshold = overlap }
+        })
+    }
+    private func commitInteractionEdits() {
         var settings = model.settings
         if let draft = hoverDelayDraft { settings.hoverDelay = draft }
         if let draft = autoHideDelayDraft { settings.autoHideDelay = draft }
         if let draft = switchDelayDraft { settings.switchDelay = draft }
+        if let draft = notchEntryThresholdDraft { settings.notchEntryThreshold = draft }
         hoverDelayDraft = nil; autoHideDelayDraft = nil; switchDelayDraft = nil
+        notchEntryThresholdDraft = nil
         if settings != model.settings { model.settings = settings }
     }
     private var animationSpeed: Binding<Double> {

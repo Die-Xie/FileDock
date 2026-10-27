@@ -10,6 +10,7 @@ struct HubCursorFootprint {
     }
     fileprivate let runs: [Run]
     fileprivate let area: CGFloat
+    fileprivate let bounds: NSRect
 
     /// Pixel rows are ordered from the top of the cursor image to the bottom.
     init?(alpha: [UInt8], pixelsWide: Int, pixelsHigh: Int, imageSize: NSSize, hotSpot: NSPoint) {
@@ -38,6 +39,7 @@ struct HubCursorFootprint {
         guard !runs.isEmpty, area.isFinite, area > 0 else { return nil }
         self.runs = runs
         self.area = area
+        self.bounds = runs.reduce(NSRect.null) { $0.union($1.rect) }
     }
 }
 
@@ -45,6 +47,7 @@ struct HubCursorFootprint {
 /// coordinates, while screen rectangles use the bottom-left screen origin.
 enum HubHoverGeometry {
     private static let geometryTolerance: CGFloat = 0.5
+    private static let overlapTolerance: CGFloat = 1e-9
 
     /// The physical screen edge is reachable. CGRect.contains uses a half-open
     /// rectangle, which otherwise rejects a pointer pressed against its top.
@@ -84,25 +87,61 @@ enum HubHoverGeometry {
         return valid(result) ? result : nil
     }
 
-    static func cursorQualifies(pointer: NSPoint, imageSize: NSSize, hotSpot: NSPoint, region: NSRect) -> Bool {
-        guard valid(region), let cursor = cursorRect(pointer: pointer, imageSize: imageSize, hotSpot: hotSpot) else { return false }
+    static func cursorQualifies(pointer: NSPoint, imageSize: NSSize, hotSpot: NSPoint, region: NSRect,
+                                entryThreshold: CGFloat = 0.75, screenTop: CGFloat? = nil) -> Bool {
+        guard entryThreshold.isFinite, entryThreshold > 0, entryThreshold <= 2,
+              validScreenTop(screenTop, region: region),
+              valid(region), let cursor = cursorRect(pointer: pointer, imageSize: imageSize, hotSpot: hotSpot) else { return false }
         let overlap = cursor.intersection(region)
         guard valid(overlap) else { return false }
+        let visibleHeight = screenTop.map { min(cursor.maxY, $0) - cursor.minY } ?? cursor.height
+        guard visibleHeight > 0 else { return false }
         // Ratios avoid overflowing an area multiplication for large but finite
-        // coordinates, and require 75% of the cursor rather than just its tip.
-        return (overlap.width / cursor.width) * (overlap.height / cursor.height) >= 0.75
+        // coordinates. The tiny tolerance absorbs subtraction roundoff at an
+        // exact percentage boundary, including complete coverage at 100%.
+        return (overlap.width / cursor.width) * (overlap.height / visibleHeight) + overlapTolerance >= min(1, entryThreshold) &&
+            hasRequiredDepth(pointer: pointer, relativeBottom: hotSpot.y - imageSize.height, region: region, threshold: entryThreshold)
     }
 
-    static func cursorQualifies(pointer: NSPoint, footprint: HubCursorFootprint, region: NSRect) -> Bool {
-        guard valid(region), pointer.x.isFinite, pointer.y.isFinite else { return false }
+    static func cursorQualifies(pointer: NSPoint, footprint: HubCursorFootprint, region: NSRect,
+                                entryThreshold: CGFloat = 0.75, screenTop: CGFloat? = nil) -> Bool {
+        guard entryThreshold.isFinite, entryThreshold > 0, entryThreshold <= 2,
+              validScreenTop(screenTop, region: region),
+              valid(region), pointer.x.isFinite, pointer.y.isFinite else { return false }
         var covered: CGFloat = 0
+        // Pixels above the physical screen are not visible. Without this,
+        // the real arrow's upper shadow can make 100–200% unreachable at the edge.
+        let clipped = screenTop.map { pointer.y + footprint.bounds.maxY > $0 } ?? false
+        var visibleArea: CGFloat = clipped ? 0 : footprint.area
         for run in footprint.runs {
             let rect = run.rect.offsetBy(dx: pointer.x, dy: pointer.y)
             guard valid(rect) else { return false }
             let overlap = rect.intersection(region)
             if valid(overlap) { covered += overlap.width * overlap.height * run.alpha }
+            if clipped, let screenTop {
+                let height = max(0, min(rect.maxY, screenTop) - rect.minY)
+                visibleArea += rect.width * height * run.alpha
+            }
         }
-        return covered.isFinite && covered / footprint.area >= 0.75
+        return visibleArea.isFinite && visibleArea > 0 && covered.isFinite &&
+            covered / visibleArea + overlapTolerance >= min(1, entryThreshold) &&
+            hasRequiredDepth(pointer: pointer, relativeBottom: footprint.bounds.minY, region: region, threshold: entryThreshold)
+    }
+
+    private static func validScreenTop(_ screenTop: CGFloat?, region: NSRect) -> Bool {
+        guard let screenTop else { return true }
+        return screenTop.isFinite && abs(screenTop - region.maxY) < 1e-7
+    }
+
+    /// Above 100%, interpolate the remaining reachable upward travel after
+    /// full visible entry. 200% means the pointer reaches the screen's top edge,
+    /// even with transparent cursor padding or a shallow physical notch.
+    private static func hasRequiredDepth(pointer: NSPoint, relativeBottom: CGFloat, region: NSRect, threshold: CGFloat) -> Bool {
+        guard threshold > 1 else { return true }
+        let entryY = region.minY - relativeBottom
+        let travel = max(0, region.maxY - entryY)
+        let requiredY = entryY + travel * (threshold - 1)
+        return requiredY.isFinite && pointer.y + 1e-7 >= requiredY
     }
 
     fileprivate static func valid(_ rect: NSRect) -> Bool {
@@ -270,6 +309,7 @@ struct HubFileDragReentry {
 
     mutating func arm(sessionID: UUID) { hiddenSessionID = sessionID; activation.reset() }
     mutating func reset() { hiddenSessionID = nil; activation.reset() }
+    mutating func cancelPendingDwell() { activation.cancelPendingDwell() }
 
     mutating func update(sessionID: UUID?, mousePressed: Bool, regionID: String?,
                          now: TimeInterval, delay: TimeInterval, strictDwell: Bool, enabled: Bool) -> Bool {

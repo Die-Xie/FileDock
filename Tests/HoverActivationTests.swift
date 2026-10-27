@@ -8,6 +8,7 @@ struct HoverActivationTests {
     static func main() {
         testHoverGeometry()
         testVisibleCursorFootprint()
+        testConfigurableCursorOverlap()
         testCursorRasterization()
         testStrictDwell()
         testSamplingAndPolicyChanges()
@@ -146,7 +147,74 @@ struct HoverActivationTests {
         testFileDragDismissal()
         testFileDragReentry()
 
-        print("PASS: visible cursor alpha, raster orientation and scale, inclusive screen edges, 75% overlap, strict dwell, sampling stalls, policy cancellation, dismiss lock and configurable mouse-exit dismissal")
+        print("PASS: visible cursor alpha, raster orientation and scale, inclusive screen edges, continuous 1–200% entry, visible area and additional depth, and invalid thresholds, strict dwell, sampling stalls, policy cancellation, dismiss lock and configurable mouse-exit dismissal")
+    }
+
+    private static func testConfigurableCursorOverlap() {
+        let size = NSSize(width: 20, height: 20)
+        let region = NSRect(x: -110.3, y: 0.2, width: 100, height: 40)
+        let footprint = HubCursorFootprint(alpha: [255], pixelsWide: 1, pixelsHigh: 1,
+                                           imageSize: size, hotSpot: .zero)!
+        for threshold: CGFloat in [0.01, 0.25, 0.4637, 0.75, 0.999, 1] {
+            let boundary = NSPoint(x: region.minX - size.width * (1 - threshold), y: region.maxY)
+            for (point, expected) in [(boundary, true), (NSPoint(x: boundary.x - 0.001, y: boundary.y), false)] {
+                precondition(HubHoverGeometry.cursorQualifies(pointer: point, imageSize: size, hotSpot: .zero,
+                    region: region, entryThreshold: threshold) == expected)
+                precondition(HubHoverGeometry.cursorQualifies(pointer: point, footprint: footprint,
+                    region: region, entryThreshold: threshold) == expected,
+                    "Alpha-weighted entry and rectangular fixtures must honor the selected percentage")
+            }
+        }
+        for threshold: CGFloat in [1.01, 1.25, 1.5, 1.999, 2] {
+            let depth = (region.height - size.height) * (threshold - 1)
+            let boundary = NSPoint(x: region.minX, y: region.minY + size.height + depth)
+            for (point, expected) in [(boundary, true), (NSPoint(x: boundary.x, y: boundary.y - 0.001), false)] {
+                precondition(HubHoverGeometry.cursorQualifies(pointer: point, imageSize: size, hotSpot: .zero,
+                    region: region, entryThreshold: threshold) == expected)
+                precondition(HubHoverGeometry.cursorQualifies(pointer: point, footprint: footprint,
+                    region: region, entryThreshold: threshold) == expected,
+                    "More than 100% must require additional upward depth, not an impossible overlap area")
+            }
+        }
+        let padded = HubCursorFootprint(alpha: [0, 255, 255], pixelsWide: 1, pixelsHigh: 3,
+                                       imageSize: NSSize(width: 20, height: 30), hotSpot: .zero)!
+        precondition(HubHoverGeometry.cursorQualifies(pointer: NSPoint(x: region.minX, y: region.minY + 35),
+            footprint: padded, region: region, entryThreshold: 1.5))
+        precondition(!HubHoverGeometry.cursorQualifies(pointer: NSPoint(x: region.minX, y: region.minY + 34.99),
+            footprint: padded, region: region, entryThreshold: 1.5))
+        let shadow = HubCursorFootprint(alpha: [255], pixelsWide: 1, pixelsHigh: 1,
+                                       imageSize: size, hotSpot: NSPoint(x: 0, y: 2))!
+        let top = NSPoint(x: region.minX, y: region.maxY)
+        precondition(!HubHoverGeometry.cursorQualifies(pointer: top, footprint: shadow, region: region, entryThreshold: 2))
+        for threshold: CGFloat in [0.75, 1, 1.25, 1.5, 2] {
+            precondition(HubHoverGeometry.cursorQualifies(pointer: top, footprint: shadow, region: region,
+                entryThreshold: threshold, screenTop: region.maxY))
+            precondition(HubHoverGeometry.cursorQualifies(pointer: top, imageSize: size, hotSpot: NSPoint(x: 0, y: 2),
+                region: region, entryThreshold: threshold, screenTop: region.maxY))
+        }
+        precondition(!HubHoverGeometry.cursorQualifies(pointer: top, footprint: shadow, region: region,
+            entryThreshold: 2, screenTop: .nan))
+        let inside = NSPoint(x: region.minX, y: region.maxY)
+        for invalid: CGFloat in [0, -1, 2.01, .nan, .infinity, -.infinity] {
+            precondition(!HubHoverGeometry.cursorQualifies(pointer: inside, imageSize: size, hotSpot: .zero,
+                region: region, entryThreshold: invalid))
+            precondition(!HubHoverGeometry.cursorQualifies(pointer: inside, footprint: footprint,
+                region: region, entryThreshold: invalid))
+        }
+        // A preference change discards only time, retaining the source session.
+        let source = UUID()
+        var reentry = HubFileDragReentry()
+        reentry.arm(sessionID: source)
+        precondition(!reentry.update(sessionID: source, mousePressed: true, regionID: "notch", now: 0,
+            delay: 0.2, strictDwell: true, enabled: true))
+        reentry.cancelPendingDwell()
+        precondition(reentry.isArmed)
+        precondition(!reentry.update(sessionID: source, mousePressed: true, regionID: "notch", now: 0.15,
+            delay: 0.2, strictDwell: true, enabled: true))
+        precondition(!reentry.update(sessionID: source, mousePressed: true, regionID: "notch", now: 0.21,
+            delay: 0.2, strictDwell: true, enabled: true))
+        precondition(reentry.update(sessionID: source, mousePressed: true, regionID: "notch", now: 0.351,
+            delay: 0.2, strictDwell: true, enabled: true))
     }
 
     private static func testFileDragReentry() {
@@ -314,6 +382,9 @@ struct HoverActivationTests {
         precondition(HubHoverGeometry.cursorQualifies(pointer: NSPoint(x: 800, y: 1000), footprint: systemArrow!,
                                                      region: NSRect(x: 700, y: 968, width: 200, height: 32)),
                      "The real standard arrow must qualify when pressed into the center of a 32-point notch")
+        precondition(HubHoverGeometry.cursorQualifies(pointer: NSPoint(x: 800, y: 1000), footprint: systemArrow!,
+            region: NSRect(x: 700, y: 968, width: 200, height: 32), entryThreshold: 2, screenTop: 1000),
+            "The highest configurable threshold must remain reachable with the actual system arrow")
     }
 
     private static func testHoverGeometry() {

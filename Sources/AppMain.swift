@@ -909,7 +909,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
             // A fixed visible arrow footprint avoids transparent padding and
             // transient I-beam/resize cursors changing a stationary hover.
             guard let footprint = HubHoverCursor.footprint,
-                  HubHoverGeometry.cursorQualifies(pointer: pointer, footprint: footprint, region: notch) else { return (nil, true) }
+                  HubHoverGeometry.cursorQualifies(pointer: pointer, footprint: footprint, region: notch,
+                      entryThreshold: CGFloat(model.settings.resolvedNotchEntryThreshold), screenTop: screen.frame.maxY) else { return (nil, true) }
         }
         return (hoverRegionIdentifier(on: screen), notch != nil)
     }
@@ -943,12 +944,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         triggerSuppression.configure(enabled: model.settings.triggerMode != "keyboard",
                                      needsWindowProbe: model.settings.resolvedSuppressHoverInFullScreen)
         let triggerSignature = [String(model.settings.usesNotchClickToWake), model.settings.triggerMode, model.settings.hotCorner,
-                                String(model.settings.secondaryScreens), String(model.settings.hoverDelay),
+                                String(model.settings.secondaryScreens), String(model.settings.hoverDelay), String(model.settings.resolvedNotchEntryThreshold),
                                 String(model.settings.resolvedSuppressHoverInFullScreen)] + model.settings.resolvedBlockedApplicationBundleIDs
         let signature = triggerSignature.joined(separator: "\u{0}")
         if signature != hoverSettingsSignature {
             hoverSettingsSignature = signature
             hoverActivation.cancelPendingDwell()
+            fileDragReentry.cancelPendingDwell()
             triggerSuppression.refresh()
         }
         let appearance: NSAppearance?

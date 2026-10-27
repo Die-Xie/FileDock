@@ -10,6 +10,14 @@ import Foundation
     @MainActor static func main() async throws {
         let fm = FileManager.default
         var wakeSettings = HubSettings()
+        precondition(wakeSettings.resolvedNotchEntryThreshold == 0.75)
+        for (value, expected) in [(Double.nan, 0.75), (.infinity, 0.75), (-1, 0.01), (0, 0.01), (2.5, 2), (0.4637, 0.4637), (1, 1), (1.4637, 1.4637), (2, 2)] {
+            var settings = HubSettings()
+            settings.notchEntryThreshold = value
+            precondition(settings.resolvedNotchEntryThreshold == expected)
+            settings.normalize()
+            precondition(settings.notchEntryThreshold == expected)
+        }
         precondition(wakeSettings.appearance == "system" && wakeSettings.resolvedBackgroundTheme == "liquidGlass")
         precondition(wakeSettings.hoverDelay == 0 && wakeSettings.resolvedAutoHideDelay == 0 && wakeSettings.switchDelay == 0.1)
         precondition(wakeSettings.resolvedHideOnFileDragExit, "File drags make room by default")
@@ -73,6 +81,14 @@ import Foundation
         let storage = base.appendingPathComponent("settings/config.json")
         let model = makeTestModel(storageURL: storage, monitor: false)
         precondition(model.isInitialConfiguration && model.sortKey == .modified && !model.ascending)
+        let unchangedWorkspaces = model.workspaces
+        let initialSettings = model.settings
+        model.settings.notchEntryThreshold = 1.4637
+        let thresholdReload = makeTestModel(storageURL: storage, monitor: false)
+        precondition(thresholdReload.settings.resolvedNotchEntryThreshold == 1.4637)
+        precondition(thresholdReload.workspaces == unchangedWorkspaces)
+        var thresholdSettings = initialSettings; thresholdSettings.notchEntryThreshold = 1.4637
+        precondition(thresholdReload.settings == thresholdSettings, "Entry threshold changes no other preference")
         // These navigation/reordering fixtures use a deterministic named baseline.
         model.sortKey = .name
         model.ascending = true
@@ -210,9 +226,13 @@ import Foundation
         legacy.removeValue(forKey: "hideOnFileDragExit")
         legacy.removeValue(forKey: "clickWakeWhenSuppressed")
         legacy.removeValue(forKey: "notchIntegrationStyle")
+        legacy.removeValue(forKey: "notchEntryThreshold")
         legacy.removeValue(forKey: "backgroundTheme")
         legacy.removeValue(forKey: "foldersFirst")
         let oldSettings = try JSONDecoder().decode(HubSettings.self, from: JSONSerialization.data(withJSONObject: legacy))
+        precondition(oldSettings.notchEntryThreshold == nil && oldSettings.resolvedNotchEntryThreshold == 0.75)
+        var normalizedLegacy = oldSettings; normalizedLegacy.normalize()
+        precondition(normalizedLegacy.notchEntryThreshold == nil, "Keep an absent legacy percentage absent")
         precondition(oldSettings.resolvedAnimationSpeed == 1 && oldSettings.resolvedQQMusicEnabled,
                      "Configs saved before music/speed settings must continue to load")
         precondition(oldSettings.resolvedAutoHideDelay == 0.55, "Older configs must retain the previous 550ms exit delay")
