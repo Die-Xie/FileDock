@@ -254,6 +254,7 @@ struct HubSettingsView: View {
                 Divider()
                 Label(L("拖入文件夹：移动；按住 ⌥：复制"), systemImage: "folder")
                 Label(L("拖入收藏或暂存：添加引用"), systemImage: "link")
+                Label(L("文件夹拖到标签间隙：新建标签"), systemImage: "folder.badge.plus")
                 Label(L("拖到 AirDrop：选择接收设备并发送"), systemImage: "airplayaudio")
                 Label(L("拖到系统废纸篓：移除原文件"), systemImage: "trash")
                 note(L("从顶栏空白处拖出面板会自动固定；文件区用于选择与拖放文件。"))

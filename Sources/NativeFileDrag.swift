@@ -24,6 +24,14 @@ struct HubFileDragPayload {
     let id: UUID
     let context: HubFileDragContext
     let urls: [URL]
+    // Captured with the URL batch before spring navigation replaces the source
+    // snapshot. nil means unknown; an empty set means every item is a file.
+    let folderURLs: Set<URL>?
+
+    init(id: UUID, context: HubFileDragContext, urls: [URL], folderURLs: Set<URL>? = nil) {
+        self.id = id; self.context = context; self.urls = urls
+        self.folderURLs = folderURLs.map { Set($0.map(\.standardizedFileURL)) }
+    }
 }
 
 enum HubFileDragData {
@@ -172,6 +180,7 @@ struct HubFileDragBridge: NSViewRepresentable {
     var context: HubFileDragContext
     var interactionEnabled = true
     var selectedURLs: @MainActor () -> [URL]
+    var folderURLsForDrag: @MainActor ([URL]) -> Set<URL>? = { _ in nil }
     var selectEntry: @MainActor () -> Void
     var onClick: @MainActor (NSEvent.ModifierFlags) -> Void
     var onOpen: @MainActor () -> Void
@@ -189,6 +198,7 @@ struct HubFileDragBridge: NSViewRepresentable {
         view.interactionEnabled = interactionEnabled
         if !interactionEnabled { view.cancelPendingInteraction() }
         view.selectedURLs = selectedURLs
+        view.folderURLsForDrag = folderURLsForDrag
         view.selectEntry = selectEntry
         view.onClick = onClick
         view.onOpen = onOpen
@@ -203,6 +213,7 @@ struct HubFileDragBridge: NSViewRepresentable {
         var interactionEnabled = true
         var dragContext = HubFileDragContext(workspaceID: nil, directory: nil)
         var selectedURLs: (@MainActor () -> [URL])?
+        var folderURLsForDrag: (@MainActor ([URL]) -> Set<URL>?)?
         var selectEntry: (@MainActor () -> Void)?
         var onClick: (@MainActor (NSEvent.ModifierFlags) -> Void)?
         var onOpen: (@MainActor () -> Void)?
@@ -252,7 +263,8 @@ struct HubFileDragBridge: NSViewRepresentable {
                   window.attachedSheet == nil, Self.activeSource == nil,
                   HubFileDragData.contains(convert(event.locationInWindow, from: nil), bounds: bounds, visibleRect: visibleRect) else { return }
             window.makeFirstResponder(self)
-            let payload = HubFileDragPayload(id: UUID(), context: dragContext, urls: HubFileDragData.urls(for: entryURL, selection: selectedURLs?() ?? []))
+            let urls = HubFileDragData.urls(for: entryURL, selection: selectedURLs?() ?? [])
+            let payload = HubFileDragPayload(id: UUID(), context: dragContext, urls: urls, folderURLs: folderURLsForDrag?(urls))
             press = Press(event: event, entryURL: entryURL, payload: payload)
         }
 

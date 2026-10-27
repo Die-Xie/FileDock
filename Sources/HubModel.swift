@@ -341,7 +341,7 @@ enum HubFileOperations {
     @Published var shortcutRegistrationErrors: [String: String] = [:]
     @Published var workspaces: [Workspace] = [] { didSet { invalidateEntryOrder(); cachedStagedURLs = nil; persistIfReady() } }
     @Published var selectedWorkspaceID: UUID? { didSet { persistIfReady() } }
-    @Published var entries: [FileEntry] = [] { didSet { invalidateEntryOrder() } }
+    @Published var entries: [FileEntry] = [] { didSet { invalidateEntryOrder(); cachedFolderDropKinds = nil } }
     @Published var selectedIDs = Set<URL>()
     @Published var search = ""
     @Published var sortKey: SortKey = .modified { didSet {
@@ -395,6 +395,9 @@ enum HubFileOperations {
     private var refreshTimer: Timer?
     private var refreshGeneration = 0
     private let directoryLoader: HubDirectoryLoading
+    private let folderWorkspacePreparer: HubFolderWorkspacePreparing
+    private var pendingFolderWorkspaceDrops = Set<UUID>()
+    private var cachedFolderDropKinds: [URL: Bool]?
     private var activeDirectoryLoad: UUID?
     private var displayedDirectoryContext: RefreshContext?
     private let directorySnapshots = HubDirectorySnapshotCache<DirectorySnapshotKey>()
@@ -438,8 +441,10 @@ enum HubFileOperations {
     }
 
     init(storageURL: URL? = nil, demo: Bool = false, monitor: Bool = false,
-         recentFiles: HubRecentFilesProviding? = nil, directoryLoader: HubDirectoryLoading? = nil) {
+         recentFiles: HubRecentFilesProviding? = nil, directoryLoader: HubDirectoryLoading? = nil,
+         folderWorkspacePreparer: HubFolderWorkspacePreparing? = nil) {
         self.directoryLoader = directoryLoader ?? HubDirectoryLoader()
+        self.folderWorkspacePreparer = folderWorkspacePreparer ?? HubFolderWorkspacePreparer.shared
         self.recentFiles = recentFiles ?? HubRecentFilesSource()
         let support = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
             .appendingPathComponent("FileDock", isDirectory: true)
@@ -729,6 +734,100 @@ enum HubFileOperations {
         bindFavoriteWorkspaceIfNeeded()
         selectWorkspace(workspace.id)
         return workspace
+    }
+
+    /// Optimistic for external URLs whose kind is not in the current snapshot;
+    /// actual folder validation and bookmarks are always prepared off-main.
+    func canOfferFolderWorkspaceDrop(_ urls: [URL], knownFolderURLs: Set<URL>? = nil) -> Bool {
+        guard pendingFolderWorkspaceDrops.isEmpty, fileOperationsInProgress < 3,
+              let files = try? HubFolderWorkspaceDropPolicy.urls(urls, maximum: Self.maximumWorkspaces - workspaces.count) else { return false }
+        return !isKnownNonFolderDrop(files, knownFolderURLs: knownFolderURLs)
+    }
+
+    private var folderDropKinds: [URL: Bool] {
+        if cachedFolderDropKinds == nil {
+            cachedFolderDropKinds = Dictionary(entries.map { ($0.url.standardizedFileURL, $0.exists && $0.canNavigate) }, uniquingKeysWith: { first, _ in first })
+        }
+        return cachedFolderDropKinds ?? [:]
+    }
+
+    func isKnownNonFolderDrop(_ urls: [URL], knownFolderURLs: Set<URL>? = nil) -> Bool {
+        if let knownFolderURLs { return urls.contains { !knownFolderURLs.contains($0.standardizedFileURL) } }
+        let kinds = folderDropKinds
+        return urls.contains { kinds[$0.standardizedFileURL] == false }
+    }
+
+    func folderURLsForDrag(_ urls: [URL], including entry: FileEntry) -> Set<URL>? {
+        let kinds = folderDropKinds
+        var folders = Set<URL>()
+        for url in urls.map(\.standardizedFileURL) {
+            // A parent column's clicked entry may be outside current entries.
+            guard let isFolder = url == entry.url.standardizedFileURL ? entry.exists && entry.canNavigate : kinds[url] else { return nil }
+            if isFolder { folders.insert(url) }
+        }
+        return folders
+    }
+
+    /// Folder tabs reference the original directories. They never copy, move,
+    /// reorder or remove source files, including a drag originating in FileDock.
+    @discardableResult
+    func addFolderWorkspaces(_ urls: [URL], before target: UUID?) -> Bool {
+        guard pendingFolderWorkspaceDrops.isEmpty, fileOperationsInProgress < 3 else { errorMessage = HubFolderWorkspaceDropError.busy.localizedDescription; return false }
+        let files: [URL]
+        do { files = try HubFolderWorkspaceDropPolicy.urls(urls, maximum: Self.maximumWorkspaces - workspaces.count) }
+        catch { errorMessage = error.localizedDescription; return false }
+        guard target == nil || tabWorkspaces.contains(where: { $0.id == target }) else {
+            errorMessage = HubFolderWorkspaceDropError.targetChanged.localizedDescription; return false
+        }
+        let selected = selectedWorkspaceID, directory = currentURL, selection = selectedIDs, query = search
+        let id = UUID()
+        pendingFolderWorkspaceDrops.insert(id); fileOperationsInProgress += 1
+        let admitted = folderWorkspacePreparer.prepare(files) { [weak self] result in
+            guard let self, self.pendingFolderWorkspaceDrops.remove(id) != nil else { return }
+            defer { self.fileOperationsInProgress -= 1 }
+            do {
+                let prepared = try result.get()
+                guard prepared.folders.map({ $0.url.standardizedFileURL.path }) == files.map({ $0.standardizedFileURL.path }) else {
+                    throw HubFolderWorkspaceDropError.invalidFiles
+                }
+                guard target == nil || self.tabWorkspaces.contains(where: { $0.id == target }) else {
+                    throw HubFolderWorkspaceDropError.targetChanged
+                }
+                guard self.workspaces.count + prepared.folders.count <= Self.maximumWorkspaces else {
+                    self.errorMessage = L("最多可添加 \(Self.maximumWorkspaces) 个工作区。"); return
+                }
+                let created = prepared.folders.map { Workspace(name: $0.name, symbol: "folder", mode: .folder, rootPath: $0.url.path) }
+                guard let first = created.first else { throw HubFolderWorkspaceDropError.invalidFiles }
+                var candidate = self.workspaces
+                let index = target.flatMap { id in candidate.firstIndex(where: { $0.id == id }) } ?? candidate.count
+                candidate.insert(contentsOf: created, at: index)
+                var bookmarks = self.bookmarkData
+                for item in prepared.folders { if let bookmark = item.bookmark { bookmarks[item.url.path] = bookmark } }
+                let activate = self.selectedWorkspaceID == selected && self.currentURL == directory && self.selectedIDs == selection && self.search == query
+                // Validate exactly the intended configuration before mutating
+                // workspaces or adopting scopes. A batch is admitted atomically.
+                let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+                let data = try encoder.encode(SavedState(workspaces: candidate,
+                    selectedWorkspaceID: activate ? first.id : self.selectedWorkspaceID, settings: self.settings,
+                    sortKey: self.sortKey, ascending: self.ascending, viewMode: self.viewMode, bookmarks: bookmarks,
+                    referenceManualOrder: self.referenceManualOrder))
+                guard data.count <= Self.maximumConfigurationBytes else { throw HubFileError.configurationTooLarge }
+                self.beginPersistenceTransaction()
+                defer { self.endPersistenceTransaction() }
+                self.bookmarkData = bookmarks
+                for url in prepared.scopes.take() {
+                    if self.activeScopes.contains(url) { url.stopAccessingSecurityScopedResource() }
+                    else { self.activeScopes.append(url) }
+                }
+                self.workspaces = candidate
+                if activate { self.selectWorkspace(first.id) }
+            } catch { self.errorMessage = error.localizedDescription }
+        }
+        if !admitted, pendingFolderWorkspaceDrops.remove(id) != nil {
+            fileOperationsInProgress -= 1
+            errorMessage = HubFolderWorkspaceDropError.busy.localizedDescription
+        }
+        return admitted
     }
 
     @discardableResult

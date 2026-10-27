@@ -58,6 +58,10 @@ struct NativeFileDragTests {
         let workspaceID = UUID()
         let context = HubFileDragContext(workspaceID: workspaceID, directory: URL(fileURLWithPath: "/drag-fixture"))
         let payload = HubFileDragPayload(id: sessionID, context: context, urls: [first, second])
+        precondition(payload.folderURLs == nil)
+        let kinds = HubFileDragPayload(id: sessionID, context: context, urls: [first, folder],
+            folderURLs: [URL(fileURLWithPath: "/drag-fixture/child/../folder")])
+        precondition(kinds.folderURLs == [folder], "Folder hints normalize once at source capture, independently of destination snapshots")
         precondition(HubFileDragData.shouldReorder(payload, in: context))
         precondition(HubFileDragData.shouldReorder(payload, in: HubFileDragContext(workspaceID: workspaceID, directory: URL(fileURLWithPath: "/drag-fixture/sub/.."))))
         precondition(!HubFileDragData.shouldReorder(payload, in: HubFileDragContext(workspaceID: UUID(), directory: context.directory)))

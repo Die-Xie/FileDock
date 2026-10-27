@@ -4,6 +4,15 @@ import Foundation
 
 enum HubLocalizationCatalog {
     static let english: [String: String] = [
+        "请拖入本机文件夹以创建标签，原文件不会移动。": "Drop local folders to create tabs. Original folders stay in place.",
+        "“{0}”不是可浏览的文件夹，未创建任何标签。": "“{0}” is not a browsable folder. No tabs were created.",
+        "正在添加其他文件夹，请稍后再拖入。": "Other folders are being added. Try again shortly.",
+        "检查文件夹超时，未创建标签。请检查磁盘或网络位置后重试。": "Checking folders timed out. No tabs were created. Check the disk or network location and retry.",
+        "标签插入位置已失效，请重新拖入文件夹。": "The tab insertion target is no longer available. Drop the folders again.",
+        "创建标签": "Create Tabs",
+        "文件夹拖到标签间隙：新建标签": "Drop Folders Between Tabs: Create Tabs",
+        "新标签": "New Tab",
+        "松开以将文件夹添加为标签 · 数量：{0}": "Release to add folders as tabs · Count: {0}",
         "未选择": "Not Selected",
         "检测中": "Checking",
         "未完成": "Incomplete",

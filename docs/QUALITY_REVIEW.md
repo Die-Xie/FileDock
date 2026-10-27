@@ -37,7 +37,7 @@
 
 ```sh
 mkdir -p .build
-swiftc -swift-version 5 -O -parse-as-library Sources/Localization.swift Sources/LocalizationCatalog.swift Sources/HubModel.swift Sources/DirectoryLoader.swift Sources/FileAppearance.swift Sources/RecentFiles.swift Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift scripts/BenchmarkStaging.swift -o .build/benchmark-staging -framework AppKit -framework Combine -framework Carbon -framework UniformTypeIdentifiers
+swiftc -swift-version 5 -O -parse-as-library Sources/Localization.swift Sources/LocalizationCatalog.swift Sources/HubModel.swift Sources/FolderWorkspacePreparation.swift Sources/DirectoryLoader.swift Sources/FileAppearance.swift Sources/RecentFiles.swift Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift scripts/BenchmarkStaging.swift -o .build/benchmark-staging -framework AppKit -framework Combine -framework Carbon -framework UniformTypeIdentifiers
 .build/benchmark-staging
 ```
 
@@ -338,3 +338,12 @@ TriggerSuppressionTests覆盖黑名单和全屏两类证据的禁用／回退、
 - 悬停、点按和文件拖动返回复用同一入口判定；无刘海顶部中央与四角不读取新阈值。策略变更取消普通和拖动返回的旧计时，保留手动收起锁及原拖动会话资格。
 - 设置滑条不分格，使用草稿避免拖动每帧写入配置。结束、切页、关闭设置或从设置退出时提交，按实际百分比显示并提供75%恢复按钮和辅助功能值；中英明暗原生窗口布局已检查。
 - 四套定向回归：HoverActivation、Model、TriggerSuppression、双语七页SettingsLayout。覆盖1%/100%/200%边界、小数146.37%保存重启、非法值/旧配置、不修改其他设置及等待取消。此前1.28.0全量回归保留为基线，本轮未重复所有无关测试。逐文件`git diff`与空白检查已完成。
+
+## 1.29.0：拖入文件夹创建标签（2026-10-27）
+
+- 顶栏文件接收继续使用同一个原生目的视图，子标签只提供可见几何。标签边缘、间隙和首尾解析为新建标签插入位，中心保留原有弹簧切换和文件投放。裁剪滚动标签、刘海两侧、音乐、操作按钮和顶部安全留白均单独限制；不在空的刘海右侧承诺会实际流到左侧的位置。反馈仅覆盖绘制2pt细线、文件夹加号和已有底部提示，不占布局、不参与命中。
+- 悬停只读取URL、缓存的文件类型及几何，不读取磁盘、不创建书签。源鼠标按下时捕获完整URL批次与已知文件夹集合，沿用真实源／剪贴板／会话身份验证；跨标签后类型提示仍属于原拖动，不把普通文件误判为文件夹新建。不改写对外真实文件URL格式。外部未知种类仅作乐观提示，松手后整批验证。
+- 新建工作区使用后台浅层元数据和书签准备，不枚举目录内容。一次最多一个模型批次，最多两个真实后台工人；5秒超时仅撤销回调并取消，不释放尚未返回的文件系统槽。安全范围由租约保留，成功转交模型，失败／迟到／失效结果自动释放；不处理源文件的复制、移动或删除。
+- 验证本机URL、数量、目录／包类型与目标身份；完成时重查工作区容量和插入目标。完整候选配置先编码检查16MiB上限，再一次事务写入，整批失败不改变工作区或书签。用户已切换浏览位置、选择或搜索时不抢回焦点。忙碌、过期目标、混合类型和无响应磁盘均有本地化提示。
+- 新增纯几何、真实临时目录／保存重启、超时实际工人上限及完整HubView原生回调三套回归。覆盖多目录顺序和去重、源SVG／子项不变、单次保存、包／缺失目录／远程URL拒绝、过期和重复回调、迟到容量、超大配置、别名路径恢复、Finder格式与本地认证拖入、两种顶栏布局、插入取消旧悬停、接收器存活及普通文件类型跨导航保持。
+- 全量回归通过后补强源文件类型和空侧几何，并重跑七套相关测试；逐文件`git diff`和空白检查已完成。检查中英文原生截图，指引位于标签间且不裁剪。隐藏窗口验证实际AppKit接收和SwiftUI布局，未代替物理Finder指针操作，未宣称测量GPU帧率。

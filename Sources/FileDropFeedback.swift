@@ -4,6 +4,7 @@ import SwiftUI
 /// Clip scrolled tabs to their own viewport so hidden tabs cannot accept a drop.
 enum HubFileDropRegion: Hashable {
     case content, workspace(UUID), staging, airDrop, item(URL), tabViewport(UUID)
+    case header, headerControls, headerMusic
 
     func visibleFrame(in regions: [Self: CGRect]) -> CGRect {
         let frame = regions[self] ?? .zero
@@ -35,13 +36,14 @@ struct HubFileDropRegionKey: PreferenceKey {
 }
 
 struct HubFileDropPlan {
-    enum Action { case move, copy, reference, reorder, airDrop }
+    enum Action { case move, copy, reference, reorder, airDrop, createWorkspace }
     var workspaceID: UUID?
     var directory: URL?
     var item: URL?
     var title: String
     var action: Action
     var slot: HubFileInsertionSlot? = nil
+    var workspaceInsertion: HubWorkspaceTabInsertion? = nil
 }
 
 struct HubFileDropFeedback: Equatable {
@@ -58,6 +60,7 @@ struct HubFileDropFeedback: Equatable {
         case .reference: return L("添加引用")
         case .reorder: return L("调整顺序")
         case .airDrop: return L("通过 AirDrop 发送")
+        case .createWorkspace: return L("创建标签")
         }
     }
     private var symbol: String {
@@ -67,10 +70,12 @@ struct HubFileDropFeedback: Equatable {
         case .reference: return "link"
         case .reorder: return "arrow.up.arrow.down"
         case .airDrop: return "airplayaudio"
+        case .createWorkspace: return "folder.badge.plus"
         }
     }
     var prompt: String {
-        action == .airDrop ? L("松开以通过 AirDrop 发送 \(count) 项") : L("松开以\(verb) \(count) 项 · \(title)")
+        if action == .createWorkspace { return L("松开以将文件夹添加为标签 · 数量：\(count)") }
+        return action == .airDrop ? L("松开以通过 AirDrop 发送 \(count) 项") : L("松开以\(verb) \(count) 项 · \(title)")
     }
     func overlay(in size: CGSize) -> some View {
         ZStack(alignment: .topLeading) {
@@ -79,6 +84,13 @@ struct HubFileDropFeedback: Equatable {
                     .shadow(color: Color.accentColor.opacity(0.25), radius: 2)
                     .frame(width: rect.width, height: rect.height)
                     .offset(x: rect.minX, y: rect.minY)
+                if action == .createWorkspace {
+                    Image(systemName: "folder.badge.plus")
+                        .font(.system(size: 12, weight: .semibold)).foregroundStyle(Color.accentColor)
+                        .frame(width: 24, height: 22).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 5))
+                        .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Color.accentColor.opacity(0.65)))
+                        .position(x: min(max(14, rect.midX), max(14, size.width - 14)), y: rect.maxY)
+                }
             } else {
                 RoundedRectangle(cornerRadius: 8)
                     .fill(Color.accentColor.opacity(0.07))

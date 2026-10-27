@@ -115,7 +115,7 @@ struct HubView: View {
                 let frames = Dictionary(uniqueKeysWithValues: regions.compactMap { key, frame -> (URL, CGRect)? in
                     if case .item(let url) = key { return (url, frame) }; return nil
                 })
-                nativeFileDrop(regions: regions, frames: frames)
+                nativeFileDrop(regions: regions, frames: frames, size: geometry.size)
                     .frame(width: geometry.size.width, height: geometry.size.height)
                 nativeWorkspaceReorderDrop(regions: regions, size: geometry.size)
                     .frame(width: geometry.size.width, height: geometry.size.height)
@@ -268,11 +268,13 @@ struct HubView: View {
                       compactWidth: embeddedMusicLayout.displayWidth, isPresented: presentation.previewVisible,
                       onControlFocusChange: { musicControlsFocused = $0 })
             .anchorPreference(key: HubHeaderDragRegionKey.self, value: .bounds) { [.music: $0] }
+            .transformAnchorPreference(key: HubFileDropRegionKey.self, value: .bounds) { $0[.headerMusic] = $1 }
     }
 
     @ViewBuilder private var workspaceBar: some View {
         VStack(spacing: 0) {
             workspaceHeader
+                .transformAnchorPreference(key: HubFileDropRegionKey.self, value: .bounds) { $0[.header] = $1 }
             if embeddedMusicLayout.placement == .headerRow {
                 compactMusicBar
                     .frame(maxWidth: .infinity)
@@ -323,6 +325,7 @@ struct HubView: View {
                                 regions.viewports.append(anchor)
                             }
                             .transformAnchorPreference(key: HubHeaderDragRegionKey.self, value: .bounds) { $0[.controls] = $1 }
+                            .transformAnchorPreference(key: HubFileDropRegionKey.self, value: .bounds) { $0[.headerControls] = $1 }
                     }.frame(width: sideWidth).clipped()
                 }.padding(.horizontal, 12).frame(height: geometry.size.height)
                     .onPreferenceChange(HubWorkspaceControlsWidthKey.self) { width in
@@ -342,6 +345,7 @@ struct HubView: View {
                         regions.viewports.append(anchor)
                     }
                     .transformAnchorPreference(key: HubHeaderDragRegionKey.self, value: .bounds) { $0[.controls] = $1 }
+                    .transformAnchorPreference(key: HubFileDropRegionKey.self, value: .bounds) { $0[.headerControls] = $1 }
             }.padding(.horizontal, 12).padding(.vertical, 10)
                 .padding(.top, presentation.header.embedded ? presentation.header.topInset : 0)
         }
@@ -767,17 +771,42 @@ struct HubView: View {
 
     /// A single native destination survives spring-loaded navigation. Header
     /// and file cells only publish geometry; neither owns the file session.
-    private func nativeFileDrop(regions: [HubFileDropRegion: CGRect], frames: [URL: CGRect]) -> some View {
+    private func nativeFileDrop(regions: [HubFileDropRegion: CGRect], frames: [URL: CGRect], size: CGSize) -> some View {
         // Geometry and ordering belong to the same layout snapshot. Do not
         // locale-sort the directory again for every draggingUpdated event.
         let order = model.fileOrderURLs
+        let tabs = model.tabWorkspaces
+        let tabFrames = Dictionary(uniqueKeysWithValues: tabs.compactMap { tab -> (UUID, CGRect)? in
+            guard let frame = regions[.workspace(tab.id)], let viewport = regions[.tabViewport(tab.id)] else { return nil }
+            let visible = frame.intersection(viewport)
+            return visible.isNull || visible.isEmpty ? nil : (tab.id, visible)
+        })
+        let exclusion = presentation.header.embedded && presentation.header.split
+            ? CGRect(x: (size.width - presentation.header.exclusionWidth) / 2, y: 0,
+                     width: presentation.header.exclusionWidth, height: regions[.header]?.height ?? 0) : nil
+        func insertion(at point: CGPoint) -> HubWorkspaceTabInsertion? {
+            guard let header = regions[.header], let controls = regions[.headerControls] else { return nil }
+            return HubWorkspaceTabInsertion.resolve(at: point, header: header, controls: controls,
+                music: regions[.headerMusic], exclusion: exclusion, frames: tabFrames, order: tabs.map(\.id))
+        }
+        func creationPlan(_ slot: HubWorkspaceTabInsertion, urls: [URL], payload: HubFileDragPayload?) -> HubFileDropPlan? {
+            guard model.canOfferFolderWorkspaceDrop(urls, knownFolderURLs: payload?.folderURLs) else { return nil }
+            return HubFileDropPlan(workspaceID: nil, directory: nil, item: nil, title: L("新标签"),
+                action: .createWorkspace, workspaceInsertion: slot)
+        }
         return HubNativeFileDropBridge(enabled: presentation.previewVisible,
-            contains: { point in HubFileDropRegion.at(point, in: regions) != nil },
+            contains: { point in insertion(at: point) != nil || HubFileDropRegion.at(point, in: regions) != nil },
             operation: { point, urls, payload, copy in
-                guard let region = HubFileDropRegion.at(point, in: regions) else { clearFileDrop(); return [] }
+                let slot = insertion(at: point).flatMap { model.isKnownNonFolderDrop(urls, knownFolderURLs: payload?.folderURLs) ? nil : $0 }
+                let region = slot == nil ? HubFileDropRegion.at(point, in: regions) : nil
+                guard slot != nil || region != nil else { clearFileDrop(); return [] }
                 presentation.setFileDragActive(true)
-                let plan = fileDropPlan(region: region, point: point, frames: frames, content: regions[.content] ?? .zero, order: order, payload: payload, copy: copy, urls: urls)
-                if case .workspace(let id) = region {
+                let plan: HubFileDropPlan?
+                if let slot { plan = creationPlan(slot, urls: urls, payload: payload) }
+                else { plan = region.flatMap {
+                    fileDropPlan(region: $0, point: point, frames: frames, content: regions[.content] ?? .zero, order: order, payload: payload, copy: copy, urls: urls)
+                } }
+                if case .workspace(let id)? = region {
                     workspaceSpringLoader.enter(id, delay: model.settings.switchDelay,
                         canActivate: { presentation.previewVisible && model.workspaces.contains(where: { $0.id == id }) },
                         activate: { if model.selectedWorkspaceID != id { model.selectWorkspace(id) } })
@@ -795,12 +824,13 @@ struct HubView: View {
                 if fileDropTarget != item { fileDropTarget = item }
                 let targeted = region == .content && plan != nil
                 if dropTargeted != targeted { dropTargeted = targeted }
-                let feedback = plan.map { HubFileDropFeedback(rect: $0.slot?.rect ?? $0.item.flatMap { frames[$0] } ?? region.visibleFrame(in: regions),
-                    title: $0.title, count: urls.count, action: $0.action, insertion: $0.slot != nil) }
+                let feedback = plan.map { HubFileDropFeedback(rect: $0.workspaceInsertion?.marker ?? $0.slot?.rect ?? $0.item.flatMap { frames[$0] } ?? region?.visibleFrame(in: regions) ?? .zero,
+                    title: $0.title, count: urls.count, action: $0.action, insertion: $0.slot != nil || $0.workspaceInsertion != nil) }
                 if fileDropFeedback != feedback { fileDropFeedback = feedback }
                 return plan?.action == .move || plan?.action == .reorder ? .move : plan == nil ? [] : .copy
             }, exited: clearFileDrop,
             receive: { urls, payload, point, copy in
+                if let slot = insertion(at: point), !model.isKnownNonFolderDrop(urls, knownFolderURLs: payload?.folderURLs) { return model.addFolderWorkspaces(urls, before: slot.before) }
                 guard let region = HubFileDropRegion.at(point, in: regions),
                       let plan = fileDropPlan(region: region, point: point, frames: frames, content: regions[.content] ?? .zero, order: order, payload: payload, copy: copy, urls: urls) else { return false }
                 if plan.action == .airDrop { return queueAirDropFiles(urls) }
@@ -879,7 +909,7 @@ struct HubView: View {
                 item: folder,
                 title: folder?.lastPathComponent ?? model.currentURL?.lastPathComponent ?? model.selectedWorkspace.map { model.displayName(for: $0) } ?? L("当前工作区"),
                 action: reorder ? .reorder : reference ? .reference : copy ? .copy : .move, slot: slot)
-        case .item, .tabViewport: return nil
+        case .item, .tabViewport, .header, .headerControls, .headerMusic: return nil
         }
     }
 
@@ -1261,7 +1291,8 @@ struct HubView: View {
     private func fileInteraction(for entry: FileEntry, navigateOnClick: Bool = false) -> some View {
         HubFileDragBridge(entryURL: entry.url, context: fileDragContext,
                           interactionEnabled: renameEntry?.url != entry.url,
-                          selectedURLs: { model.selectedURLs }, selectEntry: { selectForDrag(entry) },
+                          selectedURLs: { model.selectedURLs }, folderURLsForDrag: { model.folderURLsForDrag($0, including: entry) },
+                          selectEntry: { selectForDrag(entry) },
                           onClick: { flags in
                               select(entry, flags: flags)
                               if navigateOnClick && entry.isDirectory && !entry.isPackage { model.navigate(to: entry.url) }
