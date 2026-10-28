@@ -1,0 +1,37 @@
+<?xml version="1.0" standalone="yes"?><!-- sparkle-sign-warning:
+IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+    <channel>
+        <title>FileDock</title>
+        <item>
+            <title>1.30.4</title>
+            <pubDate>Wed, 28 Oct 2026 17:57:08 +0800</pubDate>
+            <link>https://github.com/Die-Xie/FileDock</link>
+            <sparkle:version>70</sparkle:version>
+            <sparkle:shortVersionString>1.30.4</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown"><![CDATA[# FileDock 1.30.4
+
+- 修复完整文件名提示触发后仍不可见的问题：原生窗口安装内容视图时会把视图重设为窗口当前大小，原先因此丢失了测量结果，形成 0×0 的提示窗口；现在保留并明确应用测量出的宽高。
+- 通过单个窗口级本地鼠标事件监听，把悬停路由到可见的文件名区域，避免 SwiftUI 透明拖动层下的文字跟踪回调丢失。事件原样继续分发，不接管点击或拖放。
+- 悬停文件图标、文字或项目内留白均可查看完整名称。仅截断的名称显示提示；完整显示的名称不提示。保留鼠标跟随、屏幕边缘避让，以及移开、点击、拖动、滚动和编辑时收起。
+- 共用一个提示窗口，缓存截断测量，不新增轮询或文件读取；空闲移动不重复创建取消令牌。
+- 增加首次创建／重复使用浮层的真实尺寸测试，以及三种视图中窗口移动事件、短名称排除和重命名回归检查。
+
+## English
+
+- Fixes filename tooltips being triggered but remaining invisible. Installing a content view resizes it to the panel's current size; this previously erased the measured dimensions and left a 0×0 popup. The measured size is now retained and applied explicitly.
+- A single app-local window event monitor routes pointer movement to visible filename regions, avoiding missing text tracking callbacks beneath SwiftUI drag overlays. Events continue unchanged; clicks and drops retain their normal handling.
+- Hovering over a file icon, its label, or cell padding reveals the complete name when its label is truncated. Fully visible names show no tooltip. Pointer-following placement, screen-edge clamping, and dismissal on leaving, clicking, dragging, scrolling, or editing are preserved.
+- Reuses one popup and caches text measurements without polling or file reads. Idle pointer movement avoids repeatedly creating cancellation tokens.
+- Adds regression checks for actual popup dimensions on creation and reuse, plus window-event routing, fitting-name exclusion, and renaming in all three file layouts.
+
+Requires macOS 13 or later. Universal build for Apple Silicon and Intel. Signed, not yet notarized by Apple. Existing settings and workspaces are preserved.
+]]></description>
+            <enclosure url="https://github.com/Die-Xie/FileDock/releases/download/v1.30.4/FileDock.zip" length="7154953" type="application/octet-stream" sparkle:edSignature="bRXzaItqiLcgjm1YcZbsxaLMxeyIitV0L/78ZK5dKrXoL1SUng4oaA3+cxDSG3q2vRiULZAsVyFKP1sMugfXBA=="></enclosure>
+        </item>
+    </channel>
+</rss><!-- sparkle-signatures:
+edSignature: NkLzgHIMvr0qBJ7GXTBhvzt1TrxzWriEuteccC347ercfojBCOmmwVHDW0fD/fymeduYcTzNIpbMpZpGLf21Dg==
+length: 3451
+-->
