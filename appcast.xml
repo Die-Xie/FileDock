@@ -1,0 +1,37 @@
+<?xml version="1.0" standalone="yes"?><!-- sparkle-sign-warning:
+IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+    <channel>
+        <title>FileDock</title>
+        <item>
+            <title>1.31.0</title>
+            <pubDate>Wed, 28 Oct 2026 23:47:58 +0800</pubDate>
+            <link>https://github.com/Die-Xie/FileDock</link>
+            <sparkle:version>72</sparkle:version>
+            <sparkle:shortVersionString>1.31.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown"><![CDATA[# FileDock 1.31.0
+
+- 「设置 → 呼出与交互 → 全屏与应用限制」新增应用白名单，可从运行中的应用或应用选择器添加、移除项目。
+- 白名单应用无论是否全屏，都能使用当前正常的鼠标触发方式。白名单默认为空；未加入的应用继续遵守原来的全屏和黑名单规则，不会额外受到限制。
+- 同一应用同时出现在黑名单与白名单时，以黑名单为准。白名单保留触发位置、副屏准入、刘海进入比例及悬停／点按偏好，不会启用「仅快捷键」模式下的鼠标触发。
+- 悬停展开、刘海／边角点按、拖动返回和刘海拖动过滤使用相同的应用规则。全局快捷键和菜单栏始终可用。
+- 应用名单在设置变化时缓存为集合，触发检查无需反复排序或构建名单；只使用已有的前台应用信息，不新增辅助功能授权或窗口轮询。
+
+## English
+
+- Adds an app whitelist in Settings → Activation → Full-screen & App Restrictions. Add or remove apps through the running-app menu or application picker.
+- Whitelisted apps can use normal pointer activation whether or not they are in full screen. The list starts empty. Unlisted apps retain the existing full-screen and blocked-app rules, with no additional restrictions.
+- If an app appears in both lists, the blocked-app rule takes priority. The whitelist preserves the chosen trigger area, secondary-display access, notch-entry threshold, and hover/click preference; it never enables pointer activation in Keyboard Only mode.
+- Hover expansion, notch/corner clicks, drag return and notch drag filtering share the same app rules. Global shortcuts and the menu bar stay available.
+- App rules are cached as sets when settings change, avoiding repeated sorting or list construction during trigger checks. Uses existing foreground-app information without additional Accessibility permission or window polling.
+
+Requires macOS 13 or later. Universal build for Apple Silicon and Intel. Signed, not yet notarized by Apple. Existing settings and workspaces are preserved.
+]]></description>
+            <enclosure url="https://github.com/Die-Xie/FileDock/releases/download/v1.31.0/FileDock.zip" length="7169023" type="application/octet-stream" sparkle:edSignature="ztLEWhgbHSXLcf+2owJV0Lw6B9iXygMDtC8xy+t9OTzzsE9q30J9+R2fJjJC6XZUSLb3WPK83zheanRdPHU7DQ=="></enclosure>
+        </item>
+    </channel>
+</rss><!-- sparkle-signatures:
+edSignature: yK2Ru8VSvWnCG11HoN5FcpuIgLPAe928sfP1192k8Idrk7e4sBhJYb0E3JVSp0vmeLF0zv8TWD5Gh0fLy38HAg==
+length: 3290
+-->
