@@ -47,26 +47,62 @@ struct HubFileNameTooltip: NSViewRepresentable {
         var enabled = true
         private var tracking: NSTrackingArea?
         private var trackedRect: NSRect?
+        private struct Measurement: Equatable {
+            let name: String
+            let fontSize: CGFloat
+            let lines: Int
+            let size: NSSize
+        }
+        private var measurement: Measurement?
+        private var truncated = false
+        var hoverRect: NSRect { bounds.intersection(visibleRect) }
+        var needsHint: Bool {
+            let key = Measurement(name: displayName, fontSize: fontSize, lines: lines, size: bounds.size)
+            if measurement != key {
+                truncated = HubFileNameTooltip.isTruncated(displayName, fontSize: fontSize, lines: lines, size: bounds.size)
+                measurement = key
+            }
+            return enabled && truncated
+        }
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
         override func updateTrackingAreas() {
-            if let tracking { removeTrackingArea(tracking) }
-            let area = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .mouseMoved, .activeInActiveApp, .inVisibleRect], owner: self)
-            addTrackingArea(area); tracking = area
             super.updateTrackingAreas()
-            if trackedRect != visibleRect { HubFileNamePopup.shared.hide(owner: self) }
-            trackedRect = visibleRect
+            // NSHostingView may report a visibleRect larger than this overlay's
+            // bounds. inVisibleRect would then track the entire file browser.
+            let rect = hoverRect
+            guard trackedRect != rect || tracking == nil else { return }
+            if let tracking { removeTrackingArea(tracking) }
+            tracking = nil
+            if !rect.isEmpty {
+                let area = NSTrackingArea(rect: rect, options: [.mouseEnteredAndExited, .mouseMoved, .activeInActiveApp], owner: self)
+                addTrackingArea(area); tracking = area
+            }
+            HubFileNamePopup.shared.hide(owner: self)
+            trackedRect = rect
         }
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
-            if window == nil { HubFileNamePopup.shared.hide(owner: self) }
+            if let window {
+                // Movement is required both for pointer-following and recovery
+                // when SwiftUI creates a tracking region beneath the pointer.
+                window.acceptsMouseMovedEvents = true
+            } else { HubFileNamePopup.shared.hide(owner: self) }
         }
-        override func mouseEntered(with event: NSEvent) {
-            guard enabled, NSEvent.pressedMouseButtons == 0,
-                  HubFileNameTooltip.isTruncated(displayName, fontSize: fontSize, lines: lines, size: bounds.size) else { return }
-            HubFileNamePopup.shared.schedule(owner: self)
+        override func mouseEntered(with event: NSEvent) { updateHover(with: event) }
+        override func mouseMoved(with event: NSEvent) { updateHover(with: event) }
+        private func updateHover(with event: NSEvent) {
+            guard event.window === window, !isHiddenOrHasHiddenAncestor,
+                  hoverRect.contains(convert(event.locationInWindow, from: nil)),
+                  NSEvent.pressedMouseButtons == 0, needsHint else {
+                HubFileNamePopup.shared.hide(owner: self); return
+            }
+            // A layout/refresh can replace a tracking region beneath a stationary
+            // pointer. A subsequent move must recover without requiring re-entry.
+            if HubFileNamePopup.shared.contains(owner: self) { HubFileNamePopup.shared.move(owner: self) }
+            else { HubFileNamePopup.shared.schedule(owner: self) }
         }
-        override func mouseMoved(with event: NSEvent) { HubFileNamePopup.shared.move(owner: self) }
         override func mouseExited(with event: NSEvent) { HubFileNamePopup.shared.hide(owner: self) }
+
     }
 }
 
@@ -123,6 +159,7 @@ final class HubFileNamePopup {
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.45, execute: work)
     }
+    func contains(owner view: HubFileNameTooltip.TrackingView) -> Bool { owner === view }
     func move(owner view: HubFileNameTooltip.TrackingView) {
         guard owner === view else { return }
         if NSEvent.pressedMouseButtons != 0 { dismiss() } else if panel.isVisible { position() }

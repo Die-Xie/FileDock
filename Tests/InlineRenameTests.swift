@@ -43,7 +43,25 @@ import SwiftUI
             func filenameTracking(_ url: URL) -> HubFileNameTooltip.TrackingView {
                 descendants(host).compactMap { $0 as? HubFileNameTooltip.TrackingView }.first { $0.name == url.lastPathComponent }!
             }
-            precondition(filenameTracking(source).displayName == source.lastPathComponent)
+            let filenameView = filenameTracking(source)
+            precondition(filenameView.displayName == source.lastPathComponent && filenameView.needsHint)
+            filenameView.updateTrackingAreas()
+            precondition(filenameView.trackingAreas.count == 1)
+            precondition(filenameView.trackingAreas[0].rect == filenameView.bounds.intersection(filenameView.visibleRect),
+                         "SwiftUI can expand visibleRect beyond text bounds; tracking must stay inside the filename")
+            precondition(!filenameView.trackingAreas[0].options.contains(.inVisibleRect))
+            precondition(panel.acceptsMouseMovedEvents)
+            let point = filenameView.convert(NSPoint(x: filenameView.bounds.midX, y: filenameView.bounds.midY), to: nil)
+            let hover = NSEvent.mouseEvent(with: .mouseMoved, location: point, modifierFlags: [], timestamp: 0,
+                                          windowNumber: panel.windowNumber, context: nil, eventNumber: 0, clickCount: 0, pressure: 0)!
+            filenameView.mouseMoved(with: hover)
+            precondition(HubFileNamePopup.shared.contains(owner: filenameView), "A move without a preceding enter must schedule the truncated name")
+            let area = filenameView.trackingAreas[0]
+            filenameView.updateTrackingAreas()
+            precondition(filenameView.trackingAreas[0] === area && HubFileNamePopup.shared.contains(owner: filenameView),
+                         "An unchanged SwiftUI layout must retain its tracking area and pending tooltip")
+            filenameView.mouseExited(with: hover)
+            precondition(!HubFileNamePopup.shared.contains(owner: filenameView))
             let keyboard = descendants(host).compactMap { $0 as? HubKeyMonitor.KeyboardView }.first!
             func key(_ code: UInt16 = 36) -> NSEvent {
                 NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,

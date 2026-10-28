@@ -16,6 +16,14 @@ struct FileNameTooltipTests {
         precondition(view.hitTest(.zero) == nil, "Tooltip overlays must never intercept drag, click or drop input")
         view.updateTrackingAreas(); view.updateTrackingAreas()
         precondition(view.trackingAreas.count == 1, "Resizing must replace tracking regions")
+        precondition(view.trackingAreas[0].rect == view.bounds.intersection(view.visibleRect))
+        precondition(!view.trackingAreas[0].options.contains(.inVisibleRect))
+        view.displayName = long; view.fontSize = 12
+        precondition(view.needsHint)
+        view.displayName = "a"
+        precondition(!view.needsHint, "Name changes must invalidate cached truncation")
+        view.displayName = long; view.enabled = false
+        precondition(!view.needsHint)
         print("PASS: filename truncation, multiline Unicode and non-intercepting tracking")
     }
 }

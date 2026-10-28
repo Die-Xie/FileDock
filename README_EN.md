@@ -82,6 +82,8 @@ The following technical documents and most earlier release notes are currently i
 - [Code quality and performance review](docs/QUALITY_REVIEW.md)
 - [Release notes](docs/releases/)
 
+**1.30.3** fixes filename tooltips failing to appear by bounding SwiftUI tracking regions and handling pointer movement after layout changes. [Release notes](docs/releases/v1.30.3.md).
+
 **1.30.2** shows pointer-following tooltips only for truncated filenames in grid, list, columns, and preview titles, with tooltips updated after renaming. [Release notes (Chinese / English)](docs/releases/v1.30.2.md).
 
 **1.30.1** adds notch-only top-edge drag filtering to prevent Mission Control conflicts, while preserving the full first-arrival movement from Finder to avoid rebound. [Release notes (Chinese / English)](docs/releases/v1.30.1.md).
