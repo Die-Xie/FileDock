@@ -1,0 +1,33 @@
+<?xml version="1.0" standalone="yes"?><!-- sparkle-sign-warning:
+IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+    <channel>
+        <title>FileDock</title>
+        <item>
+            <title>1.31.1</title>
+            <pubDate>Thu, 29 Oct 2026 00:36:16 +0800</pubDate>
+            <link>https://github.com/Die-Xie/FileDock</link>
+            <sparkle:version>73</sparkle:version>
+            <sparkle:shortVersionString>1.31.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown"><![CDATA[# FileDock 1.31.1
+
+- 左侧仅图标工作区与右上角快捷入口统一为 30 点宽、4 点间距，左右边距及图标中心间距一致。
+- 仅图标标签的选中背景与右侧保持一致；带名称的标签保留原有文字布局。
+- 同步更新刘海两侧的空间测量，保持标签拖动、插入引导、滚动和窗口拖动区域正确。
+
+## English
+
+- Aligns icon-only workspace tabs with the top-right shortcuts using 30-point widths and 4-point gaps, matching outer margins and icon-center spacing.
+- Matches icon-only selection backgrounds to the shortcuts while retaining named-tab text layout.
+- Updates header measurements on both sides of the notch to preserve tab dragging, insertion indicators, scrolling and window drag regions.
+
+Requires macOS 13 or later. Universal build for Apple Silicon and Intel. Signed, not yet notarized by Apple. Existing settings and workspaces are preserved.
+]]></description>
+            <enclosure url="https://github.com/Die-Xie/FileDock/releases/download/v1.31.1/FileDock.zip" length="7169940" type="application/octet-stream" sparkle:edSignature="ZSQmYYdwojSh/4/GvEvGuS+asSyOGyTuvIseTyJfnarzVajOuj5g9IAI+nFARhn70kCsE7xnanTaTIgzKYj/Cg=="></enclosure>
+        </item>
+    </channel>
+</rss><!-- sparkle-signatures:
+edSignature: uJc73Vx50pFX5LOOWZmxZWrKbBIL6Yh0P5+osS5cuSH9GG6KvoRTanbNBrpzmBAXI9f3WEcrdwajXcEQRyC1Cg==
+length: 2104
+-->
