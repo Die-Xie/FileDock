@@ -25,13 +25,13 @@ struct WorkspaceHeaderLayoutTests {
     static func main() {
         let example = check([110, 100, 80, 120], side: 310, controls: 110)
         precondition(example.splitIndex == 3, "The fourth whole tab should flow onto the right")
-        near(example.leftViewportWidth, 300, "The left strip keeps intrinsic tab widths")
+        near(example.leftViewportWidth, 298, "The left strip keeps intrinsic tab widths")
         near(example.rightViewportWidth, 120, "The right side continues the same strip")
         near(example.dragWidth, 80, "Remaining right-side space remains available to move the window")
 
-        precondition(check([100, 100, 100], side: 310, controls: 110).splitIndex == 3,
+        precondition(check([100, 100, 100], side: 308, controls: 110).splitIndex == 3,
                      "A strip fitting exactly on the left must not move its final tab")
-        precondition(check([100, 100, 100], side: 309, controls: 110).splitIndex == 2,
+        precondition(check([100, 100, 100], side: 307, controls: 110).splitIndex == 2,
                      "A tab exceeding the left edge must move whole to the other side")
         let longNames = check([900, 800, 700], side: 310, controls: 110)
         precondition(longNames.splitIndex == 1, "An oversized first tab is capped without losing it")

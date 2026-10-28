@@ -121,7 +121,7 @@ swiftc -swift-version 5 Sources/Localization.swift Sources/LocalizationCatalog.s
     -framework AppKit -framework SwiftUI -framework UniformTypeIdentifiers
 .build/workspace-spring-tests
 swiftc -swift-version 5 Sources/Localization.swift Sources/LocalizationCatalog.swift -parse-as-library -module-cache-path .build/module-cache \
-    Sources/InterfaceMotion.swift Sources/WorkspaceShortcut.swift Tests/WorkspaceShortcutTests.swift -o .build/workspace-shortcut-tests \
+    Sources/InterfaceMotion.swift Sources/WorkspaceHeaderLayout.swift Sources/WorkspaceShortcut.swift Tests/WorkspaceShortcutTests.swift -o .build/workspace-shortcut-tests \
     -framework AppKit -framework SwiftUI
 .build/workspace-shortcut-tests
 swiftc -swift-version 5 Sources/Localization.swift Sources/LocalizationCatalog.swift -parse-as-library -module-cache-path .build/module-cache \

@@ -3,7 +3,8 @@ import Foundation
 /// A single ordered tab strip can flow around the hardware exclusion. The
 /// cut point is independent of selection so choosing a tab never moves it.
 struct HubWorkspaceHeaderLayout {
-    static let tabSpacing: CGFloat = 5
+    static let tabSpacing: CGFloat = 4
+    static let iconTabWidth: CGFloat = 30
     static let minimumTabWidth: CGFloat = 48
     static let minimumDragWidth: CGFloat = 32
     // Six 30-point controls with five 4-point gaps: favorites, AirDrop,
@@ -26,7 +27,7 @@ struct HubWorkspaceHeaderLayout {
         let controls = min(requestedControls, side)
         let reservedDragWidth = min(minimumDragWidth, max(0, side - controls))
         let rightCapacity = max(0, side - controls - reservedDragWidth)
-        let widths = tabWidths.map { $0.isFinite ? max(minimumTabWidth, $0) : minimumTabWidth }
+        let widths = tabWidths.map { $0.isFinite ? max(iconTabWidth, $0) : minimumTabWidth }
 
         // When the right side cannot fit even one usable tab, keep the full
         // strip on the left rather than exposing a clipped sliver on the right.

@@ -315,7 +315,7 @@ struct HubView: View {
                                 .frame(width: layout.rightViewportWidth, alignment: .leading).clipped()
                         }
                         HubWindowDragHandle().frame(width: layout.dragWidth, height: 30).help(L("拖动窗口"))
-                        HStack(spacing: 4) { workspaceControls }
+                        HStack(spacing: HubWorkspaceHeaderLayout.tabSpacing) { workspaceControls }
                             .animation(interfaceMotion.selection, value: model.selectedWorkspaceID)
                             .animation(nil, value: interfaceMotion.enabled)
                             .fixedSize()
@@ -342,7 +342,7 @@ struct HubView: View {
             HStack(spacing: 8) {
                 workspaceLeading(model.tabWorkspaces, selectionNamespace: floatingTabSelection)
                 HubWindowDragHandle().frame(minWidth: 32, maxWidth: .infinity, minHeight: 30, maxHeight: 30).help(L("拖动窗口"))
-                HStack(spacing: 4) { workspaceControls }.fixedSize()
+                HStack(spacing: HubWorkspaceHeaderLayout.tabSpacing) { workspaceControls }.fixedSize()
                     .animation(interfaceMotion.selection, value: model.selectedWorkspaceID)
                     .animation(nil, value: interfaceMotion.enabled)
                     .transformAnchorPreference(key: HubShortcutReorderRegionKey.self, value: .bounds) { regions, anchor in
@@ -359,7 +359,7 @@ struct HubView: View {
         let tabWidthLimit = availableWidth.map { max(48, $0) }
         return ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 5) {
+                HStack(spacing: HubWorkspaceHeaderLayout.tabSpacing) {
                     ForEach(workspaces) { workspace in
                         workspaceTab(workspace, selectionNamespace: selectionNamespace, maximumWidth: tabWidthLimit).id(workspace.id)
                     }
@@ -634,7 +634,8 @@ struct HubView: View {
 
     private func workspaceTabWidth(_ workspace: Workspace) -> CGFloat {
         let font = NSFont.systemFont(ofSize: model.settings.fontSize)
-        return 40 + (workspace.iconOnly == true || workspace.name.isEmpty ? 0 : 6 + (model.displayName(for: workspace) as NSString).size(withAttributes: [.font: font]).width)
+        if workspace.iconOnly == true || workspace.name.isEmpty { return HubWorkspaceShortcutLabel.width }
+        return 40 + 6 + (model.displayName(for: workspace) as NSString).size(withAttributes: [.font: font]).width
     }
 
     private func workspaceTabsWidth(_ workspaces: [Workspace]) -> CGFloat {
@@ -647,14 +648,15 @@ struct HubView: View {
     }
 
     private func workspaceTab(_ workspace: Workspace, selectionNamespace: Namespace.ID, maximumWidth: CGFloat? = nil) -> some View {
-        Button { model.selectWorkspace(workspace.id) } label: {
+        let iconOnly = workspace.iconOnly == true || workspace.name.isEmpty
+        return Button { model.selectWorkspace(workspace.id) } label: {
             HStack(spacing: 6) {
                 workspaceIcon(workspace).frame(width: 16, height: 16)
                 if workspace.iconOnly != true && !workspace.name.isEmpty { Text(model.displayName(for: workspace)).lineLimit(1).truncationMode(.tail) }
             }
-            .frame(maxWidth: maximumWidth.map { max(24, $0 - 24) }, alignment: .leading)
-            .padding(.horizontal, 12).padding(.vertical, 8)
-            .background(HubSelectionBackdrop(selected: model.selectedWorkspaceID == workspace.id, namespace: selectionNamespace))
+            .frame(maxWidth: iconOnly ? nil : maximumWidth.map { max(24, $0 - 24) }, alignment: .leading)
+            .padding(.horizontal, iconOnly ? (HubWorkspaceShortcutLabel.width - 16) / 2 : 12).padding(.vertical, 8)
+            .background(HubSelectionBackdrop(selected: model.selectedWorkspaceID == workspace.id, namespace: selectionNamespace, cornerRadius: iconOnly ? 6 : 8))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

@@ -45,6 +45,15 @@ import SwiftUI
             let files = flatten(host).compactMap { $0 as? HubNativeFileDropBridge.DestinationView }
             precondition(files.count == 1 && root.frame.size == host.bounds.size)
             precondition(panel.isMovable && !panel.isVisible)
+            let tabIDs = Set(model.tabWorkspaces.map(\.id))
+            let tabFrames = flatten(host).compactMap { $0 as? HubWorkspaceDragBridge.WorkspaceDragView }
+                .filter { tabIDs.contains($0.workspaceID) }.map { host.convert($0.bounds, from: $0) }.sorted { $0.minX < $1.minX }
+            precondition(tabFrames.count == 3 && tabFrames.allSatisfy { abs($0.width - HubWorkspaceShortcutLabel.width) < 0.5 },
+                         "Icon-only tabs must use the same 30-point bounds as fixed shortcuts")
+            for pair in zip(tabFrames, tabFrames.dropFirst()) {
+                precondition(abs(pair.1.minX - pair.0.maxX - HubWorkspaceHeaderLayout.tabSpacing) < 0.5,
+                             "Actual native tab gaps must match the fixed shortcut strip")
+            }
             var notifications = 0
             let observer = NotificationCenter.default.addObserver(forName: hubWindowDragWillBegin, object: panel, queue: nil) { _ in notifications += 1 }
             defer { NotificationCenter.default.removeObserver(observer) }

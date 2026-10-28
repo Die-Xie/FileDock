@@ -3,7 +3,7 @@ import SwiftUI
 /// The badge belongs to the measured label, rather than overflowing a smaller
 /// symbol frame that the embedded header's viewport would clip.
 struct HubWorkspaceShortcutLabel: View {
-    static let width: CGFloat = 30
+    static let width: CGFloat = HubWorkspaceHeaderLayout.iconTabWidth
     static let height: CGFloat = 32
 
     let symbol: String
