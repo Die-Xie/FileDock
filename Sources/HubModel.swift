@@ -98,6 +98,8 @@ struct HubSettings: Codable, Equatable {
     var stagingEnabled: Bool? = true
     var airDropEnabled: Bool? = true
     var foldersFirst: Bool? = false
+    var colorLabelFilterEnabled: Bool? = true
+    var resolvedColorLabelFilterEnabled: Bool { colorLabelFilterEnabled ?? true }
     var switchDelay: Double = 0.1
     var triggerMode: String = "both"
     var hotCorner: String = "notch"
@@ -346,10 +348,15 @@ enum HubFileOperations {
 @MainActor final class HubModel: ObservableObject {
     @Published var shortcutRegistrationErrors: [String: String] = [:]
     @Published var workspaces: [Workspace] = [] { didSet { invalidateEntryOrder(); cachedStagedURLs = nil; persistIfReady() } }
-    @Published var selectedWorkspaceID: UUID? { didSet { persistIfReady() } }
+    @Published var selectedWorkspaceID: UUID? { didSet {
+        if selectedWorkspaceID != oldValue { setColorLabelFilter(nil) }
+        persistIfReady()
+    } }
     @Published var entries: [FileEntry] = [] { didSet { invalidateEntryOrder(); cachedFolderDropKinds = nil } }
     @Published var selectedIDs = Set<URL>()
     @Published var search = ""
+    // A browsing filter, never a modification to Finder labels or saved order.
+    @Published private(set) var colorLabelFilter: HubFinderLabel?
     @Published var sortKey: SortKey = .modified { didSet {
         invalidateEntryOrder()
         beginPersistenceTransaction(); defer { endPersistenceTransaction() }
@@ -365,12 +372,16 @@ enum HubFileOperations {
     @Published var settings = HubSettings() { didSet {
         if settings.resolvedLanguage != oldValue.resolvedLanguage { HubLocalization.select(settings.resolvedLanguage) }
         if settings.resolvedFoldersFirst != oldValue.resolvedFoldersFirst { invalidateEntryOrder() }
+        if !settings.resolvedColorLabelFilterEnabled { setColorLabelFilter(nil) }
         if settings.stagingWorkspaceID != oldValue.stagingWorkspaceID || settings.favoriteWorkspaceID != oldValue.favoriteWorkspaceID { cachedStagedURLs = nil }
         persistIfReady()
     } }
     @Published var pinned = false
     @Published var errorMessage: String?
-    @Published private(set) var currentURL: URL? { didSet { invalidateEntryOrder() } }
+    @Published private(set) var currentURL: URL? { didSet {
+        invalidateEntryOrder()
+        if currentURL != oldValue { setColorLabelFilter(nil) }
+    } }
     @Published private(set) var history: [URL] = []
     @Published private(set) var historyIndex = -1
     @Published var showHiddenFiles = false { didSet { refresh() } }
@@ -420,7 +431,7 @@ enum HubFileOperations {
     private var canonicalDirectoryPath: String? { didSet { if oldValue != canonicalDirectoryPath { invalidateEntryOrder() } } }
     private var cachedStagedURLs: [URL]?
     private var cachedOrderedEntries: [FileEntry]?
-    private var cachedVisibleEntries: (search: String, entries: [FileEntry])?
+    private var cachedVisibleEntries: (search: String, label: HubFinderLabel?, entries: [FileEntry])?
     private(set) var entryOrderCalculationCount = 0
     private var nextPeriodicRefresh: TimeInterval = 0
     private var retryDirectoryNavigation: (url: URL, selecting: URL?)?
@@ -629,11 +640,22 @@ enum HubFileOperations {
         return components
     }
     var visibleEntries: [FileEntry] {
-        if let cached = cachedVisibleEntries, cached.search == search { return cached.entries }
+        if let cached = cachedVisibleEntries, cached.search == search, cached.label == colorLabelFilter { return cached.entries }
         let ordered = orderedEntries
-        let result = search.isEmpty ? ordered : ordered.filter { $0.name.localizedStandardContains(search) }
-        cachedVisibleEntries = (search, result)
+        let result = search.isEmpty && colorLabelFilter == nil ? ordered : ordered.filter {
+            (colorLabelFilter == nil || $0.labelNumber == colorLabelFilter?.rawValue) &&
+                (search.isEmpty || $0.name.localizedStandardContains(search))
+        }
+        cachedVisibleEntries = (search, colorLabelFilter, result)
         return result
+    }
+
+    func setColorLabelFilter(_ label: HubFinderLabel?) {
+        let next = settings.resolvedColorLabelFilterEnabled ? label : nil
+        guard colorLabelFilter != next else { return }
+        colorLabelFilter = next
+        cachedVisibleEntries = nil
+        selectedIDs = []
     }
 
     func sortByColumn(_ key: SortKey) {
@@ -1416,7 +1438,9 @@ enum HubFileOperations {
         // string signature for every file on every refresh/batch.
         if entries != next { entries = next }
         if complete && !selectedIDs.isEmpty {
-            let remaining = selectedIDs.intersection(Set(next.map(\.url)))
+            let remaining = selectedIDs.intersection(Set(next.lazy.filter {
+                self.colorLabelFilter == nil || $0.labelNumber == self.colorLabelFilter?.rawValue
+            }.map(\.url)))
             if remaining != selectedIDs { selectedIDs = remaining }
         }
     }

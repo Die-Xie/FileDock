@@ -992,10 +992,11 @@ struct HubView: View {
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if model.visibleEntries.isEmpty {
             VStack(spacing: 12) {
-                Image(systemName: model.search.isEmpty ? model.isRecentsRoot ? "clock" : "tray" : "magnifyingglass").font(.system(size: 38, weight: .light)).foregroundStyle(.secondary)
+                Image(systemName: model.colorLabelFilter != nil ? "tag" : model.search.isEmpty ? model.isRecentsRoot ? "clock" : "tray" : "magnifyingglass").font(.system(size: 38, weight: .light)).foregroundStyle(.secondary)
                 Text(emptyTitle).font(.system(size: 14, weight: .medium))
                 Text(emptyDetail).foregroundStyle(.secondary)
-                if model.search.isEmpty && model.selectedWorkspace?.mode == .references && model.currentURL == nil { Button(L("添加项目…")) { model.addReferences() } }
+                if model.colorLabelFilter != nil { Button(L("清除颜色筛选")) { model.setColorLabelFilter(nil) } }
+                else if model.search.isEmpty && model.selectedWorkspace?.mode == .references && model.currentURL == nil { Button(L("添加项目…")) { model.addReferences() } }
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
                 .opacity(model.directoryLoading && !activityVisibility.visible ? 0 : 1)
                 .animation(interfaceMotion.feedback, value: activityVisibility.visible)
@@ -1014,6 +1015,7 @@ struct HubView: View {
     private var emptyTitle: String {
         if model.directoryLoading { return L("正在读取文件信息…") }
         if model.directoryLoadMessage != nil { return L("暂时无法读取内容") }
+        if model.colorLabelFilter != nil { return L("没有匹配的项目") }
         if !model.search.isEmpty { return L("没有匹配的项目") }
         if model.isRecentsRoot { return model.recentFilesLoading ? L("正在读取最近使用…") : L("暂无最近使用的文件") }
         return L("这里还没有项目")
@@ -1022,6 +1024,7 @@ struct HubView: View {
     private var emptyDetail: String {
         if model.directoryLoading { return L("文件读取在后台进行，你可以随时切换工作区。") }
         if model.directoryLoadMessage != nil { return L("请稍后重试，或通过上方标签切换到其他工作区。") }
+        if model.colorLabelFilter != nil { return L("试试其他颜色，或清除颜色筛选。") }
         if !model.search.isEmpty { return L("试试其他名称") }
         if model.isRecentsRoot { return model.recentFilesMessage ?? L("最近打开的文件会自动出现在这里。结果取决于系统索引。") }
         return model.isReferenceRoot ? L("拖入文件或文件夹以添加引用") : L("拖入文件以移动，按住 ⌥ 键以复制")
@@ -1232,8 +1235,10 @@ struct HubView: View {
     private var footer: some View {
         HStack(spacing: 10) {
             iconButton("arrow.up", L("上一级"), disabled: !model.canGoUp) { model.goUp() }
-            Text(model.currentLocationDescription)
-                .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle).help(model.currentURL?.path ?? (model.isRecentsRoot ? L("最近使用不接收文件拖入，原文件保留在原位置") : ""))
+            if model.settings.resolvedColorLabelFilterEnabled {
+                HubColorLabelFilterBar(selection: model.colorLabelFilter, onSelect: model.setColorLabelFilter)
+                    .disabled(model.selectedWorkspace == nil)
+            }
             Spacer(minLength: 6)
             Text(model.selectedIDs.isEmpty ? L("\(model.visibleEntries.count) 个项目") : L("已选 \(model.selectedIDs.count) / \(model.visibleEntries.count)")).font(.system(size: 10)).foregroundStyle(.secondary).fixedSize()
             iconButton("arrow.clockwise", L("刷新")) { model.refresh() }

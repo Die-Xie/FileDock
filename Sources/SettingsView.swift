@@ -277,6 +277,9 @@ struct HubSettingsView: View {
             }
             section(L("浏览与排序")) {
                 Toggle(L("显示隐藏文件"), isOn: $model.showHiddenFiles)
+                Toggle(L("显示颜色标签筛选"), isOn: Binding(get: { model.settings.resolvedColorLabelFilterEnabled }, set: { model.settings.colorLabelFilterEnabled = $0 }))
+                    .accessibilityIdentifier("filedock.settings.color-label-filter")
+                note(L("在底部按访达颜色标签筛选，可与名称搜索叠加。切换位置或关闭此功能会清除筛选。"))
                 Toggle(L("排序时文件夹优先"), isOn: Binding(get: { model.settings.resolvedFoldersFirst }, set: { model.settings.foldersFirst = $0 }))
                 note(L("关闭文件夹优先后，文件与文件夹按同一列混排。手动顺序和最近使用不受影响。"))
             }

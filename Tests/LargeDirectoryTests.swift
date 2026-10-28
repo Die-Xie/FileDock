@@ -65,6 +65,14 @@ private final class ScanMetrics: @unchecked Sendable {
         require(model.entryOrderCalculationCount == calculations, "Searching must not re-sort the entire directory")
         model.search = ""
         require(model.visibleEntries.map(\.url) == order)
+        let writes = model.configurationWriteCount
+        model.setColorLabelFilter(.red)
+        require(model.visibleEntries.allSatisfy { $0.labelNumber == HubFinderLabel.red.rawValue })
+        for _ in 0..<100 { _ = model.visibleEntries.count }
+        model.setColorLabelFilter(nil)
+        require(model.visibleEntries.map(\.url) == order)
+        require(model.entryOrderCalculationCount == calculations && model.configurationWriteCount == writes,
+                "Color filtering must reuse large-directory ordering and never persist transient browsing state")
         model.sortByColumn(.size)
         _ = model.visibleEntries
         require(model.entryOrderCalculationCount == calculations + 1)

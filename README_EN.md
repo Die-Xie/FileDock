@@ -82,6 +82,8 @@ The following technical documents and most earlier release notes are currently i
 - [Code quality and performance review](docs/QUALITY_REVIEW.md)
 - [Release notes](docs/releases/)
 
+**1.32.0** adds optional footer filtering by Finder color labels, combines it with name search, and removes the repeated footer path. [Release notes](docs/releases/v1.32.0.md).
+
 **1.31.2** switches directly to the settled hover destination and improves continuous selection motion. [Release notes](docs/releases/v1.31.2.md).
 
 **1.31.1** matches icon-only tab sizing and spacing to the right-hand shortcuts. [Release notes](docs/releases/v1.31.1.md).

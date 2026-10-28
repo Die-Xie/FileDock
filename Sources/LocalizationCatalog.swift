@@ -4,6 +4,14 @@ import Foundation
 
 enum HubLocalizationCatalog {
     static let english: [String: String] = [
+        "全部": "All",
+        "显示全部颜色标签": "Show All Color Labels",
+        "筛选：{0}": "Filter: {0}",
+        "颜色标签筛选": "Color Label Filter",
+        "显示颜色标签筛选": "Show Color Label Filter",
+        "在底部按访达颜色标签筛选，可与名称搜索叠加。切换位置或关闭此功能会清除筛选。": "Filter by Finder color labels in the footer and combine with name search. Changing location or disabling this feature clears the filter.",
+        "清除颜色筛选": "Clear Color Filter",
+        "试试其他颜色，或清除颜色筛选。": "Try another color or clear the color filter.",
         "白名单中的应用即使全屏也允许正常鼠标触发；未加入的应用继续遵守现有规则。": "Allowed apps can use normal pointer activation even in full screen. Unlisted apps continue to follow the existing rules.",
         "同一应用同时出现在黑名单与白名单时，以黑名单为准。白名单不改变触发位置或悬停／点按方式。": "If an app appears in both lists, the blocked-app rule takes priority. The allowlist does not change the trigger area or hover/click mode.",
 

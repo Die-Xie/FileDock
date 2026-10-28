@@ -42,6 +42,14 @@ swiftc -swift-version 5 Sources/Localization.swift Sources/LocalizationCatalog.s
     Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/WorkspaceShortcutOrder.swift Sources/HubModel.swift Sources/FolderWorkspacePreparation.swift Sources/FinderFileActions.swift Sources/FolderArtwork.swift Sources/DirectoryLoader.swift Tests/ModelTestSupport.swift Tests/FileAppearanceTests.swift -o .build/file-appearance-tests \
     -framework AppKit -framework Carbon -framework Combine -framework UniformTypeIdentifiers
 .build/file-appearance-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
+    Sources/Localization.swift Sources/LocalizationCatalog.swift Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/WorkspaceShortcutOrder.swift Sources/HubModel.swift Sources/FolderWorkspacePreparation.swift Sources/FinderFileActions.swift Sources/FolderArtwork.swift Sources/DirectoryLoader.swift Tests/ModelTestSupport.swift Tests/ColorLabelFilterTests.swift -o .build/color-label-filter-tests \
+    -framework AppKit -framework Carbon -framework Combine -framework UniformTypeIdentifiers
+.build/color-label-filter-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
+    Sources/Localization.swift Sources/LocalizationCatalog.swift Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/WorkspaceShortcutOrder.swift Sources/HubModel.swift Sources/FolderWorkspacePreparation.swift Sources/FinderFileActions.swift Sources/FolderArtwork.swift Sources/DirectoryLoader.swift Sources/ColorLabelFilter.swift Tests/ColorLabelFilterLayoutTests.swift -o .build/color-label-filter-layout-tests \
+    -framework AppKit -framework Carbon -framework Combine -framework SwiftUI -framework UniformTypeIdentifiers
+.build/color-label-filter-layout-tests
 swiftc -swift-version 5 Sources/Localization.swift Sources/LocalizationCatalog.swift -parse-as-library -module-cache-path .build/module-cache \
     Sources/RecentFiles.swift Tests/RecentFilesSourceTests.swift -o .build/recent-source-tests
 .build/recent-source-tests
