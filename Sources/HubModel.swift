@@ -91,6 +91,7 @@ struct HubSettings: Codable, Equatable {
     var recentShortcutEnabled: Bool? = false
     var shortcutOrder: [String]? = nil
     var blockedApplicationBundleIDs: [String]? = nil
+    var allowedApplicationBundleIDs: [String]? = nil
     var suppressHoverInFullScreen: Bool? = nil
     var clickWakeWhenSuppressed: Bool? = false
     var stagingWorkspaceID: UUID? = nil
@@ -124,8 +125,10 @@ struct HubSettings: Codable, Equatable {
     var resolvedFavoriteShortcutEnabled: Bool { favoriteShortcutEnabled ?? true }
     var resolvedRecentShortcutEnabled: Bool { recentShortcutEnabled ?? false }
     var resolvedShortcutOrder: [HubShortcutItem] { HubShortcutItem.normalized(shortcutOrder) }
-    var resolvedBlockedApplicationBundleIDs: [String] {
-        Array(Set((blockedApplicationBundleIDs ?? []).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+    var resolvedBlockedApplicationBundleIDs: [String] { Self.normalizedApplicationBundleIDs(blockedApplicationBundleIDs) }
+    var resolvedAllowedApplicationBundleIDs: [String] { Self.normalizedApplicationBundleIDs(allowedApplicationBundleIDs) }
+    private static func normalizedApplicationBundleIDs(_ values: [String]?) -> [String] {
+        Array(Set((values ?? []).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty && $0.utf8.count <= 255 && !$0.contains("\u{0}") })).sorted()
     }
     var resolvedSuppressHoverInFullScreen: Bool { suppressHoverInFullScreen ?? true }
@@ -158,6 +161,7 @@ struct HubSettings: Codable, Equatable {
         if notchEntryThreshold != nil { notchEntryThreshold = resolvedNotchEntryThreshold }
         if musicPlayer != nil { musicPlayer = resolvedMusicPlayer }
         if blockedApplicationBundleIDs != nil { blockedApplicationBundleIDs = resolvedBlockedApplicationBundleIDs }
+        if allowedApplicationBundleIDs != nil { allowedApplicationBundleIDs = resolvedAllowedApplicationBundleIDs }
     }
 }
 

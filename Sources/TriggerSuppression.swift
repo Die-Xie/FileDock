@@ -37,6 +37,17 @@ struct HubTriggerApplicationState: Equatable, Sendable {
     var isTerminated = false
 }
 
+/// Built only when settings change, so trigger checks do not repeatedly sort
+/// identifiers or scan application lists on the animation path.
+struct HubTriggerApplicationRules: Equatable, Sendable {
+    let blockedBundleIDs: Set<String>
+    let allowedBundleIDs: Set<String>
+    init(blockedBundleIDs: [String] = [], allowedBundleIDs: [String] = []) {
+        self.blockedBundleIDs = Set(blockedBundleIDs)
+        self.allowedBundleIDs = Set(allowedBundleIDs)
+    }
+}
+
 enum HubTriggerSuppressionPolicy {
     static func effectiveForeground(frontmost: HubTriggerApplicationState?, previous: HubTriggerApplicationState?,
                                     ownBundleID: String, accessory: Bool, systemFullScreen: Bool,
@@ -60,11 +71,12 @@ enum HubTriggerSuppressionPolicy {
     }
 
     static func shouldSuppress(_ foreground: HubTriggerForeground, ownBundleID: String,
-                               blockedBundleIDs: [String], suppressFullScreen: Bool,
+                               applicationRules: HubTriggerApplicationRules = .init(), suppressFullScreen: Bool,
                                pointer: CGPoint, screens: [CGRect]) -> Bool {
         // An explicit invocation or settings window must never blacklist itself.
         guard foreground.bundleID != ownBundleID else { return false }
-        if let bundleID = foreground.bundleID, blockedBundleIDs.contains(bundleID) { return true }
+        if let bundleID = foreground.bundleID, applicationRules.blockedBundleIDs.contains(bundleID) { return true }
+        if let bundleID = foreground.bundleID, applicationRules.allowedBundleIDs.contains(bundleID) { return false }
         guard suppressFullScreen, foreground.systemFullScreen || foreground.windowFullScreen == true else { return false }
         // Geometry is used only to locate a proven fullscreen window, never to
         // infer fullscreen from a maximized window or an automatically hidden Dock.
@@ -184,6 +196,7 @@ final class HubTriggerSuppressionMonitor {
     private let ownBundleID: String
     private let worker = DispatchQueue(label: "local.diexie.filedock.trigger-context", qos: .utility)
     private var foreground = HubTriggerForeground()
+    private var applicationRules = HubTriggerApplicationRules()
     private var screens: [CGRect] = []
     private var timer: Timer?
     private var observers: [NSObjectProtocol] = []
@@ -199,7 +212,8 @@ final class HubTriggerSuppressionMonitor {
         self.ownBundleID = ownBundleID
     }
 
-    func configure(enabled: Bool, needsWindowProbe: Bool) {
+    func configure(enabled: Bool, needsWindowProbe: Bool, applicationRules: HubTriggerApplicationRules = .init()) {
+        self.applicationRules = applicationRules
         let changed = probeGate.configure(enabled: enabled, needsWindowProbe: needsWindowProbe)
         guard enabled else { stop(); return }
         if changed {
@@ -253,14 +267,14 @@ final class HubTriggerSuppressionMonitor {
         lastObservedFrontmostPID = nil
     }
 
-    func shouldSuppressHover(at pointer: NSPoint, blockedBundleIDs: [String], suppressFullScreen: Bool) -> Bool {
+    func shouldSuppressHover(at pointer: NSPoint, suppressFullScreen: Bool) -> Bool {
         guard running else { return false }
         // Workspace activation notifications arrive asynchronously. Check only
         // this cheap process identity at the hover boundary so zero-delay mode
         // cannot outrun a newly frontmost blacklisted app. AX remains on worker.
         if NSWorkspace.shared.frontmostApplication?.processIdentifier != lastObservedFrontmostPID { refresh() }
         return HubTriggerSuppressionPolicy.shouldSuppress(foreground, ownBundleID: ownBundleID,
-                                                   blockedBundleIDs: blockedBundleIDs,
+                                                   applicationRules: applicationRules,
                                                    suppressFullScreen: suppressFullScreen,
                                                    pointer: pointer, screens: screens)
     }
@@ -283,7 +297,7 @@ final class HubTriggerSuppressionMonitor {
             screens = newScreens
         }
         foreground.systemFullScreen = context.systemFullScreen
-        // Blacklisting needs only the current application identity. Do not
+        // Application lists need only the current application identity. Do not
         // query accessibility trust or send any AX messages in that mode.
         guard probeGate.needsWindowProbe else { return }
         if ProcessInfo.processInfo.systemUptime - lastProbeTime > 1.5 {

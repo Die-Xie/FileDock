@@ -16,6 +16,7 @@ import SwiftUI
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let model = HubModel(storageURL: root.appendingPathComponent("config.json"), directoryLoader: SettingsFixtureLoader())
+        model.settings.allowedApplicationBundleIDs = ["com.apple.finder"]
         let music = HubQQMusicController() // Never visible: no player queries or authorization.
         let updater = FileDockUpdater(startingUpdater: false) // No scheduled or network checks.
         for language in [HubLanguage.simplifiedChinese, .english] {
@@ -45,6 +46,19 @@ import SwiftUI
                         }
                         settle(host)
                         try snapshot(host).write(to: destination.appendingPathComponent("\(language.rawValue)-\(page.rawValue)-\(style.rawValue)-bottom.png"))
+                    }
+                    if page == .activation {
+                        for scroll in descendants(host).compactMap({ $0 as? NSScrollView }) {
+                            guard let document = scroll.documentView else { continue }
+                            document.scrollToVisible(CGRect(x: 0, y: document.isFlipped ? document.bounds.maxY - 20 : 0, width: 1, height: 20))
+                        }
+                        settle(host)
+                        let populatedRendering = snapshot(host)
+                        model.settings.allowedApplicationBundleIDs = []
+                        settle(host)
+                        precondition(snapshot(host) != populatedRendering, "Whitelist application changes must update the mounted settings page")
+                        model.settings.allowedApplicationBundleIDs = ["com.apple.finder"]
+                        settle(host)
                     }
                     if page == .general {
                         model.settings.language = language == .english ? "zh-Hans" : "en"

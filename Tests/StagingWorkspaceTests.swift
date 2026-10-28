@@ -29,6 +29,7 @@ import Foundation
         var settings = payload["settings"] as! [String: Any]
         settings["stagingEnabled"] = false
         settings.removeValue(forKey: "blockedApplicationBundleIDs")
+        settings.removeValue(forKey: "allowedApplicationBundleIDs")
         settings.removeValue(forKey: "suppressHoverInFullScreen")
         payload["settings"] = settings
         payload["selectedWorkspaceID"] = shelfID.uuidString
@@ -40,6 +41,8 @@ import Foundation
 
         settings["blockedApplicationBundleIDs"] = [" com.example.game ", "com.example.game", "", "  ",
             "com.example.video", "bad\u{0}identifier", String(repeating: "a", count: 256)]
+        precondition(model.settings.allowedApplicationBundleIDs == nil && model.settings.resolvedAllowedApplicationBundleIDs.isEmpty)
+        settings["allowedApplicationBundleIDs"] = [" com.apple.finder ", "com.apple.finder", "", "bad\u{0}identifier", String(repeating: "a", count: 256)]
         settings["suppressHoverInFullScreen"] = false
         payload["settings"] = settings
         try model.importConfiguration(data: JSONSerialization.data(withJSONObject: payload))
@@ -49,6 +52,12 @@ import Foundation
         precondition(reloaded.settings.blockedApplicationBundleIDs == expected && !reloaded.settings.resolvedSuppressHoverInFullScreen,
                      "Normalized blacklist IDs and an explicit disabled full-screen setting must persist")
         precondition(reloaded.selectedWorkspaceID == ordinaryID)
+        precondition(reloaded.settings.resolvedAllowedApplicationBundleIDs == ["com.apple.finder"],
+                     "Sanitized whitelist application IDs must survive import and reload")
+        reloaded.settings.allowedApplicationBundleIDs = []
+        let cleared = makeTestModel(storageURL: storage)
+        precondition(cleared.settings.resolvedAllowedApplicationBundleIDs.isEmpty && cleared.settings.resolvedBlockedApplicationBundleIDs == expected,
+                     "Clearing the whitelist must persist without changing the blacklist")
 
         // A crafted configuration containing only a hidden shelf must clear old folder/history state.
         payload["workspaces"] = (payload["workspaces"] as! [[String: Any]]).filter {

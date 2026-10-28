@@ -765,7 +765,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         let pointer = HubTriggerClick.screenPoint(for: event)
         guard hoverActivationRegion(at: pointer).id != nil else { return }
         let suppressed = triggerSuppression.shouldSuppressHover(at: pointer,
-            blockedBundleIDs: model.settings.resolvedBlockedApplicationBundleIDs,
             suppressFullScreen: model.settings.resolvedSuppressHoverInFullScreen)
         guard HubMouseWakeMode.resolve(mouseEnabled: true, normalClick: model.settings.usesNotchClickToWake,
             suppressed: suppressed, clickFallback: model.settings.resolvedClickWakeWhenSuppressed) == .click else { return }
@@ -787,7 +786,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
             model.settings.hotCorner == "notch" && model.settings.triggerMode != "keyboard",
             temporarilySuspended: windowDragSession != nil || settingsWindow?.isVisible == true || hasActiveDialog ||
                 triggerSuppression.shouldSuppressHover(at: pointer,
-                    blockedBundleIDs: model.settings.resolvedBlockedApplicationBundleIDs,
                     suppressFullScreen: model.settings.resolvedSuppressHoverInFullScreen),
             now: ProcessInfo.processInfo.systemUptime)
         let regionID = hoveredRegionIdentifier(at: pointer)
@@ -803,7 +801,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
                                    now: ProcessInfo.processInfo.systemUptime, delay: model.settings.hoverDelay,
                                    strictDwell: activationRegion.strictDwell,
                                    enabled: canReturnFromFileDrag && !triggerSuppression.shouldSuppressHover(at: pointer,
-                                    blockedBundleIDs: model.settings.resolvedBlockedApplicationBundleIDs,
                                     suppressFullScreen: model.settings.resolvedSuppressHoverInFullScreen)) {
             shownFromHover = true
             showPanel(atCursor: false)
@@ -812,7 +809,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
             settingsWindow?.isVisible != true && !hasActiveDialog && !NSMenuHasTrackingMenu() && !HubFileDragState.isDragging && !HubWorkspaceDragState.isDragging &&
             HubMouseWakeMode.resolve(mouseEnabled: true, normalClick: model.settings.usesNotchClickToWake,
                 suppressed: triggerSuppression.shouldSuppressHover(at: pointer,
-                    blockedBundleIDs: model.settings.resolvedBlockedApplicationBundleIDs,
                     suppressFullScreen: model.settings.resolvedSuppressHoverInFullScreen),
                 clickFallback: model.settings.resolvedClickWakeWhenSuppressed) == .hover
         if hoverActivation.update(regionID: activationRegion.id, now: ProcessInfo.processInfo.systemUptime,
@@ -965,10 +961,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         guard data != lastSettingsData else { return }
         lastSettingsData = data
         triggerSuppression.configure(enabled: model.settings.triggerMode != "keyboard",
-                                     needsWindowProbe: model.settings.resolvedSuppressHoverInFullScreen)
+                                     needsWindowProbe: model.settings.resolvedSuppressHoverInFullScreen,
+                                     applicationRules: HubTriggerApplicationRules(
+                                        blockedBundleIDs: model.settings.resolvedBlockedApplicationBundleIDs,
+                                        allowedBundleIDs: model.settings.resolvedAllowedApplicationBundleIDs))
         let triggerSignature = [String(model.settings.usesNotchClickToWake), model.settings.triggerMode, model.settings.hotCorner,
                                 String(model.settings.secondaryScreens), String(model.settings.hoverDelay), String(model.settings.resolvedNotchEntryThreshold),
-                                String(model.settings.resolvedSuppressHoverInFullScreen)] + model.settings.resolvedBlockedApplicationBundleIDs
+                                String(model.settings.resolvedSuppressHoverInFullScreen),
+                                "blocked", String(model.settings.resolvedBlockedApplicationBundleIDs.count)] + model.settings.resolvedBlockedApplicationBundleIDs +
+                               ["allowed", String(model.settings.resolvedAllowedApplicationBundleIDs.count)] + model.settings.resolvedAllowedApplicationBundleIDs
         let signature = triggerSignature.joined(separator: "\u{0}")
         if signature != hoverSettingsSignature {
             hoverSettingsSignature = signature

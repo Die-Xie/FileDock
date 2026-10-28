@@ -50,7 +50,9 @@ struct HubSettingsView: View {
     let music: HubQQMusicController
     @ObservedObject var updater: FileDockUpdater
     @State private var selectedPage: HubSettingsPage?
+    private enum ApplicationList { case blocked, allowed }
     @State private var blockedApplicationError: String?
+    @State private var allowedApplicationError: String?
     @State private var switchDelayDraft: Double?
     @State private var hoverDelayDraft: Double?
     @State private var autoHideDelayDraft: Double?
@@ -220,18 +222,18 @@ struct HubSettingsView: View {
                         Text(L("点击触发区域打开")).tag(true)
                     }.labelsHidden().frame(width: 245)
                 }
-                note(L("全屏或下列应用在前台时，暂停悬停展开。可选择点击当前刘海或边角打开，退出后自动恢复。全局快捷键和菜单栏仍可使用；「仅快捷键」模式保持不变。"))
+                note(L("全屏或应用规则限制生效时，暂停悬停展开。可选择点击当前刘海或边角打开，退出限制后自动恢复。全局快捷键和菜单栏仍可使用；「仅快捷键」模式保持不变。"))
                 Divider()
                 DisclosureGroup(L("限制自动展开的应用（\(model.settings.resolvedBlockedApplicationBundleIDs.count)）")) {
                     VStack(alignment: .leading, spacing: 12) {
                         note(L("这些应用在前台时，也使用上方选择的打开方式。"))
-                        ForEach(model.settings.resolvedBlockedApplicationBundleIDs, id: \.self) { blockedApplicationRow($0) }
+                        ForEach(model.settings.resolvedBlockedApplicationBundleIDs, id: \.self) { applicationRow($0, list: .blocked) }
                         HStack {
-                            Button(L("添加应用…")) { chooseBlockedApplications() }
+                            Button(L("添加应用…")) { chooseApplications(.blocked) }
                             Menu(L("正在运行的应用")) {
                                 ForEach(runningApplications, id: \.processIdentifier) { app in
                                     if let bundleID = app.bundleIdentifier {
-                                        Button(app.localizedName ?? bundleID) { addBlockedApplications([bundleID]) }
+                                        Button(app.localizedName ?? bundleID) { addApplications([bundleID], list: .blocked) }
                                             .disabled(model.settings.resolvedBlockedApplicationBundleIDs.contains(bundleID))
                                     }
                                 }
@@ -240,6 +242,26 @@ struct HubSettingsView: View {
                         }
                         if let blockedApplicationError { Text(blockedApplicationError).font(.caption).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true) }
                     }.padding(.top, 10)
+                }
+                Divider()
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(L("白名单（\(model.settings.resolvedAllowedApplicationBundleIDs.count)）")).font(.subheadline.weight(.medium))
+                    note(L("白名单中的应用即使全屏也允许正常鼠标触发；未加入的应用继续遵守现有规则。"))
+                    ForEach(model.settings.resolvedAllowedApplicationBundleIDs, id: \.self) { applicationRow($0, list: .allowed) }
+                    HStack {
+                        Button(L("添加应用…")) { chooseApplications(.allowed) }
+                        Menu(L("正在运行的应用")) {
+                            ForEach(runningApplications, id: \.processIdentifier) { app in
+                                if let bundleID = app.bundleIdentifier {
+                                    Button(app.localizedName ?? bundleID) { addApplications([bundleID], list: .allowed) }
+                                        .disabled(model.settings.resolvedAllowedApplicationBundleIDs.contains(bundleID))
+                                }
+                            }
+                            if runningApplications.isEmpty { Text(L("没有可添加的应用")) }
+                        }.fixedSize()
+                    }
+                    note(L("同一应用同时出现在黑名单与白名单时，以黑名单为准。白名单不改变触发位置或悬停／点按方式。"))
+                    if let allowedApplicationError { Text(allowedApplicationError).font(.caption).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true) }
                 }
             }
         }
@@ -443,9 +465,21 @@ struct HubSettingsView: View {
         }.sorted { ($0.localizedName ?? "").localizedStandardCompare($1.localizedName ?? "") == .orderedAscending }
     }
 
-    private func blockedApplicationRow(_ bundleID: String) -> some View {
+    private func applications(in list: ApplicationList) -> [String] {
+        list == .blocked ? model.settings.resolvedBlockedApplicationBundleIDs : model.settings.resolvedAllowedApplicationBundleIDs
+    }
+    private func setApplications(_ identifiers: [String], list: ApplicationList) {
+        if list == .blocked { model.settings.blockedApplicationBundleIDs = identifiers }
+        else { model.settings.allowedApplicationBundleIDs = identifiers }
+    }
+    private func setApplicationError(_ message: String?, list: ApplicationList) {
+        if list == .blocked { blockedApplicationError = message }
+        else { allowedApplicationError = message }
+    }
+    private func applicationRow(_ bundleID: String, list: ApplicationList) -> some View {
         let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
         let name = url.map { FileManager.default.displayName(atPath: $0.path) } ?? bundleID
+        let removeLabel = list == .blocked ? L("移除应用限制：\(name)") : L("从白名单移除：\(name)")
         return HStack(spacing: 8) {
             if let url {
                 Image(nsImage: NSWorkspace.shared.icon(forFile: url.path)).resizable().frame(width: 24, height: 24)
@@ -456,16 +490,16 @@ struct HubSettingsView: View {
             }
             Spacer(minLength: 8)
             Button {
-                model.settings.blockedApplicationBundleIDs = model.settings.resolvedBlockedApplicationBundleIDs.filter { $0 != bundleID }
+                setApplications(applications(in: list).filter { $0 != bundleID }, list: list)
             } label: { Image(systemName: "minus.circle") }
-                .buttonStyle(.borderless).help(L("移除应用限制：\(name)")).accessibilityLabel(L("移除应用限制：\(name)"))
+                .buttonStyle(.borderless).help(removeLabel).accessibilityLabel(removeLabel)
         }.padding(.vertical, 2)
     }
 
-    private func chooseBlockedApplications() {
+    private func chooseApplications(_ list: ApplicationList) {
         let panel = NSOpenPanel()
-        panel.title = L("选择不自动呼出面板的应用")
-        panel.prompt = L("添加应用限制")
+        panel.title = list == .blocked ? L("选择不自动呼出面板的应用") : L("选择允许自动呼出的应用")
+        panel.prompt = list == .blocked ? L("添加应用限制") : L("添加到白名单")
         panel.allowedContentTypes = [.applicationBundle]
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
@@ -475,21 +509,20 @@ struct HubSettingsView: View {
         guard HubWindowPresentation.runModal(panel) == .OK else { return }
         let identifiers = panel.urls.compactMap { Bundle(url: $0)?.bundleIdentifier }
         guard !identifiers.isEmpty else {
-            blockedApplicationError = L("所选应用没有可用的标识，请选择其他应用。")
+            setApplicationError(L("所选应用没有可用的标识，请选择其他应用。"), list: list)
             return
         }
-        addBlockedApplications(identifiers)
+        addApplications(identifiers, list: list)
     }
 
-    private func addBlockedApplications(_ identifiers: [String]) {
+    private func addApplications(_ identifiers: [String], list: ApplicationList) {
         let allowed = identifiers.filter { $0 != Bundle.main.bundleIdentifier }
         guard !allowed.isEmpty else {
-            blockedApplicationError = L("请添加需要暂停自动呼出的其他应用。")
+            setApplicationError(L("请选择 FileDock 以外的应用。"), list: list)
             return
         }
-        blockedApplicationError = nil
-        model.settings.blockedApplicationBundleIDs = HubTriggerSuppressionPolicy.normalizedBundleIDs(
-            model.settings.resolvedBlockedApplicationBundleIDs + allowed)
+        setApplicationError(nil, list: list)
+        setApplications(HubTriggerSuppressionPolicy.normalizedBundleIDs(applications(in: list) + allowed), list: list)
     }
     private var hoverMilliseconds: Binding<Double> {
         Binding(get: { ((hoverDelayDraft ?? model.settings.hoverDelay) * 1000).rounded() }, set: { value in

@@ -4,6 +4,16 @@ import Foundation
 
 enum HubLocalizationCatalog {
     static let english: [String: String] = [
+        "白名单中的应用即使全屏也允许正常鼠标触发；未加入的应用继续遵守现有规则。": "Allowed apps can use normal pointer activation even in full screen. Unlisted apps continue to follow the existing rules.",
+        "同一应用同时出现在黑名单与白名单时，以黑名单为准。白名单不改变触发位置或悬停／点按方式。": "If an app appears in both lists, the blocked-app rule takes priority. The allowlist does not change the trigger area or hover/click mode.",
+
+        "全屏或应用规则限制生效时，暂停悬停展开。可选择点击当前刘海或边角打开，退出限制后自动恢复。全局快捷键和菜单栏仍可使用；「仅快捷键」模式保持不变。": "Pause hover expansion during full-screen or app restrictions. You may allow clicks on the notch or chosen corner instead. Normal activation resumes afterwards. Global shortcuts and the menu bar remain available; Keyboard Only mode is unchanged.",
+        "白名单（{0}）": "Allowed Apps ({0})",
+        "从白名单移除：{0}": "Remove from Allowed Apps: {0}",
+        "选择允许自动呼出的应用": "Choose Apps That Allow Automatic Activation",
+        "添加到白名单": "Add to Allowed Apps",
+        "请选择 FileDock 以外的应用。": "Choose an app other than FileDock.",
+
         "拖到刘海时阻止进入调度中心": "Prevent Mission Control when dragging to the notch",
         "仅过滤真实刘海顶边的拖动；其他位置、快捷键和触控板手势保持原样。需要辅助功能权限，全屏与应用限制期间暂停。": "Filter drags only at the physical notch’s top edge. Other locations, shortcuts and trackpad gestures are unchanged. Requires Accessibility access; pauses during full-screen and app restrictions.",
         "拖动过滤器已就绪": "Drag filter ready",

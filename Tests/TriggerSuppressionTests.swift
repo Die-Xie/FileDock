@@ -8,6 +8,7 @@ struct TriggerSuppressionTests {
 
     @MainActor static func main() {
         testBlacklist()
+        testWhitelist()
         testFullscreenEvidence()
         testScreensAndCoordinates()
         testAccessoryForegroundRetention()
@@ -66,10 +67,10 @@ struct TriggerSuppressionTests {
         print("PASS: exception click fallback/restoration, keyboard-only and screen isolation, modified-click exclusions and real hidden-window/global event coordinate conversion")
     }
 
-    static func suppress(_ foreground: HubTriggerForeground, blocked: [String] = [], enabled: Bool = true,
+    static func suppress(_ foreground: HubTriggerForeground, blocked: [String] = [], allowed: [String] = [], enabled: Bool = true,
                          pointer: CGPoint = CGPoint(x: 750, y: 981), screens: [CGRect] = [primary, secondary]) -> Bool {
         HubTriggerSuppressionPolicy.shouldSuppress(foreground, ownBundleID: own,
-                                                   blockedBundleIDs: blocked, suppressFullScreen: enabled,
+                                                   applicationRules: HubTriggerApplicationRules(blockedBundleIDs: blocked, allowedBundleIDs: allowed), suppressFullScreen: enabled,
                                                    pointer: pointer, screens: screens)
     }
 
@@ -84,6 +85,36 @@ struct TriggerSuppressionTests {
         let selfApp = HubTriggerForeground(bundleID: own, pid: 999, systemFullScreen: true, windowFullScreen: true)
         precondition(!suppress(selfApp, blocked: [own]), "The panel's own app is exempt even from imported self-blacklist entries")
         precondition(HubTriggerSuppressionPolicy.normalizedBundleIDs(["  com.example.game\n", "", "com.example.game", "\t", "com.example.player"]) == ["com.example.game", "com.example.player"])
+    }
+
+    static func testWhitelist() {
+        let finder = HubTriggerForeground(bundleID: "com.apple.finder", pid: 123)
+        let editor = HubTriggerForeground(bundleID: "com.example.editor", pid: 456)
+        let fullscreen = HubTriggerForeground(bundleID: "com.apple.finder", pid: 123, systemFullScreen: true, windowFullScreen: true, windowFrame: primary)
+        precondition(!suppress(editor, allowed: ["com.apple.finder"]), "Unlisted normal apps must retain existing activation behavior")
+        precondition(!suppress(finder, allowed: ["com.apple.finder"]))
+        precondition(!suppress(fullscreen, allowed: ["com.apple.finder"]), "Whitelisted apps bypass both system and AX fullscreen evidence")
+        precondition(suppress(fullscreen, allowed: ["com.apple.find"]), "Allowlist IDs must match exactly")
+        precondition(suppress(fullscreen, allowed: ["com.apple.finder.extra"]))
+        precondition(suppress(fullscreen), "An empty whitelist retains fullscreen restrictions")
+        precondition(!suppress(finder), "An empty whitelist must not restrict normal applications")
+        precondition(!suppress(HubTriggerForeground(), allowed: ["com.apple.finder"]), "Unknown normal foreground retains the original fail-open behavior")
+        precondition(suppress(HubTriggerForeground(systemFullScreen: true), allowed: ["com.apple.finder"]), "Unknown fullscreen foreground is never implicitly whitelisted")
+        precondition(!suppress(HubTriggerForeground(bundleID: own)), "Manual settings and invocation remain accessible")
+        precondition(suppress(fullscreen, blocked: ["com.apple.finder"], allowed: ["com.apple.finder"]), "An explicit blacklist entry wins over the whitelist")
+        let previous = HubTriggerApplicationState(bundleID: "com.apple.finder", pid: 123)
+        let retained = HubTriggerSuppressionPolicy.effectiveForeground(frontmost: HubTriggerApplicationState(bundleID: own, pid: 999), previous: previous,
+            ownBundleID: own, accessory: true, systemFullScreen: false, previousSystemFullScreen: true)
+        precondition(!suppress(retained, allowed: ["com.apple.finder"]), "Activating the accessory panel must retain the whitelisted app's fullscreen exception")
+        for normalClick in [false, true] {
+            for fallback in [false, true] {
+                let allowed = suppress(fullscreen, allowed: ["com.apple.finder"])
+                precondition(HubMouseWakeMode.resolve(mouseEnabled: true, normalClick: normalClick, suppressed: allowed, clickFallback: fallback) == (normalClick ? .click : .hover),
+                             "Fullscreen whitelist entries use the normal hover/click preference, not the fallback")
+                precondition(HubMouseWakeMode.resolve(mouseEnabled: false, normalClick: normalClick, suppressed: allowed, clickFallback: fallback) == .disabled)
+            }
+        }
+        print("PASS: fullscreen whitelist exception, unchanged unlisted apps, exact matching, blacklist priority, retained foreground and normal hover/click mode")
     }
 
     static func testFullscreenEvidence() {
