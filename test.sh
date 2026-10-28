@@ -213,6 +213,10 @@ swiftc -swift-version 5 Sources/Localization.swift Sources/LocalizationCatalog.s
     Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/WorkspaceShortcutOrder.swift Sources/HubModel.swift Sources/FolderWorkspacePreparation.swift Sources/FinderFileActions.swift Sources/FolderArtwork.swift Sources/DirectoryLoader.swift Sources/FileThumbnail.swift Sources/ThumbnailWorkQueue.swift Sources/PresentationState.swift Sources/MenuBarIcon.swift Tests/RenderingContinuityTests.swift -o .build/rendering-continuity-tests \
     -framework AppKit -framework Carbon -framework Combine -framework UniformTypeIdentifiers -framework SwiftUI -framework QuickLookThumbnailing
 .build/rendering-continuity-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
+    Sources/FileNameTooltip.swift Tests/FileNameTooltipTests.swift -o .build/filename-tooltip-tests \
+    -framework AppKit -framework SwiftUI
+.build/filename-tooltip-tests
 TASK_VIEW_TEST_SOURCES=(Sources/*.swift)
 TASK_VIEW_TEST_SOURCES=("${TASK_VIEW_TEST_SOURCES[@]:#Sources/AppMain.swift}")
 swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache "${TASK_VIEW_TEST_SOURCES[@]}" \

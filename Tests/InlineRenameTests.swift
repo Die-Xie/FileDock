@@ -38,8 +38,12 @@ import SwiftUI
             func fileView(_ url: URL) -> HubFileDragBridge.FileDragView {
                 descendants(host).compactMap { $0 as? HubFileDragBridge.FileDragView }.first { $0.entryURL.path == url.path }!
             }
-            precondition(fileView(source).toolTip == source.lastPathComponent,
-                         "All file layouts must expose the complete basename, including Unicode and extension, on the native overlay")
+            precondition(fileView(source).toolTip == nil,
+                         "Native drag overlays must not register unconditional filename tooltips")
+            func filenameTracking(_ url: URL) -> HubFileNameTooltip.TrackingView {
+                descendants(host).compactMap { $0 as? HubFileNameTooltip.TrackingView }.first { $0.name == url.lastPathComponent }!
+            }
+            precondition(filenameTracking(source).displayName == source.lastPathComponent)
             let keyboard = descendants(host).compactMap { $0 as? HubKeyMonitor.KeyboardView }.first!
             func key(_ code: UInt16 = 36) -> NSEvent {
                 NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
@@ -72,6 +76,7 @@ import SwiftUI
             editor.unmarkText()
             let drag = descendants(host).compactMap { $0 as? HubFileDragBridge.FileDragView }.first { $0.entryURL.path == source.path }!
             precondition(!drag.interactionEnabled && drag.hitTest(.zero) == nil, "Editing text must receive clicks before the file drag overlay")
+            precondition(descendants(host).compactMap { $0 as? HubFileNameTooltip.TrackingView }.contains { $0.name == source.lastPathComponent && !$0.enabled }, "The edited filename must disable its tracking region; a separate preview title may retain its own region")
             precondition(drag.toolTip == nil, "The native file tooltip must not cover the active filename editor")
             editor.string = "unsaved-\(mode.rawValue).txt"
             model.refresh(); try await settle(host)
@@ -91,7 +96,8 @@ import SwiftUI
             try await wait { model.fileOperationsInProgress == 0 && manager.fileExists(atPath: target.path) }
             try await settle(host)
             precondition(!manager.fileExists(atPath: source.path) && model.selectedIDs == [target])
-            precondition(fileView(target).toolTip == target.lastPathComponent, "Renaming must not retain the previous filename tooltip")
+            precondition(filenameTracking(target).enabled && filenameTracking(target).name == target.lastPathComponent)
+            precondition(fileView(target).toolTip == nil, "Renaming must not introduce unconditional native tooltips")
             precondition(fields().isEmpty && !HubInlineFileNameEditor.isEditing(in: panel))
             precondition(keyboard.route(key()) == nil); try await settle(host)
             let abandoned = fields()[0]

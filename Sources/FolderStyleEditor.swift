@@ -34,7 +34,7 @@ import UniformTypeIdentifiers
                 VStack(alignment: .leading, spacing: 6) {
                     Text(L("自定义文件夹")).font(.title2.bold())
                     Text(entry.name).lineLimit(2).foregroundStyle(.secondary)
-                        .help(entry.url.lastPathComponent)
+                        .fileNameTooltip(entry.url.lastPathComponent, displayName: entry.name, fontSize: 13, lines: 2)
                     Text(L("更改会同步到访达及其他应用。")).font(.caption).foregroundStyle(.secondary)
                 }
             }
