@@ -82,7 +82,7 @@ The following technical documents and most earlier release notes are currently i
 - [Code quality and performance review](docs/QUALITY_REVIEW.md)
 - [Release notes](docs/releases/)
 
-**1.31.2** fixes rapid hover switching being interrupted by selection scrolling, while keeping matched header spacing. [Release notes](docs/releases/v1.31.2.md).
+**1.31.2** switches directly to the settled hover destination and improves continuous selection motion. [Release notes](docs/releases/v1.31.2.md).
 
 **1.31.1** matches icon-only tab sizing and spacing to the right-hand shortcuts. [Release notes](docs/releases/v1.31.1.md).
 

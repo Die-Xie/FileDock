@@ -10,7 +10,7 @@ struct HubInterfaceMotion: Equatable {
     var selectionDuration: TimeInterval { min(0.30, max(0.12, 0.22 / normalizedSpeed)) }
     var feedbackDuration: TimeInterval { min(0.18, max(0.06, 0.12 / normalizedSpeed)) }
     var selection: Animation? {
-        enabled ? .timingCurve(0.22, 1, 0.36, 1, duration: selectionDuration) : nil
+        enabled ? .interactiveSpring(response: selectionDuration, dampingFraction: 0.92, blendDuration: 0.08) : nil
     }
     var feedback: Animation? { enabled ? .easeOut(duration: feedbackDuration) : nil }
 }
@@ -37,6 +37,71 @@ struct HubWorkspaceHoverSelection: Equatable {
     func needsReveal(_ id: UUID?) -> Bool {
         guard let id else { return false }
         return id != selectedByHover
+    }
+}
+
+/// Movement updates only the latest candidate. A short quiet interval prevents
+/// selecting every narrow tab crossed on the way to the intended destination.
+struct HubWorkspaceHoverDwell {
+    struct Ticket {
+        let target: UUID
+        let generation: UInt64
+        let deadline: TimeInterval
+    }
+    static let quietInterval: TimeInterval = 0.05
+    private(set) var target: UUID?
+    private var point = CGPoint.zero
+    private var generation: UInt64 = 0
+    private var deadline: TimeInterval = 0
+
+    mutating func update(target: UUID, pointer: CGPoint, now: TimeInterval, delay: TimeInterval) -> Ticket? {
+        guard pointer.x.isFinite, pointer.y.isFinite, now.isFinite, delay.isFinite, delay > 0 else { cancel(); return nil }
+        guard self.target != target || hypot(pointer.x - point.x, pointer.y - point.y) >= 1.5 else { return nil }
+        let nextDeadline = now + max(Self.quietInterval, min(2, delay))
+        guard nextDeadline.isFinite else { cancel(); return nil }
+        self.target = target; point = pointer; generation &+= 1
+        deadline = nextDeadline
+        return Ticket(target: target, generation: generation, deadline: deadline)
+    }
+    func isCurrent(_ ticket: Ticket) -> Bool { target == ticket.target && generation == ticket.generation }
+    func permits(_ ticket: Ticket, pointer: CGPoint, now: TimeInterval) -> Bool {
+        isCurrent(ticket) && pointer.x.isFinite && pointer.y.isFinite && now.isFinite && now + 0.001 >= deadline &&
+            hypot(pointer.x - point.x, pointer.y - point.y) < 1.5
+    }
+    mutating func cancel() { target = nil; generation &+= 1 }
+}
+
+/// Reference state is intentionally not observable: pointer movement must not
+/// invalidate the file browser. Only the final workspace selection publishes.
+@MainActor
+final class HubWorkspaceHoverController {
+    private var dwell = HubWorkspaceHoverDwell()
+    private var pending: DispatchWorkItem?
+    private let pointer: @MainActor () -> CGPoint
+    init(pointer: @escaping @MainActor () -> CGPoint = { NSEvent.mouseLocation }) { self.pointer = pointer }
+    func update(target: UUID, pointer: CGPoint, delay: TimeInterval,
+                canActivate: @escaping () -> Bool, activate: @escaping () -> Void) {
+        let now = ProcessInfo.processInfo.systemUptime
+        guard let ticket = dwell.update(target: target, pointer: pointer, now: now, delay: delay) else {
+            if dwell.target == nil { pending?.cancel(); pending = nil }
+            return
+        }
+        pending?.cancel()
+        let task = DispatchWorkItem { [weak self] in
+            guard let self, self.dwell.isCurrent(ticket) else { return }
+            guard self.dwell.permits(ticket, pointer: self.pointer(), now: ProcessInfo.processInfo.systemUptime), canActivate() else {
+                self.cancel(target: ticket.target); return
+            }
+            self.pending = nil
+            self.dwell.cancel()
+            activate()
+        }
+        pending = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + max(0, ticket.deadline - now), execute: task)
+    }
+    func cancel(target: UUID? = nil) {
+        if let target, dwell.target != target { return }
+        pending?.cancel(); pending = nil; dwell.cancel()
     }
 }
 

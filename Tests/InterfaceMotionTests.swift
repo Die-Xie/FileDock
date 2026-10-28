@@ -8,6 +8,8 @@ import Combine
         policy()
         hoverAdmission()
         hoverSelectionIntent()
+        hoverDwellIntent()
+        try await hoverLatestDestination()
         deadlines()
         try await lifecycle()
         try await stableHosting()
@@ -45,6 +47,58 @@ import Combine
         intent.record(a); intent.reset()
         precondition(intent.needsReveal(a), "A real relayout re-enables reveal and stationary-pointer protection")
         precondition(!intent.needsReveal(nil))
+    }
+
+    private static func hoverDwellIntent() {
+        let ids = [UUID(), UUID(), UUID()]
+        var dwell = HubWorkspaceHoverDwell()
+        var ticket: HubWorkspaceHoverDwell.Ticket?
+        for step in 0..<30 {
+            let point = CGPoint(x: step * 3, y: 10)
+            let now = Double(step) * 0.01
+            ticket = dwell.update(target: ids[min(2, step / 10)], pointer: point, now: now, delay: 0.008)
+            precondition(ticket != nil)
+            precondition(!dwell.permits(ticket!, pointer: point, now: now), "Moving across narrow tabs must not select intermediate workspaces")
+        }
+        precondition(ticket!.target == ids[2])
+        precondition(dwell.permits(ticket!, pointer: CGPoint(x: 87, y: 10), now: 0.35), "Only the final stable destination can activate")
+        precondition(dwell.update(target: ids[2], pointer: CGPoint(x: 87.5, y: 10), now: 0.34, delay: 0.008) == nil,
+                     "Subpixel jitter or identical relayout events must not restart the deadline")
+        let previous = ticket!
+        let next = dwell.update(target: ids[0], pointer: CGPoint(x: 0, y: 10), now: 1, delay: 0.3)!
+        precondition(abs(next.deadline - 1.3) < 0.00001 && !dwell.isCurrent(previous), "Configured longer delay and latest-target invalidation must be preserved")
+        dwell.cancel()
+        precondition(!dwell.isCurrent(next))
+        precondition(dwell.update(target: ids[0], pointer: .zero, now: 2, delay: 0) == nil && dwell.target == nil)
+        precondition(dwell.update(target: ids[0], pointer: CGPoint(x: CGFloat.nan, y: 0), now: 2, delay: 0.1) == nil)
+    }
+
+    @MainActor private static func hoverLatestDestination() async throws {
+        let a = UUID(), b = UUID(), c = UUID()
+        var point = CGPoint.zero
+        var selected: [UUID] = []
+        let controller = HubWorkspaceHoverController(pointer: { point })
+        controller.update(target: a, pointer: point, delay: 0.008, canActivate: { true }, activate: { selected.append(a) })
+        point.x = 34
+        controller.update(target: b, pointer: point, delay: 0.008, canActivate: { true }, activate: { selected.append(b) })
+        for _ in 0..<100 where selected.isEmpty { try await Task.sleep(nanoseconds: 10_000_000) }
+        precondition(selected == [b], "A cancelled pass-through timer must never select the middle tab")
+        point.x = 68
+        controller.update(target: c, pointer: point, delay: 0.008, canActivate: { true }, activate: { selected.append(c) })
+        controller.cancel(target: a)
+        for _ in 0..<100 where selected.count < 2 { try await Task.sleep(nanoseconds: 10_000_000) }
+        precondition(selected == [b, c], "A stale exit from an earlier tab must not cancel the destination")
+        controller.update(target: a, pointer: point, delay: 0.008, canActivate: { true }, activate: { selected.append(a) })
+        point.x += 20 // A coalesced/missed move must still invalidate the old target.
+        try await Task.sleep(nanoseconds: 120_000_000)
+        precondition(selected == [b, c])
+        controller.update(target: a, pointer: point, delay: 0.008, canActivate: { false }, activate: { selected.append(a) })
+        try await Task.sleep(nanoseconds: 120_000_000)
+        precondition(selected == [b, c])
+        controller.update(target: a, pointer: point, delay: 0.008, canActivate: { true }, activate: { selected.append(a) })
+        controller.cancel()
+        try await Task.sleep(nanoseconds: 120_000_000)
+        precondition(selected == [b, c])
     }
 
     private static func policy() {

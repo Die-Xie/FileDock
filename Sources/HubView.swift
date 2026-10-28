@@ -56,8 +56,7 @@ struct HubView: View {
     @State private var showsAirDropHint = false
     @State private var fileDropTarget: URL?
     @State private var fileDropFeedback: HubFileDropFeedback?
-    @State private var hoveredWorkspace: UUID?
-    @State private var hoverTask: DispatchWorkItem?
+    @State private var workspaceHover = HubWorkspaceHoverController()
     @StateObject private var parentDirectory = HubParentDirectory()
     @StateObject private var workspaceSpringLoader = HubWorkspaceSpringLoader()
     @State private var workspaceRevealPointer: NSPoint?
@@ -169,8 +168,7 @@ struct HubView: View {
         .onReceive(NotificationCenter.default.publisher(for: hubWorkspaceDragDidEnd)) { _ in
             workspaceReordering = false
             workspaceSpringLoader.cancel()
-            hoverTask?.cancel()
-            hoveredWorkspace = nil
+            workspaceHover.cancel()
             workspaceRevealPointer = NSEvent.mouseLocation
         }
         .onReceive(NotificationCenter.default.publisher(for: hubWorkspaceDragDidBegin)) { _ in
@@ -185,7 +183,7 @@ struct HubView: View {
         .onChange(of: presentation.header) { _ in prepareWorkspaceHover() }
         .onChange(of: canReceiveAirDrop) { if !$0 { showsAirDropHint = false; if airDropTargeted { clearFileDrop() } } }
         .onDisappear {
-            clearFileDrop(); showsAirDropHint = false; hoverTask?.cancel(); tabRevealTask?.cancel()
+            clearFileDrop(); showsAirDropHint = false; workspaceHover.cancel(); tabRevealTask?.cancel()
             renameEntry = nil
             activityVisibility.update(active: false, presented: false)
         }
@@ -204,7 +202,7 @@ struct HubView: View {
         .onChange(of: model.selectedWorkspaceID) { _ in
             renameEntry = nil
             let current = model.selectedWorkspaceID
-            if current == nil || hoverSelection.needsReveal(current) { hoverTask?.cancel(); hoveredWorkspace = nil }
+            if current == nil || hoverSelection.needsReveal(current) { workspaceHover.cancel() }
             hoverSelection.observe(current: current)
         }
         .onChange(of: model.currentURL) { _ in renameEntry = nil }
@@ -396,8 +394,7 @@ struct HubView: View {
     private func revealSelectedWorkspace(in workspaces: [Workspace], using proxy: ScrollViewProxy) {
         guard !HubWorkspaceDragState.isDragging, !HubFileDragState.isDragging,
               let id = model.selectedWorkspaceID, workspaces.contains(where: { $0.id == id }) else { return }
-        hoverTask?.cancel()
-        hoveredWorkspace = nil
+        workspaceHover.cancel()
         // Position after SwiftUI has laid out new/renamed tabs. Use minimal
         // scrolling so a tab already under the pointer stays in place.
         tabRevealTask?.cancel()
@@ -412,14 +409,13 @@ struct HubView: View {
 
     @State private var stagingHoverID = UUID()
     private func prepareWorkspaceHover() {
-        hoverTask?.cancel(); hoveredWorkspace = nil
+        workspaceHover.cancel()
         hoverSelection.reset()
         workspaceRevealPointer = NSEvent.mouseLocation
     }
 
     private func commitWorkspaceHover(_ id: UUID, action: () -> Void) {
         tabRevealTask?.cancel()
-        hoverTask = nil
         hoverSelection.record(id)
         action()
         // Opening staging for the first time can create its real workspace ID.
@@ -436,25 +432,22 @@ struct HubView: View {
             !presentation.surfaceAnimating && !HubWorkspaceDragState.isDragging && !HubFileDragState.isDragging
         guard HubWorkspaceHoverActivation.permits(target: target, current: model.selectedWorkspaceID, ready: ready,
             pointer: NSEvent.mouseLocation, origin: workspaceRevealPointer) else { return false }
-        workspaceRevealPointer = nil
+        if workspaceRevealPointer != nil { workspaceRevealPointer = nil }
         return true
     }
 
-    private func shortcutHover(_ entered: Bool, key: UUID, action: @escaping () -> Void) {
-        guard entered else {
-            if hoveredWorkspace == key { hoverTask?.cancel(); hoveredWorkspace = nil }
-            return
+    private func shortcutHover(_ phase: HoverPhase, key: UUID, action: @escaping () -> Void) {
+        switch phase {
+        case .ended:
+            workspaceHover.cancel(target: key)
+        case .active:
+            guard model.settings.switchDelay > 0, canHoverWorkspace(key) else {
+                workspaceHover.cancel(target: key); return
+            }
+            tabRevealTask?.cancel()
+            workspaceHover.update(target: key, pointer: NSEvent.mouseLocation, delay: model.settings.switchDelay,
+                                  canActivate: { canHoverWorkspace(key) }, activate: { commitWorkspaceHover(key, action: action) })
         }
-        tabRevealTask?.cancel()
-        hoverTask?.cancel()
-        guard model.settings.switchDelay > 0, canHoverWorkspace(key) else { return }
-        hoveredWorkspace = key
-        let task = DispatchWorkItem {
-            guard hoveredWorkspace == key, canHoverWorkspace(key) else { return }
-            commitWorkspaceHover(key, action: action)
-        }
-        hoverTask = task
-        DispatchQueue.main.asyncAfter(deadline: .now() + model.settings.switchDelay, execute: task)
     }
 
     @ViewBuilder private func fixedShortcut(_ item: HubShortcutItem) -> some View {
@@ -469,7 +462,7 @@ struct HubView: View {
                 }.buttonStyle(.plain)
                     .accessibilityLabel(L("收藏：\(model.displayName(for: favorite))"))
                     .help(L("\(model.displayName(for: favorite)) · 右键可隐藏快捷入口"))
-                    .onHover { shortcutHover($0, key: favorite.id, action: { model.selectWorkspace(favorite.id) }) }
+                    .onContinuousHover(coordinateSpace: CoordinateSpace.local) { shortcutHover($0, key: favorite.id, action: { model.selectWorkspace(favorite.id) }) }
                     .onDrop(of: HubWorkspaceFileDropDelegate.contentTypes, delegate: workspaceFileDrop(favorite))
                     .anchorPreference(key: HubFileDropRegionKey.self, value: .bounds) { [.workspace(favorite.id): $0] }
                     .contextMenu {
@@ -492,7 +485,7 @@ struct HubView: View {
                                     clearFileDrop()
                                     airDropTargeted = true
                                     showsAirDropHint = false
-                                    hoverTask?.cancel(); hoveredWorkspace = nil
+                                    workspaceHover.cancel()
                                     presentation.setFileDragActive(true)
                                 }
                             } else {
@@ -512,7 +505,7 @@ struct HubView: View {
                 }.buttonStyle(.plain)
                     .accessibilityLabel(L("最近使用：\(model.displayName(for: recent))"))
                     .help(L("\(model.displayName(for: recent)) · 右键可隐藏快捷入口"))
-                    .onHover { shortcutHover($0, key: recent.id, action: { model.selectWorkspace(recent.id) }) }
+                    .onContinuousHover(coordinateSpace: CoordinateSpace.local) { shortcutHover($0, key: recent.id, action: { model.selectWorkspace(recent.id) }) }
                     .onDrop(of: HubWorkspaceFileDropDelegate.contentTypes, delegate: workspaceFileDrop(recent))
                     .anchorPreference(key: HubFileDropRegionKey.self, value: .bounds) { [.workspace(recent.id): $0] }
                     .contextMenu {
@@ -528,7 +521,7 @@ struct HubView: View {
                 }.buttonStyle(.plain)
                     .accessibilityLabel(L("暂存区，\(model.stagedURLs.count) 个项目"))
                     .help(L("暂存区 · 拖入文件暂存引用，点击查看，右键快速转移"))
-                    .onHover { shortcutHover($0, key: model.settings.stagingWorkspaceID ?? stagingHoverID, action: { model.openStagingWorkspace() }) }
+                    .onContinuousHover(coordinateSpace: CoordinateSpace.local) { shortcutHover($0, key: model.settings.stagingWorkspaceID ?? stagingHoverID, action: { model.openStagingWorkspace() }) }
                     .onDrop(of: HubWorkspaceFileDropDelegate.contentTypes, delegate: HubWorkspaceFileDropDelegate(
                         id: model.settings.stagingWorkspaceID ?? stagingHoverID, loader: workspaceSpringLoader,
                         delay: model.settings.switchDelay,
@@ -606,7 +599,7 @@ struct HubView: View {
                     },
                     onDragStateChanged: { _ in
                         clearFileDrop()
-                        hoverTask?.cancel(); hoveredWorkspace = nil
+                        workspaceHover.cancel()
                         workspaceRevealPointer = NSEvent.mouseLocation
                     }))
                 .anchorPreference(key: HubShortcutReorderRegionKey.self, value: .bounds) {
@@ -687,29 +680,8 @@ struct HubView: View {
         .buttonStyle(.plain)
         .accessibilityLabel(workspace.name.isEmpty ? workspace.mode.title : model.displayName(for: workspace))
         .help(model.displayName(for: workspace) + "\n" + (workspace.mode == .recents ? L("自动更新最近使用的文件") : workspace.rootPath ?? L("文件与文件夹合集")))
-        .onHover { isOver in
-            guard !HubWorkspaceDragState.isDragging, !HubFileDragState.isDragging else {
-                hoverTask?.cancel()
-                hoveredWorkspace = nil
-                return
-            }
-            if !isOver {
-                if hoveredWorkspace == workspace.id { hoverTask?.cancel(); hoveredWorkspace = nil }
-                return
-            }
-            tabRevealTask?.cancel()
-            hoverTask?.cancel()
-            guard canHoverWorkspace(workspace.id) else { hoveredWorkspace = nil; return }
-            hoveredWorkspace = workspace.id
-            if model.settings.switchDelay > 0 {
-                let task = DispatchWorkItem {
-                    if hoveredWorkspace == workspace.id && canHoverWorkspace(workspace.id) {
-                        commitWorkspaceHover(workspace.id) { model.selectWorkspace(workspace.id) }
-                    }
-                }
-                hoverTask = task
-                DispatchQueue.main.asyncAfter(deadline: .now() + model.settings.switchDelay, execute: task)
-            }
+        .onContinuousHover(coordinateSpace: CoordinateSpace.local) { phase in
+            shortcutHover(phase, key: workspace.id, action: { model.selectWorkspace(workspace.id) })
         }
         .contextMenu {
             HubMenuButton(L("编辑工作区…"), systemImage: "pencil") { editingWorkspace = workspace }
@@ -741,8 +713,7 @@ struct HubView: View {
             onReorder: { source, target, after in model.reorderWorkspace(source, relativeTo: target, after: after) },
             onDragStateChanged: { _ in
                 workspaceSpringLoader.cancel()
-                hoverTask?.cancel()
-                hoveredWorkspace = nil
+                workspaceHover.cancel()
                 workspaceRevealPointer = NSEvent.mouseLocation
             }
         ))
@@ -850,7 +821,7 @@ struct HubView: View {
                         canActivate: { model.settings.resolvedStagingEnabled },
                         activate: { if !model.isStagingWorkspace { model.openStagingWorkspace() } })
                 } else { workspaceSpringLoader.cancel() }
-                if region == .airDrop { hoverTask?.cancel(); hoveredWorkspace = nil; showsAirDropHint = false }
+                if region == .airDrop { workspaceHover.cancel(); showsAirDropHint = false }
                 if stagingDropTargeted != (region == .staging) { stagingDropTargeted = region == .staging }
                 let airDropActive = plan?.action == .airDrop
                 if airDropTargeted != airDropActive { airDropTargeted = airDropActive }
@@ -1489,7 +1460,7 @@ struct HubView: View {
         guard renameEntry == nil, extensionRename == nil, !HubFileDragState.isDragging, !HubWorkspaceDragState.isDragging,
               !(model.isStagingRoot && model.stagingTransferInProgress) else { return }
         model.selectedIDs = [entry.url]
-        hoverTask?.cancel(); hoveredWorkspace = nil
+        workspaceHover.cancel()
         renameName = entry.url.lastPathComponent
         renameSessionID = UUID()
         renameEntry = entry
