@@ -175,6 +175,16 @@ struct HubSettingsView: View {
                             .accessibilityIdentifier("filedock.settings.notch-entry-threshold")
                         note(L("1%–100% 按鼠标可见面积判定；超过 100% 须完全进入后继续向上深入，200% 需到屏幕顶边。达到后才开始计时或响应点击，仅对真实刘海生效。"))
                     }.disabled(model.settings.triggerMode == "keyboard")
+                    Divider()
+                    Toggle(L("拖到刘海时阻止进入调度中心"), isOn: Binding(
+                        get: { model.settings.resolvedBlockMissionControlAtNotch },
+                        set: { model.settings.blockMissionControlAtNotch = $0 }))
+                        .disabled(model.settings.triggerMode == "keyboard")
+                        .accessibilityIdentifier("filedock.settings.notch-drag-guard")
+                    note(L("仅过滤真实刘海顶边的拖动；其他位置、快捷键和触控板手势保持原样。需要辅助功能权限，全屏与应用限制期间暂停。"))
+                    if model.settings.resolvedBlockMissionControlAtNotch && model.settings.triggerMode != "keyboard" {
+                        HubNotchDragGuardStatusView()
+                    }
                 }
                 Toggle(L("在副显示器上启用触发区域"), isOn: $model.settings.secondaryScreens)
                     .disabled(model.settings.triggerMode == "keyboard")
@@ -574,5 +584,26 @@ struct HubSettingsView: View {
         let string = value.trimmingCharacters(in: CharacterSet(charactersIn: "#"))
         guard let number = UInt32(string, radix: 16), string.count == 6 else { return .windowBackgroundColor }
         return NSColor(red: CGFloat((number >> 16) & 255) / 255, green: CGFloat((number >> 8) & 255) / 255, blue: CGFloat(number & 255) / 255, alpha: 1)
+    }
+}
+
+@MainActor
+private struct HubNotchDragGuardStatusView: View {
+    @ObservedObject private var controller = HubNotchDragGuard.shared
+    var body: some View {
+        HStack {
+            switch controller.status {
+            case .active: Text(L("拖动过滤器已就绪")).foregroundStyle(.secondary)
+            case .permissionRequired:
+                Text(L("尚未授予辅助功能权限")).foregroundStyle(.secondary)
+                Spacer()
+                Button(L("前往授权…")) { controller.openPermissionSettings() }
+            case .unavailable:
+                Text(L("拖动过滤器暂不可用")).foregroundStyle(.secondary)
+                Spacer()
+                Button(L("重试")) { controller.retry() }
+            case .inactive: Text(L("当前显示器或触发方式未启用拖动过滤")).foregroundStyle(.secondary)
+            }
+        }.font(.caption).fixedSize(horizontal: false, vertical: true)
     }
 }

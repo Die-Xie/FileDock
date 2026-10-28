@@ -72,6 +72,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
     private var fileDragDismissal = HubFileDragDismissal()
     private var fileDragReentry = HubFileDragReentry()
     private let triggerSuppression = HubTriggerSuppressionMonitor()
+    private let notchDragGuard = HubNotchDragGuard.shared
     private var hoverSettingsSignature: String?
     private var windowAttachment = HubWindowAttachmentPolicy()
     private var windowDragSession: (origin: NSPoint, wasAttached: Bool, corner: String?)?
@@ -423,6 +424,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
                 self.hoverActivation.reset()
                 self.hoverDismissal.reset()
                 self.triggerSuppression.refresh()
+                self.configureNotchDragGuard()
                 guard self.desiredVisible else { return }
                 if self.attachedToNotch { self.layoutAttachedPanel(on: self.attachmentScreen) }
                 else if self.anchoredCorner != nil { self.layoutCornerPanel(on: self.attachmentScreen) }
@@ -780,10 +782,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         presentation.setFileDragActive(fileDrag)
         let now = Date()
         let pointer = NSEvent.mouseLocation
+        let mousePressed = (NSEvent.pressedMouseButtons & 1) != 0
+        notchDragGuard.update(enabled: model.settings.resolvedBlockMissionControlAtNotch &&
+            model.settings.hotCorner == "notch" && model.settings.triggerMode != "keyboard",
+            temporarilySuspended: windowDragSession != nil || settingsWindow?.isVisible == true || hasActiveDialog ||
+                triggerSuppression.shouldSuppressHover(at: pointer,
+                    blockedBundleIDs: model.settings.resolvedBlockedApplicationBundleIDs,
+                    suppressFullScreen: model.settings.resolvedSuppressHoverInFullScreen),
+            now: ProcessInfo.processInfo.systemUptime)
         let regionID = hoveredRegionIdentifier(at: pointer)
         let hovering = regionID != nil
         let activationRegion = hoverActivationRegion(at: pointer)
-        let mousePressed = (NSEvent.pressedMouseButtons & 1) != 0
         let fileSessionID = HubFileDragState.current?.id
         let canReturnFromFileDrag = fileDragReentry.isArmed && fileSessionID != nil && mousePressed &&
             model.settings.resolvedHideOnFileDragExit && model.settings.triggerMode != "keyboard" &&
@@ -925,8 +934,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         sharing.isBusy || updater?.sessionInProgress == true || HubWindowPresentation.isPresentingDialog || NSApp.modalWindow != nil || NSApp.windows.contains { $0.attachedSheet != nil }
     }
 
+    private func configureNotchDragGuard() {
+        let screens = NSScreen.screens
+        let eligible = model.settings.secondaryScreens ? screens : Array(screens.prefix(1))
+        let primaryTop = screens.first?.frame.maxY ?? 0
+        let regions = eligible.compactMap { screen -> CGRect? in
+            guard let notch = HubHoverGeometry.notchRect(screenFrame: screen.frame, safeTop: screen.safeAreaInsets.top,
+                left: screen.auxiliaryTopLeftArea, right: screen.auxiliaryTopRightArea) else { return nil }
+            return HubNotchDragFilter.quartzRect(notch, primaryTop: primaryTop)
+        }
+        notchDragGuard.configure(regions: regions)
+    }
+
     private func applySettings() {
         guard model != nil, panel != nil else { return }
+        configureNotchDragGuard()
         let language = model.settings.resolvedLanguage.resolved()
         if interfaceLanguage != language {
             interfaceLanguage = language
@@ -1195,6 +1217,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         music?.setVisible(false)
         timer?.invalidate()
         triggerSuppression.stop()
+        notchDragGuard.stop()
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
         triggerClickMonitors.forEach { NSEvent.removeMonitor($0) }
         hotKeys.forEach { UnregisterEventHotKey($0) }

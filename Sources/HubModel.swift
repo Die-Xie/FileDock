@@ -69,6 +69,8 @@ struct HubSettings: Codable, Equatable {
     var horizontalScroll = false
     var showScrollbar = true
     var notchClickToWake: Bool? = false
+    var blockMissionControlAtNotch: Bool? = true
+    var resolvedBlockMissionControlAtNotch: Bool { blockMissionControlAtNotch ?? true }
     var notchEntryThreshold: Double? = 0.75
     var resolvedNotchEntryThreshold: Double {
         let value = notchEntryThreshold ?? 0.75

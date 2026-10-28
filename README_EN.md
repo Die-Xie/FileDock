@@ -39,6 +39,7 @@ Move the pointer into the notch or a configured screen corner, and the workspace
 - **Set your timing:** adjust opening and closing delays and animation speed. Notch activation also supports clicking instead of hovering.
 - **Keep it on the desktop:** drag the panel out by an empty part of its header to pin it automatically while you organize files.
 - **Stay focused:** block automatic activation for selected apps, such as games and video players, or pause pointer activation in full screen.
+- **Drag into the notch:** optionally prevent top-edge drags from opening Mission Control only within the notch, keeping the original activation location. Requires Accessibility access.
 
 ## Collect first, organize later
 
@@ -91,12 +92,14 @@ For staging rules, drag and drop, keyboard shortcuts, and music setup, see the *
 
 FileDock is built with Swift, AppKit, and SwiftUI. This repository contains the source code, tests, and release tools. Compiled applications are available in Releases.
 
-The following technical documents and release notes are currently in Chinese:
+The following technical documents and most earlier release notes are currently in Chinese:
 
 - [Build from source and sign the app](docs/BUILDING.md)
 - [Release workflow](docs/RELEASING.md)
 - [Code quality and performance review](docs/QUALITY_REVIEW.md)
 - [Release notes](docs/releases/)
+
+**1.30.1** adds notch-only top-edge drag filtering to prevent Mission Control conflicts, while preserving the full first-arrival movement from Finder to avoid rebound. [Release notes (Chinese / English)](docs/releases/v1.30.1.md).
 
 **1.30.0** adds folder styling, system color labels, and Finder operations including Get Info, Compress, Duplicate, Make Alias, and Open in Terminal. [Release notes](docs/releases/v1.30.0.md).
 

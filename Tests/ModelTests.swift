@@ -10,6 +10,8 @@ import Foundation
     @MainActor static func main() async throws {
         let fm = FileManager.default
         var wakeSettings = HubSettings()
+        precondition(wakeSettings.resolvedBlockMissionControlAtNotch)
+        wakeSettings.blockMissionControlAtNotch = false
         precondition(wakeSettings.resolvedNotchEntryThreshold == 0.75)
         for (value, expected) in [(Double.nan, 0.75), (.infinity, 0.75), (-1, 0.01), (0, 0.01), (2.5, 2), (0.4637, 0.4637), (1, 1), (1.4637, 1.4637), (2, 2)] {
             var settings = HubSettings()
@@ -37,6 +39,7 @@ import Foundation
         let encodedWake = try JSONEncoder().encode(wakeSettings)
         let decodedWake = try JSONDecoder().decode(HubSettings.self, from: encodedWake)
         precondition(decodedWake.notchClickToWake == true)
+        precondition(!decodedWake.resolvedBlockMissionControlAtNotch)
         let base = fm.temporaryDirectory.appendingPathComponent("FileDock-Tests-\(UUID().uuidString)", isDirectory: true)
         try fm.createDirectory(at: base, withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: base) }
@@ -227,10 +230,12 @@ import Foundation
         legacy.removeValue(forKey: "clickWakeWhenSuppressed")
         legacy.removeValue(forKey: "notchIntegrationStyle")
         legacy.removeValue(forKey: "notchEntryThreshold")
+        legacy.removeValue(forKey: "blockMissionControlAtNotch")
         legacy.removeValue(forKey: "backgroundTheme")
         legacy.removeValue(forKey: "foldersFirst")
         let oldSettings = try JSONDecoder().decode(HubSettings.self, from: JSONSerialization.data(withJSONObject: legacy))
         precondition(oldSettings.notchEntryThreshold == nil && oldSettings.resolvedNotchEntryThreshold == 0.75)
+        precondition(oldSettings.blockMissionControlAtNotch == nil && oldSettings.resolvedBlockMissionControlAtNotch)
         var normalizedLegacy = oldSettings; normalizedLegacy.normalize()
         precondition(normalizedLegacy.notchEntryThreshold == nil, "Keep an absent legacy percentage absent")
         precondition(oldSettings.resolvedAnimationSpeed == 1 && oldSettings.resolvedQQMusicEnabled,

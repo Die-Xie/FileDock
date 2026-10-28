@@ -4,6 +4,13 @@ import Foundation
 
 enum HubLocalizationCatalog {
     static let english: [String: String] = [
+        "拖到刘海时阻止进入调度中心": "Prevent Mission Control when dragging to the notch",
+        "仅过滤真实刘海顶边的拖动；其他位置、快捷键和触控板手势保持原样。需要辅助功能权限，全屏与应用限制期间暂停。": "Filter drags only at the physical notch’s top edge. Other locations, shortcuts and trackpad gestures are unchanged. Requires Accessibility access; pauses during full-screen and app restrictions.",
+        "拖动过滤器已就绪": "Drag filter ready",
+        "尚未授予辅助功能权限": "Accessibility access has not been granted",
+        "前往授权…": "Open Permission Settings…",
+        "拖动过滤器暂不可用": "Drag filter unavailable",
+        "当前显示器或触发方式未启用拖动过滤": "Drag filtering is inactive for this display or activation mode",
         "制作副本": "Duplicate",
         "所选项目包含同名文件，请分别压缩或先更改名称。": "The selection contains matching names. Compress them separately or rename them first.",
         "一次最多显示 20 个项目的简介。": "Show information for up to 20 items at a time.",

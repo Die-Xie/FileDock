@@ -2,6 +2,10 @@
 set -eu
 cd "${0:A:h}"
 mkdir -p .build
+swiftc -swift-version 5 -O -parse-as-library -module-cache-path .build/module-cache \
+    Sources/NotchDragGuard.swift Tests/NotchDragGuardTests.swift -o .build/notch-drag-guard-tests \
+    -framework AppKit -framework ApplicationServices -framework Combine
+.build/notch-drag-guard-tests
 swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
     Sources/WorkspaceTabInsertion.swift Tests/WorkspaceTabInsertionTests.swift -o .build/workspace-tab-insertion-tests
 .build/workspace-tab-insertion-tests
