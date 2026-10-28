@@ -25,7 +25,7 @@ import SwiftUI
         model.selectWorkspace(workspace.id)
         let music = HubQQMusicController() // Never visible: no player/TCC access.
         for (index, mode) in HubViewMode.allCases.enumerated() {
-            let source = root.appendingPathComponent("报告🚀-\(mode.rawValue).txt")
+            let source = root.appendingPathComponent("报告🚀-\(mode.rawValue)-a-very-long-original-file-name-to-check-hover-without-truncation.txt")
             let other = root.appendingPathComponent("other-\(mode.rawValue).txt")
             try Data("fixture".utf8).write(to: source); try Data("other".utf8).write(to: other)
             model.refresh(); model.viewMode = mode; model.selectedIDs = []
@@ -35,6 +35,11 @@ import SwiftUI
             let host = NSHostingView(rootView: HubView(model: model, presentation: presentation, music: music, onSettings: {}, onClose: {}))
             panel.contentView = host
             try await settle(host)
+            func fileView(_ url: URL) -> HubFileDragBridge.FileDragView {
+                descendants(host).compactMap { $0 as? HubFileDragBridge.FileDragView }.first { $0.entryURL.path == url.path }!
+            }
+            precondition(fileView(source).toolTip == source.lastPathComponent,
+                         "All file layouts must expose the complete basename, including Unicode and extension, on the native overlay")
             let keyboard = descendants(host).compactMap { $0 as? HubKeyMonitor.KeyboardView }.first!
             func key(_ code: UInt16 = 36) -> NSEvent {
                 NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
@@ -67,6 +72,7 @@ import SwiftUI
             editor.unmarkText()
             let drag = descendants(host).compactMap { $0 as? HubFileDragBridge.FileDragView }.first { $0.entryURL.path == source.path }!
             precondition(!drag.interactionEnabled && drag.hitTest(.zero) == nil, "Editing text must receive clicks before the file drag overlay")
+            precondition(drag.toolTip == nil, "The native file tooltip must not cover the active filename editor")
             editor.string = "unsaved-\(mode.rawValue).txt"
             model.refresh(); try await settle(host)
             precondition(fields()[0] === field && editor.string == "unsaved-\(mode.rawValue).txt",
@@ -85,6 +91,7 @@ import SwiftUI
             try await wait { model.fileOperationsInProgress == 0 && manager.fileExists(atPath: target.path) }
             try await settle(host)
             precondition(!manager.fileExists(atPath: source.path) && model.selectedIDs == [target])
+            precondition(fileView(target).toolTip == target.lastPathComponent, "Renaming must not retain the previous filename tooltip")
             precondition(fields().isEmpty && !HubInlineFileNameEditor.isEditing(in: panel))
             precondition(keyboard.route(key()) == nil); try await settle(host)
             let abandoned = fields()[0]

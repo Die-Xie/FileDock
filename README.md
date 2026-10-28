@@ -80,6 +80,8 @@ FileDock 使用 Swift、AppKit 与 SwiftUI 构建。源码、测试与发布工�
 - [质量与性能审查记录](docs/QUALITY_REVIEW.md)
 - [版本发布说明](docs/releases/)
 
+1.30.2 支持悬停查看完整文件名，覆盖网格、列表、分栏与预览标题，重命名后同步更新。详见 [版本说明](docs/releases/v1.30.2.md)。
+
 1.30.1 新增刘海顶边局部拖动过滤，解决系统多桌面冲突，并保留 Finder 首次移入的完整移动以避免回弹。详见 [版本说明](docs/releases/v1.30.1.md)。
 
 1.30.0 新增文件夹样式编辑、系统颜色标签，以及简介、压缩、副本、替身和终端等 Finder 操作。详见 [版本说明](docs/releases/v1.30.0.md)。

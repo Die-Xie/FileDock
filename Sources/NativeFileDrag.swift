@@ -196,6 +196,8 @@ struct HubFileDragBridge: NSViewRepresentable {
         view.entryURL = entryURL
         view.dragContext = self.context
         view.interactionEnabled = interactionEnabled
+        let tooltip: String? = interactionEnabled ? entryURL.lastPathComponent : nil
+        if view.toolTip != tooltip { view.toolTip = tooltip }
         if !interactionEnabled { view.cancelPendingInteraction() }
         view.selectedURLs = selectedURLs
         view.folderURLsForDrag = folderURLsForDrag

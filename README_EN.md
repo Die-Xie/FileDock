@@ -82,6 +82,8 @@ The following technical documents and most earlier release notes are currently i
 - [Code quality and performance review](docs/QUALITY_REVIEW.md)
 - [Release notes](docs/releases/)
 
+**1.30.2** shows complete filenames on hover in grid, list, columns, and preview titles, with tooltips updated after renaming. [Release notes (Chinese / English)](docs/releases/v1.30.2.md).
+
 **1.30.1** adds notch-only top-edge drag filtering to prevent Mission Control conflicts, while preserving the full first-arrival movement from Finder to avoid rebound. [Release notes (Chinese / English)](docs/releases/v1.30.1.md).
 
 **1.30.0** adds folder styling, system color labels, and Finder operations including Get Info, Compress, Duplicate, Make Alias, and Open in Terminal. [Release notes](docs/releases/v1.30.0.md).

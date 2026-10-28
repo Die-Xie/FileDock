@@ -1050,7 +1050,7 @@ struct HubView: View {
         .padding(.horizontal, 5).padding(.vertical, 9)
         .background(model.selectedIDs.contains(entry.url) ? Color.accentColor.opacity(0.20) : .clear, in: RoundedRectangle(cornerRadius: 8))
         .contentShape(Rectangle())
-        .help(entry.url.path)
+        .help(entry.url.lastPathComponent)
         .contextMenu { fileMenu(entry) }
         .overlay(fileInteraction(for: entry))
         .overlay(dropIndicator(for: entry, beforeOnTop: model.settings.horizontalScroll))
@@ -1079,7 +1079,7 @@ struct HubView: View {
                         .padding(.horizontal, 12).padding(.vertical, 5)
                         .background(model.selectedIDs.contains(entry.url) ? Color.accentColor.opacity(0.20) : Color.primary.opacity(index.isMultiple(of: 2) ? 0 : 0.025), in: RoundedRectangle(cornerRadius: 5))
                         .contentShape(Rectangle())
-                        .contextMenu { fileMenu(entry) }.help(entry.url.path)
+                        .contextMenu { fileMenu(entry) }.help(entry.url.lastPathComponent)
                         .overlay(fileInteraction(for: entry))
                         .overlay(dropIndicator(for: entry, beforeOnTop: true))
                         .onDrop(of: [hubFileDragType, .fileURL, .image, .url], isTargeted: dropBinding(for: entry.url)) { receiveItemDrop($0, entry: entry) }
@@ -1123,7 +1123,7 @@ struct HubView: View {
                                         Button { model.navigate(to: url) } label: {
                                             HStack(spacing: 7) { HubFileIcon(entry: entry, size: 18, allowsThumbnail: false, lightweight: presentation.defersFileRendering); Text(entry.name).lineLimit(1); Spacer(); Image(systemName: "chevron.right").font(.system(size: 8)) }.padding(.horizontal, 9).padding(.vertical, 6).contentShape(Rectangle())
                                                 .background(url == current ? Color.primary.opacity(0.10) : .clear, in: RoundedRectangle(cornerRadius: 5))
-                                        }.buttonStyle(.plain)
+                                        }.buttonStyle(.plain).help(entry.url.lastPathComponent)
                                     }
                                 }.padding(5)
                             }
@@ -1149,6 +1149,7 @@ struct HubView: View {
                                     }.padding(.horizontal, 9).padding(.vertical, 6)
                                         .background(model.selectedIDs.contains(entry.url) ? Color.accentColor.opacity(0.20) : .clear, in: RoundedRectangle(cornerRadius: 5)).contentShape(Rectangle())
                                         .contextMenu { fileMenu(entry) }
+                                        .help(entry.url.lastPathComponent)
                                         .overlay(fileInteraction(for: entry, navigateOnClick: true))
                                         .overlay(dropIndicator(for: entry, beforeOnTop: true))
                                         .onDrop(of: [hubFileDragType, .fileURL, .image, .url], isTargeted: dropBinding(for: entry.url)) { receiveItemDrop($0, entry: entry) }
@@ -1181,6 +1182,7 @@ struct HubView: View {
             HStack(spacing: 8) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(entry.name).font(.system(size: 11, weight: .medium)).lineLimit(1).truncationMode(.middle)
+                        .help(entry.url.lastPathComponent)
                     Text(model.isCloudPlaceholder(entry) ? L("仅在云端") : entry.isDirectory ? entry.kind : "\(entry.kind) · \(entry.sizeText)")
                         .font(.system(size: 9)).foregroundStyle(.secondary).lineLimit(1)
                 }.frame(maxWidth: .infinity, alignment: .leading)
@@ -1200,10 +1202,12 @@ struct HubView: View {
                 VStack(spacing: 12) {
                     HubFileIcon(entry: entry, size: 96, allowsThumbnail: false, lightweight: presentation.defersFileRendering)
                     Text(entry.name).font(.headline).lineLimit(2)
+                        .help(entry.url.lastPathComponent)
                     Text(L("应用程序")).font(.caption).foregroundStyle(.secondary)
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
             case .directory:
                 previewPlaceholder("folder", title: entry.name, detail: L("在左侧选择文件以预览内容"))
+                    .help(entry.url.lastPathComponent)
             case .unavailable:
                 if model.isCloudPlaceholder(entry) {
                     previewPlaceholder("icloud.and.arrow.down", title: L("文件尚未下载"), detail: L("点击右上角打开文件，由系统下载后查看"))
