@@ -25,6 +25,21 @@ enum HubWorkspaceHoverActivation {
     }
 }
 
+/// Hover targets are already visible. Selection callbacks must not scroll the
+/// strip or cancel the next hover while processing the previous selection.
+struct HubWorkspaceHoverSelection: Equatable {
+    private var selectedByHover: UUID?
+    mutating func record(_ id: UUID?) { selectedByHover = id }
+    mutating func observe(current: UUID?) {
+        if current != selectedByHover { selectedByHover = nil }
+    }
+    mutating func reset() { selectedByHover = nil }
+    func needsReveal(_ id: UUID?) -> Bool {
+        guard let id else { return false }
+        return id != selectedByHover
+    }
+}
+
 private struct HubInterfaceMotionKey: EnvironmentKey {
     static let defaultValue = HubInterfaceMotion(enabled: false)
 }

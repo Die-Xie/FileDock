@@ -7,6 +7,7 @@ import Combine
         _ = NSApplication.shared
         policy()
         hoverAdmission()
+        hoverSelectionIntent()
         deadlines()
         try await lifecycle()
         try await stableHosting()
@@ -27,6 +28,23 @@ import Combine
             "Surface transitions, hidden windows, moving windows and drag sessions must reject ordinary hover switching")
         precondition(HubWorkspaceHoverActivation.permits(target: other, current: current, ready: true, pointer: point, origin: nil))
         precondition(!HubWorkspaceHoverActivation.permits(target: other, current: current, ready: true, pointer: CGPoint(x: CGFloat.nan, y: 30), origin: nil))
+    }
+
+    private static func hoverSelectionIntent() {
+        let a = UUID(), b = UUID(), manual = UUID()
+        var intent = HubWorkspaceHoverSelection()
+        precondition(intent.needsReveal(a))
+        intent.record(a); intent.observe(current: a)
+        precondition(!intent.needsReveal(a), "A visible hover target must not start scroll/reveal work")
+        intent.record(b)
+        // A delayed callback for A reads the model's latest selected value B.
+        intent.observe(current: b)
+        precondition(!intent.needsReveal(b), "Rapid adjacent hovers must not cancel the next dwell via the previous selection")
+        intent.observe(current: manual)
+        precondition(intent.needsReveal(manual) && intent.needsReveal(b), "Keyboard/click selection must retain offscreen-tab reveal")
+        intent.record(a); intent.reset()
+        precondition(intent.needsReveal(a), "A real relayout re-enables reveal and stationary-pointer protection")
+        precondition(!intent.needsReveal(nil))
     }
 
     private static func policy() {

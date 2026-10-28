@@ -61,6 +61,7 @@ struct HubView: View {
     @StateObject private var parentDirectory = HubParentDirectory()
     @StateObject private var workspaceSpringLoader = HubWorkspaceSpringLoader()
     @State private var workspaceRevealPointer: NSPoint?
+    @State private var hoverSelection = HubWorkspaceHoverSelection()
     @State private var workspaceControlsWidth: CGFloat = 0
     @State private var musicControlsFocused = false
     @StateObject private var activityVisibility = HubActivityVisibility()
@@ -200,7 +201,12 @@ struct HubView: View {
         .onReceive(model.$entries) { entries in
             if let entry = renameEntry, !entries.contains(where: { $0.url == entry.url }) { renameEntry = nil }
         }
-        .onChange(of: model.selectedWorkspaceID) { _ in renameEntry = nil }
+        .onChange(of: model.selectedWorkspaceID) { _ in
+            renameEntry = nil
+            let current = model.selectedWorkspaceID
+            if current == nil || hoverSelection.needsReveal(current) { hoverTask?.cancel(); hoveredWorkspace = nil }
+            hoverSelection.observe(current: current)
+        }
         .onChange(of: model.currentURL) { _ in renameEntry = nil }
         .onChange(of: model.viewMode) { _ in renameEntry = nil }
         .onChange(of: dropTargeted) { if $0 { presentation.setFileDragActive(true) } }
@@ -376,7 +382,9 @@ struct HubView: View {
             }
             .onHover { if !$0 { workspaceRevealPointer = nil } }
             .onAppear { revealSelectedWorkspace(in: workspaces, using: proxy) }
-            .onChange(of: model.selectedWorkspaceID) { _ in revealSelectedWorkspace(in: workspaces, using: proxy) }
+            .onChange(of: model.selectedWorkspaceID) { _ in
+                if hoverSelection.needsReveal(model.selectedWorkspaceID) { revealSelectedWorkspace(in: workspaces, using: proxy) }
+            }
             .onChange(of: workspaces.map(\.id)) { _ in revealSelectedWorkspace(in: workspaces, using: proxy) }
             .onChange(of: workspaces.map(\.name)) { _ in revealSelectedWorkspace(in: workspaces, using: proxy) }
             .onChange(of: workspaces.map(\.iconOnly)) { _ in revealSelectedWorkspace(in: workspaces, using: proxy) }
@@ -386,10 +394,10 @@ struct HubView: View {
     }
 
     private func revealSelectedWorkspace(in workspaces: [Workspace], using proxy: ScrollViewProxy) {
-        hoverTask?.cancel()
-        hoveredWorkspace = nil
         guard !HubWorkspaceDragState.isDragging, !HubFileDragState.isDragging,
               let id = model.selectedWorkspaceID, workspaces.contains(where: { $0.id == id }) else { return }
+        hoverTask?.cancel()
+        hoveredWorkspace = nil
         // Position after SwiftUI has laid out new/renamed tabs. Use minimal
         // scrolling so a tab already under the pointer stays in place.
         tabRevealTask?.cancel()
@@ -405,7 +413,22 @@ struct HubView: View {
     @State private var stagingHoverID = UUID()
     private func prepareWorkspaceHover() {
         hoverTask?.cancel(); hoveredWorkspace = nil
+        hoverSelection.reset()
         workspaceRevealPointer = NSEvent.mouseLocation
+    }
+
+    private func commitWorkspaceHover(_ id: UUID, action: () -> Void) {
+        tabRevealTask?.cancel()
+        hoverTask = nil
+        hoverSelection.record(id)
+        action()
+        // Opening staging for the first time can create its real workspace ID.
+        if model.selectedWorkspaceID != id { hoverSelection.record(model.selectedWorkspaceID) }
+    }
+
+    private func selectWorkspaceFromClick(_ id: UUID) {
+        prepareWorkspaceHover()
+        model.selectWorkspace(id)
     }
 
     private func canHoverWorkspace(_ target: UUID) -> Bool {
@@ -422,12 +445,13 @@ struct HubView: View {
             if hoveredWorkspace == key { hoverTask?.cancel(); hoveredWorkspace = nil }
             return
         }
+        tabRevealTask?.cancel()
         hoverTask?.cancel()
         guard model.settings.switchDelay > 0, canHoverWorkspace(key) else { return }
         hoveredWorkspace = key
         let task = DispatchWorkItem {
             guard hoveredWorkspace == key, canHoverWorkspace(key) else { return }
-            action()
+            commitWorkspaceHover(key, action: action)
         }
         hoverTask = task
         DispatchQueue.main.asyncAfter(deadline: .now() + model.settings.switchDelay, execute: task)
@@ -553,6 +577,7 @@ struct HubView: View {
 
     private func activateShortcut(_ item: HubShortcutItem) {
         guard model.visibleShortcutItems.contains(item) else { return }
+        prepareWorkspaceHover()
         switch item {
         case .favorite:
             if let favorite = model.fixedFavoriteWorkspace { model.selectWorkspace(favorite.id) }
@@ -649,7 +674,7 @@ struct HubView: View {
 
     private func workspaceTab(_ workspace: Workspace, selectionNamespace: Namespace.ID, maximumWidth: CGFloat? = nil) -> some View {
         let iconOnly = workspace.iconOnly == true || workspace.name.isEmpty
-        return Button { model.selectWorkspace(workspace.id) } label: {
+        return Button { selectWorkspaceFromClick(workspace.id) } label: {
             HStack(spacing: 6) {
                 workspaceIcon(workspace).frame(width: 16, height: 16)
                 if workspace.iconOnly != true && !workspace.name.isEmpty { Text(model.displayName(for: workspace)).lineLimit(1).truncationMode(.tail) }
@@ -672,12 +697,15 @@ struct HubView: View {
                 if hoveredWorkspace == workspace.id { hoverTask?.cancel(); hoveredWorkspace = nil }
                 return
             }
+            tabRevealTask?.cancel()
             hoverTask?.cancel()
             guard canHoverWorkspace(workspace.id) else { hoveredWorkspace = nil; return }
             hoveredWorkspace = workspace.id
             if model.settings.switchDelay > 0 {
                 let task = DispatchWorkItem {
-                    if hoveredWorkspace == workspace.id && canHoverWorkspace(workspace.id) { model.selectWorkspace(workspace.id) }
+                    if hoveredWorkspace == workspace.id && canHoverWorkspace(workspace.id) {
+                        commitWorkspaceHover(workspace.id) { model.selectWorkspace(workspace.id) }
+                    }
                 }
                 hoverTask = task
                 DispatchQueue.main.asyncAfter(deadline: .now() + model.settings.switchDelay, execute: task)
@@ -709,7 +737,7 @@ struct HubView: View {
             workspaceID: workspace.id,
             title: workspace.name.isEmpty ? L("工作区") : model.displayName(for: workspace),
             acceptsReorderDrops: false,
-            onSelect: { model.selectWorkspace(workspace.id) },
+            onSelect: { selectWorkspaceFromClick(workspace.id) },
             onReorder: { source, target, after in model.reorderWorkspace(source, relativeTo: target, after: after) },
             onDragStateChanged: { _ in
                 workspaceSpringLoader.cancel()

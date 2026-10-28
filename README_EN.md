@@ -82,6 +82,8 @@ The following technical documents and most earlier release notes are currently i
 - [Code quality and performance review](docs/QUALITY_REVIEW.md)
 - [Release notes](docs/releases/)
 
+**1.31.2** fixes rapid hover switching being interrupted by selection scrolling, while keeping matched header spacing. [Release notes](docs/releases/v1.31.2.md).
+
 **1.31.1** matches icon-only tab sizing and spacing to the right-hand shortcuts. [Release notes](docs/releases/v1.31.1.md).
 
 **1.31.0** adds a foreground-app whitelist that allows normal activation even in full screen, while keeping existing rules for other apps. [Release notes](docs/releases/v1.31.0.md).
