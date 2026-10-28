@@ -45,23 +45,44 @@ import SwiftUI
             }
             let filenameView = filenameTracking(source)
             precondition(filenameView.displayName == source.lastPathComponent && filenameView.needsHint)
-            filenameView.updateTrackingAreas()
-            precondition(filenameView.trackingAreas.count == 1)
-            precondition(filenameView.trackingAreas[0].rect == filenameView.bounds.intersection(filenameView.visibleRect),
-                         "SwiftUI can expand visibleRect beyond text bounds; tracking must stay inside the filename")
-            precondition(!filenameView.trackingAreas[0].options.contains(.inVisibleRect))
             precondition(panel.acceptsMouseMovedEvents)
             let point = filenameView.convert(NSPoint(x: filenameView.bounds.midX, y: filenameView.bounds.midY), to: nil)
-            let hover = NSEvent.mouseEvent(with: .mouseMoved, location: point, modifierFlags: [], timestamp: 0,
-                                          windowNumber: panel.windowNumber, context: nil, eventNumber: 0, clickCount: 0, pressure: 0)!
-            filenameView.mouseMoved(with: hover)
-            precondition(HubFileNamePopup.shared.contains(owner: filenameView), "A move without a preceding enter must schedule the truncated name")
-            let area = filenameView.trackingAreas[0]
-            filenameView.updateTrackingAreas()
-            precondition(filenameView.trackingAreas[0] === area && HubFileNamePopup.shared.contains(owner: filenameView),
-                         "An unchanged SwiftUI layout must retain its tracking area and pending tooltip")
-            filenameView.mouseExited(with: hover)
-            precondition(!HubFileNamePopup.shared.contains(owner: filenameView))
+            func movement(_ point: NSPoint) -> NSEvent {
+                NSEvent.mouseEvent(with: .mouseMoved, location: point, modifierFlags: [], timestamp: 0,
+                                   windowNumber: panel.windowNumber, context: nil, eventNumber: 0, clickCount: 0, pressure: 0)!
+            }
+            HubFileNameHoverRouter.shared.handle(movement(point))
+            precondition(HubFileNamePopup.shared.contains(owner: filenameView), "Window movement must reach a filename beneath the hit-test-transparent drag overlay")
+            HubFileNameHoverRouter.shared.handle(movement(point))
+            precondition(HubFileNamePopup.shared.contains(owner: filenameView), "Further movement must retain the same tooltip")
+            func cellArea(_ url: URL) -> HubFileNameHoverArea.AreaView {
+                descendants(host).compactMap { $0 as? HubFileNameHoverArea.AreaView }.first { $0.name == url.lastPathComponent }!
+            }
+            let cell = cellArea(source)
+            precondition(cell.hitTest(.zero) == nil)
+            let iconPoint: NSPoint
+            switch mode {
+            case .grid: iconPoint = NSPoint(x: cell.bounds.midX, y: cell.bounds.maxY - 9 - model.settings.iconSize / 2)
+            case .list: iconPoint = NSPoint(x: 23, y: cell.bounds.midY)
+            case .columns: iconPoint = NSPoint(x: 19, y: cell.bounds.midY)
+            }
+            let iconInWindow = cell.convert(iconPoint, to: nil)
+            precondition(cell.hoverRect.contains(iconPoint) && !filenameView.hoverRect.contains(filenameView.convert(iconInWindow, from: nil)),
+                         "The icon hover fixture must be inside the cell but outside the filename text")
+            HubFileNameHoverRouter.shared.handle(movement(iconInWindow))
+            precondition(HubFileNamePopup.shared.contains(owner: filenameView), "Icons must reveal the cell's truncated filename")
+            let paddingPoint = cell.convert(NSPoint(x: 2, y: cell.bounds.midY), to: nil)
+            HubFileNameHoverRouter.shared.handle(movement(paddingPoint))
+            precondition(HubFileNamePopup.shared.contains(owner: filenameView), "Cell padding must preserve filename hover")
+            HubFileNameHoverRouter.shared.handle(movement(NSPoint(x: -10000, y: -10000)))
+            precondition(!HubFileNamePopup.shared.contains(owner: filenameView), "Leaving all filename regions must dismiss the tooltip")
+            let shortNameView = filenameTracking(other)
+            precondition(!shortNameView.needsHint)
+            let shortPoint = shortNameView.convert(NSPoint(x: shortNameView.bounds.midX, y: shortNameView.bounds.midY), to: nil)
+            HubFileNameHoverRouter.shared.handle(movement(shortPoint))
+            let shortCell = cellArea(other)
+            HubFileNameHoverRouter.shared.handle(movement(shortCell.convert(NSPoint(x: 2, y: shortCell.bounds.midY), to: nil)))
+            precondition(!HubFileNamePopup.shared.contains(owner: shortNameView), "Fitting filenames must not schedule a popup")
             let keyboard = descendants(host).compactMap { $0 as? HubKeyMonitor.KeyboardView }.first!
             func key(_ code: UInt16 = 36) -> NSEvent {
                 NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,

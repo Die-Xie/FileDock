@@ -1050,7 +1050,7 @@ struct HubView: View {
         .padding(.horizontal, 5).padding(.vertical, 9)
         .background(model.selectedIDs.contains(entry.url) ? Color.accentColor.opacity(0.20) : .clear, in: RoundedRectangle(cornerRadius: 8))
         .contentShape(Rectangle())
-
+        .fileNameHoverArea(entry.url.lastPathComponent, enabled: renameEntry?.url != entry.url)
         .contextMenu { fileMenu(entry) }
         .overlay(fileInteraction(for: entry))
         .overlay(dropIndicator(for: entry, beforeOnTop: model.settings.horizontalScroll))
@@ -1079,6 +1079,7 @@ struct HubView: View {
                         .padding(.horizontal, 12).padding(.vertical, 5)
                         .background(model.selectedIDs.contains(entry.url) ? Color.accentColor.opacity(0.20) : Color.primary.opacity(index.isMultiple(of: 2) ? 0 : 0.025), in: RoundedRectangle(cornerRadius: 5))
                         .contentShape(Rectangle())
+                        .fileNameHoverArea(entry.url.lastPathComponent, enabled: renameEntry?.url != entry.url)
                         .contextMenu { fileMenu(entry) }
                         .overlay(fileInteraction(for: entry))
                         .overlay(dropIndicator(for: entry, beforeOnTop: true))
@@ -1123,7 +1124,7 @@ struct HubView: View {
                                         Button { model.navigate(to: url) } label: {
                                             HStack(spacing: 7) { HubFileIcon(entry: entry, size: 18, allowsThumbnail: false, lightweight: presentation.defersFileRendering); Text(entry.name).lineLimit(1).fileNameTooltip(entry.url.lastPathComponent, displayName: entry.name, fontSize: model.settings.fontSize); Spacer(); Image(systemName: "chevron.right").font(.system(size: 8)) }.padding(.horizontal, 9).padding(.vertical, 6).contentShape(Rectangle())
                                                 .background(url == current ? Color.primary.opacity(0.10) : .clear, in: RoundedRectangle(cornerRadius: 5))
-                                        }.buttonStyle(.plain)
+                                        }.buttonStyle(.plain).fileNameHoverArea(entry.url.lastPathComponent)
                                     }
                                 }.padding(5)
                             }
@@ -1148,8 +1149,8 @@ struct HubView: View {
                                         if entry.isDirectory && !entry.isPackage { Image(systemName: "chevron.right").font(.system(size: 8)).foregroundStyle(.secondary) }
                                     }.padding(.horizontal, 9).padding(.vertical, 6)
                                         .background(model.selectedIDs.contains(entry.url) ? Color.accentColor.opacity(0.20) : .clear, in: RoundedRectangle(cornerRadius: 5)).contentShape(Rectangle())
+                                        .fileNameHoverArea(entry.url.lastPathComponent, enabled: renameEntry?.url != entry.url)
                                         .contextMenu { fileMenu(entry) }
-
                                         .overlay(fileInteraction(for: entry, navigateOnClick: true))
                                         .overlay(dropIndicator(for: entry, beforeOnTop: true))
                                         .onDrop(of: [hubFileDragType, .fileURL, .image, .url], isTargeted: dropBinding(for: entry.url)) { receiveItemDrop($0, entry: entry) }

@@ -14,16 +14,20 @@ struct FileNameTooltipTests {
         precondition(!HubFileNameTooltip.isTruncated(long, fontSize: 12, lines: 1, size: .zero))
         let view = HubFileNameTooltip.TrackingView(frame: NSRect(x: 0, y: 0, width: 80, height: 20))
         precondition(view.hitTest(.zero) == nil, "Tooltip overlays must never intercept drag, click or drop input")
-        view.updateTrackingAreas(); view.updateTrackingAreas()
-        precondition(view.trackingAreas.count == 1, "Resizing must replace tracking regions")
-        precondition(view.trackingAreas[0].rect == view.bounds.intersection(view.visibleRect))
-        precondition(!view.trackingAreas[0].options.contains(.inVisibleRect))
         view.displayName = long; view.fontSize = 12
         precondition(view.needsHint)
         view.displayName = "a"
         precondition(!view.needsHint, "Name changes must invalidate cached truncation")
         view.displayName = long; view.enabled = false
         precondition(!view.needsHint)
+        let popup = HubFileNamePopup()
+        popup.prepareContent(long)
+        precondition(popup.contentSize.width > 100 && popup.contentSize.height > 12,
+                     "Assigning a content view to a zero-size panel must not erase the measured popup size")
+        let expanded = popup.contentSize
+        popup.prepareContent("short.txt")
+        precondition(popup.contentSize.width > 40 && popup.contentSize.height >= 28 && popup.contentSize.width < expanded.width,
+                     "Reused popup windows must resize to the next filename")
         print("PASS: filename truncation, multiline Unicode and non-intercepting tracking")
     }
 }

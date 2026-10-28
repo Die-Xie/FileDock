@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// Only filename text owns tracking regions; this overlay never participates in
+/// Filename text registers passive hover regions without participating in
 /// clicks, dragging or drop targeting. There is one shared popup and no polling.
 struct HubFileNameTooltip: NSViewRepresentable {
     let name: String
@@ -16,8 +16,9 @@ struct HubFileNameTooltip: NSViewRepresentable {
             HubFileNamePopup.shared.hide(owner: view)
         }
         view.name = name; view.displayName = displayName; view.fontSize = fontSize; view.lines = lines; view.enabled = enabled
+        HubFileNameHoverRouter.shared.register(view)
     }
-    static func dismantleNSView(_ view: TrackingView, coordinator: ()) { HubFileNamePopup.shared.hide(owner: view) }
+    static func dismantleNSView(_ view: TrackingView, coordinator: ()) { HubFileNameHoverRouter.shared.unregister(view) }
 
     static func isTruncated(_ name: String, fontSize: CGFloat, lines: Int, size: NSSize) -> Bool {
         guard !name.isEmpty, size.width > 0, size.height > 0 else { return false }
@@ -45,8 +46,6 @@ struct HubFileNameTooltip: NSViewRepresentable {
         var fontSize: CGFloat = 12
         var lines = 1
         var enabled = true
-        private var tracking: NSTrackingArea?
-        private var trackedRect: NSRect?
         private struct Measurement: Equatable {
             let name: String
             let fontSize: CGFloat
@@ -65,44 +64,150 @@ struct HubFileNameTooltip: NSViewRepresentable {
             return enabled && truncated
         }
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
-        override func updateTrackingAreas() {
-            super.updateTrackingAreas()
-            // NSHostingView may report a visibleRect larger than this overlay's
-            // bounds. inVisibleRect would then track the entire file browser.
-            let rect = hoverRect
-            guard trackedRect != rect || tracking == nil else { return }
-            if let tracking { removeTrackingArea(tracking) }
-            tracking = nil
-            if !rect.isEmpty {
-                let area = NSTrackingArea(rect: rect, options: [.mouseEnteredAndExited, .mouseMoved, .activeInActiveApp], owner: self)
-                addTrackingArea(area); tracking = area
-            }
-            HubFileNamePopup.shared.hide(owner: self)
-            trackedRect = rect
-        }
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
-            if let window {
-                // Movement is required both for pointer-following and recovery
-                // when SwiftUI creates a tracking region beneath the pointer.
-                window.acceptsMouseMovedEvents = true
-            } else { HubFileNamePopup.shared.hide(owner: self) }
+            if window != nil { HubFileNameHoverRouter.shared.register(self) }
+            else { HubFileNameHoverRouter.shared.unregister(self) }
         }
-        override func mouseEntered(with event: NSEvent) { updateHover(with: event) }
-        override func mouseMoved(with event: NSEvent) { updateHover(with: event) }
-        private func updateHover(with event: NSEvent) {
-            guard event.window === window, !isHiddenOrHasHiddenAncestor,
-                  hoverRect.contains(convert(event.locationInWindow, from: nil)),
-                  NSEvent.pressedMouseButtons == 0, needsHint else {
-                HubFileNamePopup.shared.hide(owner: self); return
-            }
-            // A layout/refresh can replace a tracking region beneath a stationary
-            // pointer. A subsequent move must recover without requiring re-entry.
-            if HubFileNamePopup.shared.contains(owner: self) { HubFileNamePopup.shared.move(owner: self) }
-            else { HubFileNamePopup.shared.schedule(owner: self) }
-        }
-        override func mouseExited(with event: NSEvent) { HubFileNamePopup.shared.hide(owner: self) }
 
+    }
+}
+
+/// The cell supplies the pointer region; its text view still supplies the real
+/// truncation measurement. Icon and padding hover never change the file layout.
+struct HubFileNameHoverArea: NSViewRepresentable {
+    let name: String
+    var enabled = true
+    func makeNSView(context: Context) -> AreaView { AreaView() }
+    func updateNSView(_ view: AreaView, context: Context) {
+        if view.name != name || view.enabled != enabled {
+            if let label = view.label { HubFileNamePopup.shared.hide(owner: label) }
+            view.label = nil
+        }
+        view.name = name; view.enabled = enabled
+        HubFileNameHoverRouter.shared.register(view)
+    }
+    static func dismantleNSView(_ view: AreaView, coordinator: ()) { HubFileNameHoverRouter.shared.unregister(view) }
+    final class AreaView: NSView {
+        var name = ""
+        var enabled = true
+        weak var label: HubFileNameTooltip.TrackingView?
+        var hoverRect: NSRect { bounds.intersection(visibleRect) }
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if window != nil { HubFileNameHoverRouter.shared.register(self) }
+            else { HubFileNameHoverRouter.shared.unregister(self) }
+        }
+        func contains(_ label: HubFileNameTooltip.TrackingView) -> Bool {
+            label.window === window && label.name == name && !label.isHiddenOrHasHiddenAncestor &&
+                bounds.contains(convert(NSPoint(x: label.bounds.midX, y: label.bounds.midY), from: label))
+        }
+    }
+}
+
+/// Receive movement before hit testing. SwiftUI may suppress tracking-area
+/// callbacks on a hit-test-transparent representable underneath a drag overlay.
+/// One app-local monitor routes to visible text regions; no timer or global tap.
+@MainActor
+final class HubFileNameHoverRouter: NSObject {
+    static let shared = HubFileNameHoverRouter()
+    private final class Region {
+        weak var view: HubFileNameTooltip.TrackingView?
+        init(_ view: HubFileNameTooltip.TrackingView) { self.view = view }
+    }
+    private final class Area {
+        weak var view: HubFileNameHoverArea.AreaView?
+        init(_ view: HubFileNameHoverArea.AreaView) { self.view = view }
+    }
+    @MainActor private final class WindowRegion {
+        weak var window: NSWindow?
+        weak var root: NSView?
+        let tracking: NSTrackingArea
+        init(window: NSWindow, root: NSView, owner: AnyObject) {
+            self.window = window; self.root = root
+            tracking = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect], owner: owner)
+            root.addTrackingArea(tracking)
+        }
+    }
+    private var regions: [ObjectIdentifier: Region] = [:]
+    private var areas: [ObjectIdentifier: Area] = [:]
+    private var windows: [ObjectIdentifier: WindowRegion] = [:]
+    private var monitor: Any?
+    private var deactivation: NSObjectProtocol?
+
+    func register(_ view: HubFileNameTooltip.TrackingView) {
+        guard let window = view.window else { return }
+        if regions[ObjectIdentifier(view)]?.view !== view { regions[ObjectIdentifier(view)] = Region(view) }
+        register(window)
+    }
+    func register(_ view: HubFileNameHoverArea.AreaView) {
+        guard let window = view.window else { return }
+        if areas[ObjectIdentifier(view)]?.view !== view { areas[ObjectIdentifier(view)] = Area(view) }
+        register(window)
+    }
+    private func register(_ window: NSWindow) {
+        window.acceptsMouseMovedEvents = true
+        if let root = window.contentView, windows[ObjectIdentifier(window)]?.root !== root {
+            if let old = windows[ObjectIdentifier(window)] { old.root?.removeTrackingArea(old.tracking) }
+            windows[ObjectIdentifier(window)] = WindowRegion(window: window, root: root, owner: self)
+        }
+        if monitor == nil {
+            monitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .mouseEntered, .mouseExited]) { [weak self] event in
+                self?.handle(event); return event
+            }
+            deactivation = NotificationCenter.default.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated { HubFileNamePopup.shared.dismiss() }
+            }
+        }
+    }
+    func unregister(_ view: HubFileNameTooltip.TrackingView) {
+        regions.removeValue(forKey: ObjectIdentifier(view))
+        HubFileNamePopup.shared.hide(owner: view)
+        pruneWindows()
+    }
+    func unregister(_ view: HubFileNameHoverArea.AreaView) {
+        areas.removeValue(forKey: ObjectIdentifier(view))
+        if let label = view.label { HubFileNamePopup.shared.hide(owner: label) }
+        view.label = nil
+        pruneWindows()
+    }
+    private func pruneWindows() {
+        let liveWindows = Set((regions.values.compactMap { $0.view?.window } + areas.values.compactMap { $0.view?.window }).map(ObjectIdentifier.init))
+        for id in Array(windows.keys) where !liveWindows.contains(id) {
+            if let old = windows.removeValue(forKey: id) { old.root?.removeTrackingArea(old.tracking) }
+        }
+        if regions.isEmpty && areas.isEmpty {
+            if let monitor { NSEvent.removeMonitor(monitor) }; monitor = nil
+            if let deactivation { NotificationCenter.default.removeObserver(deactivation) }; deactivation = nil
+        }
+    }
+    @objc func mouseEntered(with event: NSEvent) { handle(event) }
+    @objc func mouseExited(with event: NSEvent) { handle(event) }
+    func handle(_ event: NSEvent) {
+        guard let window = event.window, NSEvent.pressedMouseButtons == 0 else { HubFileNamePopup.shared.dismiss(); return }
+        let area = areas.values.first { item in
+            guard let view = item.view else { return false }
+            return view.window === window && view.enabled && !view.isHiddenOrHasHiddenAncestor &&
+                view.hoverRect.contains(view.convert(event.locationInWindow, from: nil))
+        }?.view
+        let match: HubFileNameTooltip.TrackingView?
+        if let area {
+            if area.label.map({ !area.contains($0) }) ?? false { area.label = nil }
+            if area.label == nil {
+                area.label = regions.values.first { item in item.view.map { area.contains($0) } ?? false }?.view
+            }
+            match = area.label
+        } else {
+            match = regions.values.first { region in
+                guard let view = region.view else { return false }
+                return view.window === window && view.enabled && !view.isHiddenOrHasHiddenAncestor &&
+                    view.hoverRect.contains(view.convert(event.locationInWindow, from: nil))
+            }?.view
+        }
+        guard let match, match.needsHint else { HubFileNamePopup.shared.dismiss(); return }
+        if HubFileNamePopup.shared.contains(owner: match) { HubFileNamePopup.shared.move(owner: match) }
+        else { HubFileNamePopup.shared.schedule(owner: match) }
     }
 }
 
@@ -132,17 +237,7 @@ final class HubFileNamePopup {
                   let window = view.window, window.isVisible, NSApp.isActive,
                   NSEvent.pressedMouseButtons == 0 else { self.dismiss(); return }
             self.pending = nil
-            let text = NSTextField(wrappingLabelWithString: view.name)
-            text.font = .systemFont(ofSize: 12); text.textColor = .labelColor
-            let width = min(480, max(40, text.attributedStringValue.size().width))
-            let height = text.sizeThatFits(NSSize(width: width, height: .greatestFiniteMagnitude)).height
-            let background = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: width + 18, height: height + 12))
-            background.material = .popover; background.state = .active
-            background.wantsLayer = true; background.layer?.cornerRadius = 6
-            text.frame = NSRect(x: 9, y: 6, width: width, height: height)
-            background.addSubview(text)
-            self.panel.contentView = background
-            self.panel.setContentSize(background.frame.size)
+            self.prepareContent(view.name)
             self.panel.level = NSWindow.Level(rawValue: window.level.rawValue + 1)
             window.addChildWindow(self.panel, ordered: .above)
             self.position()
@@ -158,6 +253,23 @@ final class HubFileNamePopup {
             }
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.45, execute: work)
+    }
+    var contentSize: NSSize { panel.contentView?.bounds.size ?? .zero }
+    func prepareContent(_ name: String) {
+        let text = NSTextField(wrappingLabelWithString: name)
+        text.font = .systemFont(ofSize: 12); text.textColor = .labelColor
+        let width = min(480, max(40, ceil(text.attributedStringValue.size().width)))
+        let height = max(16, ceil(text.sizeThatFits(NSSize(width: width, height: .greatestFiniteMagnitude)).height))
+        let size = NSSize(width: width + 18, height: height + 12)
+        let background = NSVisualEffectView(frame: NSRect(origin: .zero, size: size))
+        background.material = .popover; background.state = .active
+        background.wantsLayer = true; background.layer?.cornerRadius = 6
+        text.frame = NSRect(x: 9, y: 6, width: width, height: height)
+        background.addSubview(text)
+        panel.contentView = background
+        // Installing a content view resizes it to the window's existing size
+        // (initially zero). Keep the measured size before that assignment.
+        panel.setContentSize(size)
     }
     func contains(owner view: HubFileNameTooltip.TrackingView) -> Bool { owner === view }
     func move(owner view: HubFileNameTooltip.TrackingView) {
@@ -175,7 +287,8 @@ final class HubFileNamePopup {
         y = min(max(y, frame.minY), max(frame.minY, frame.maxY - size.height))
         panel.setFrameOrigin(NSPoint(x: x, y: y))
     }
-    private func dismiss() {
+    func dismiss() {
+        guard owner != nil || pending != nil || monitor != nil || resignObserver != nil || panel.isVisible else { return }
         generation = UUID()
         pending?.cancel(); pending = nil
         if let monitor { NSEvent.removeMonitor(monitor) }; monitor = nil
@@ -185,6 +298,9 @@ final class HubFileNamePopup {
 }
 
 extension View {
+    func fileNameHoverArea(_ name: String, enabled: Bool = true) -> some View {
+        overlay { HubFileNameHoverArea(name: name, enabled: enabled) }
+    }
     func fileNameTooltip(_ name: String, displayName: String? = nil, fontSize: CGFloat, lines: Int = 1, enabled: Bool = true) -> some View {
         overlay { HubFileNameTooltip(name: name, displayName: displayName ?? name, fontSize: fontSize, lines: lines, enabled: enabled) }
     }
