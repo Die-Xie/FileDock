@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/filedock-icon.png" width="88" height="88" alt="FileDock icon" />
+<img src="docs/assets/filedock-icon.png" width="72" height="72" alt="FileDock icon" />
 
 # FileDock
 
@@ -8,84 +8,67 @@
 
 ### Your files, within reach.
 
-A native macOS file workspace tucked along the edge of your screen.<br />
-Open it when you need it, stage files, and preview documents as you work.
+A native macOS file workspace that opens from the notch or a screen corner.<br />
+Keep everyday folders, temporary files, document previews, and music controls close.
 
-**[Download FileDock](https://github.com/Die-Xie/FileDock/releases/latest)**　·　[User Guide (Chinese)](docs/GUIDE.md)　·　[Feedback & Issues](https://github.com/Die-Xie/FileDock/issues)
+**[Download the latest release](https://github.com/Die-Xie/FileDock/releases/latest)**　·　[User guide (Chinese)](docs/GUIDE.md)　·　[Feedback & issues](https://github.com/Die-Xie/FileDock/issues)
 
-macOS 13+　 /　 Apple Silicon & Intel　 /　 Apache 2.0
+macOS 13+　 /　 Apple Silicon & Intel　 /　 Chinese & English　 /　 Apache 2.0
 
 </div>
 
-![FileDock workspace illustration with frequently used folders, Favorites, Staging, and music controls](docs/assets/filedock-hero.png)
+![Native FileDock workspace with tabs, pinned shortcuts, and a file grid](docs/assets/showcase/workspace-en.webp)
 
-<p align="center"><sub>Illustrations use generic sample files and show the Chinese interface. The app supports English too; its appearance varies with your macOS version, theme, and layout settings.</sub></p>
+<p align="center"><sub>Rendered from the current native interface with demonstration files and a presentation background. Appearance varies with macOS and your settings.</sub></p>
 
-## Keep everyday files close
+## Less searching, more doing
 
-Reference documents for a proposal, assets for a design, or downloads waiting to be sorted—give them a place in FileDock so you can find them when you need them.
+Give project references their own tab, with separate places for inspiration and everyday files. Move into the notch, use a screen corner, or press a shortcut to open the panel. Drag it out by the header to pin it while you organize.
 
-Frequently used folders become separate tabs. Favorites keeps files from different locations together, and Recents takes you back to documents you opened recently. Arrange workspace order, icons, and view modes to suit your workflow.
+Drop folders between tabs or at either end to create workspaces. Pin Favorites, Recents, Staging, and AirDrop at the top right, arrange them to suit your routine, or hide the entries you do not need.
 
-Drag a folder from Finder or FileDock between the top tabs or to either end. Release when you see the blue insertion line and folder-plus icon to create a tab at that position. The original folder stays in place. Dragging over the center of an existing tab still switches workspaces or drops files into that workspace.
+## Collect first. Put away later.
 
-Switch instantly between Simplified Chinese and English in **Settings → General → Language**, or follow your system language.
+![Native FileDock Staging view with file references and batch copy or move controls](docs/assets/showcase/staging-en.webp)
 
-## Open it when you need it
+Gather files from several folders in **Staging**. Files, folders, and document packages can all be collected. Once you find the destination, drag them out or copy or move the batch there.
 
-Move the pointer into the notch or a configured screen corner, and the workspace opens from that location. Keyboard shortcuts can also open it at the trigger location or beside your pointer.
+**Local files are staged as references. Clearing the list does not delete the originals.** Paste files and images from the clipboard too; web images and temporary files supplied by apps are saved locally first. To send files to a nearby device, drop them onto **AirDrop**, then choose a recipient.
 
-- **Fit your screen:** choose a curved notch connection, an embedded notch layout, or one of the four screen corners.
-- **Set your timing:** adjust opening and closing delays and animation speed. Notch activation also supports clicking instead of hovering.
-- **Keep it on the desktop:** drag the panel out by an empty part of its header to pin it automatically while you organize files.
-- **Stay focused:** block automatic activation for selected apps, such as games and video players, or pause pointer activation in full screen.
-- **Drag into the notch:** optionally prevent top-edge drags from opening Mission Control only within the notch, keeping the original activation location. Requires Accessibility access.
+## See the details. Keep moving.
 
-## Collect first, organize later
+![Native FileDock column view with a document preview and playback bar](docs/assets/showcase/preview-en.webp)
 
-![Staging workflow: collect files and folders, then copy or move them to a destination folder](docs/assets/filedock-staging.png)
+Browse images in a grid, compare dates and sizes in a list, or explore folders and read documents in columns. Press Space for Quick Look or Enter to rename in place. Marquee selection, multiple-file dragging, copy and paste, and moving items to Trash follow familiar Finder conventions.
 
-Gather files from several folders, or collect downloads before moving them into a project. Drag them into **Staging**, then drag them out again or copy or move the batch to a destination. Files, folders, and document packages are supported.
+Right-click a folder to change its color label or add a symbol, emoji, or image icon. Changes appear in Finder too. The menu also includes Get Info, Compress, Duplicate, Make Alias, and Open in Terminal.
 
-**Local files are staged as references. Clearing the list does not delete the originals.** Web images and temporary files supplied by other apps are saved locally before being staged. You can hide the Staging entry at any time without losing its contents.
+Keep **QQ Music, Apple's Music app, and NetEase Cloud Music** close. Track information sits in the notch and reveals controls on hover; a pinned floating panel uses a playback bar at the bottom. Real playback progress appears only when the player provides timing data.
 
-## Browse, read, and control your music
+## Make it fit your routine
 
-![Column preview and music controls: read selected documents and reveal playback controls by hovering](docs/assets/filedock-browse-music.png)
-
-Use the grid to browse images, the list to compare dates and sizes, or columns to explore folders. Select a file to preview it beside the list; images, PDFs, and text documents can be viewed directly. Press **Space** for Quick Look.
-
-Right-click a folder to change its color label or add a symbol, emoji, or image icon. Changes also appear in Finder. The context menu includes **Get Info, Compress, Duplicate, Make Alias,** and **Open in Terminal**.
-
-Keep **QQ Music, Apple's Music app, and NetEase Cloud Music** within reach. In **Settings → Music**, select a player or let FileDock choose the one that is playing. The embedded notch layout shows track information, scrolls long titles, and reveals playback controls on hover. Other layouts use a playback bar at the bottom. Music uses macOS Automation permission; QQ Music and NetEase Cloud Music use Accessibility permission. NetEase controls and track information depend on what its native menus and windows expose.
-
-To send files to a nearby Apple device, drag them onto the **AirDrop** icon beside Favorites, or select files and click the icon. Choose a recipient in the system panel. You can also send a batch from Staging and turn the entry off in the **＋** menu or Settings.
-
-New installations use Diexie's current preferences: Liquid Glass, the embedded notch layout, instant opening and closing, and 1.3× animation speed. Music, Favorites, Staging, and launch at login are enabled; files and folders are mixed and sorted by modification date, newest first. All of these settings can be changed, and existing configurations are preserved. Defaults contain no personal paths, bookmarks, or system permissions.
-
-<sub>Preview formats depend on macOS Quick Look and installed extensions. Music connection status and reconnection controls are available in Settings → Music.</sub>
-
-## Make it fit your workflow
-
-| What you want | How FileDock helps |
+| Your routine | Your options |
 | --- | --- |
-| A desktop that feels right | Dark Liquid Glass, or a solid theme that follows light and dark appearance |
-| Easier access to frequent files | Reorder workspace tabs and pinned icons, use icon-only tabs, and keep Favorites and Staging close |
-| Direct file organization | Drag to reorder files, drag multiple selections, copy and paste, and use context menus |
-| Faster navigation | Clickable breadcrumb paths, back and forward history, and ⌘↑ / ⌘↓ navigation |
-| Control over your settings | Workspaces and preferences stay local, with configuration import and export |
+| Open quickly, put away easily | Notch hover or click, four screen corners, or global shortcuts, with continuous delay controls |
+| Make room while organizing | Drag the panel out to pin it; optionally hide it during an outgoing file drag and reopen at the trigger |
+| Stay focused in games and video | Full-screen and app restrictions, with optional temporary click activation |
+| Find files your way | Reorder tabs and pinned entries, use icon-only tabs, sort by list headers, and choose whether folders come first |
+| Match your desktop | Dark Liquid Glass or a solid theme that follows light and dark appearance |
+| Keep your own setup | Switch Chinese and English instantly; save preferences locally and import or export configuration |
 
-No account is required. Workspace configuration stays on your Mac. FileDock includes no telemetry, subscription, or account service.
+Large folders appear in batches while you remain free to switch workspaces. On a physical notch, adjust the pointer-entry threshold and optionally filter top-edge drags to avoid Mission Control conflicts.
 
-## Get started in three steps
+## Start in three steps
 
-1. **Download and install:** download `FileDock.zip` from the [latest release](https://github.com/Die-Xie/FileDock/releases/latest), extract it, and move `FileDock.app` into **Applications**.
-2. **Add your everyday folders and files:** use **＋** to add a folder workspace or a collection of file references. Checkboxes in the same menu manage Favorites, Recents, Staging, and AirDrop. Hiding Favorites or Recents removes its entry entirely instead of turning it into a regular tab. Drag the function icons at the top right to reorder them.
-3. **Choose how to open it:** select notch, corner, or keyboard activation in Settings. By default, **⌘⌥↓** opens the workspace at its trigger location, and **⌘⌥→** opens it beside your pointer. Both shortcuts can be reassigned.
+1. **Install:** download `FileDock.zip` from the [latest release](https://github.com/Die-Xie/FileDock/releases/latest), extract it, and move `FileDock.app` to Applications.
+2. **Add everyday files:** use **＋** to add folders or collections of file references and choose which shortcuts to show.
+3. **Choose how to open:** by default, **⌘⌥↓** opens at the trigger and **⌘⌥→** opens beside your pointer. Reassign them in Settings, or use the notch or a screen corner.
 
-Requires **macOS 13 or later**. Releases are universal builds for Apple Silicon and Intel. Liquid Glass uses the native effect on macOS 26 and a blurred material on earlier systems. The release is signed but **not yet notarized by Apple**. Starting with version 1.19, you can check for, download, and install updates from **Settings → About** or the menu bar. Earlier versions need a manual replacement of the same FileDock app in Applications first.
+No account is required. Workspaces and preferences stay on your Mac, and FileDock collects no usage telemetry. Releases are universal builds for Apple Silicon and Intel, signed but **not yet notarized by Apple**.
 
-For staging rules, drag and drop, keyboard shortcuts, and music setup, see the **[User Guide (Chinese) →](docs/GUIDE.md)**.
+Liquid Glass uses the native effect on macOS 26 and blurred material on earlier systems. Connect players and manage permissions in Settings → Music; available information depends on the client. Preview formats depend on macOS Quick Look and installed extensions. Check for and install updates in Settings → About.
+
+**[Read the full user guide (Chinese) →](docs/GUIDE.md)**
 
 <details>
 <summary>Development, builds, and releases</summary>
