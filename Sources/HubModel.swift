@@ -1573,6 +1573,17 @@ enum HubFileOperations {
         }
     }
 
+    /// Native footer drops only assign metadata. Revalidate at release so a
+    /// disabled setting, busy operation or invalid batch cannot mutate files.
+    @discardableResult func applyDroppedColorLabel(_ value: Int, urls: [URL]) -> Bool {
+        guard settings.resolvedColorLabelFilterEnabled, HubFinderLabel(rawValue: value) != nil,
+              !stagingTransferInProgress, !sharingInProgress, fileOperationsInProgress == 0 else { return false }
+        do { _ = try HubFinderFileActions.files(urls) }
+        catch { errorMessage = error.localizedDescription; return false }
+        performFinderAction(.label(value), urls: urls)
+        return true
+    }
+
     func performFinderAction(_ action: HubFinderAction, urls: [URL]) {
         let files: [URL]
         do { files = try HubFinderFileActions.files(urls) }

@@ -4,12 +4,16 @@ import Foundation
 
 enum HubLocalizationCatalog {
     static let english: [String: String] = [
+        "{0}：悬停筛选，拖入文件设置标签": "{0}: hover to filter, drop files to set their label",
+        "将文件拖到颜色上松开以设置访达颜色标签；拖到“无颜色”可移除颜色。原文件位置不变。": "Drop files on a color to set their Finder color label, or on No Color to remove it. Files stay in place.",
+        "设置颜色标签": "Set Color Label",
+        "松开以设置 {0} 项的颜色标签：{1}": "Release to set the color label of {0} items: {1}",
         "全部": "All",
         "显示全部颜色标签": "Show All Color Labels",
         "筛选：{0}": "Filter: {0}",
         "颜色标签筛选": "Color Label Filter",
         "显示颜色标签筛选": "Show Color Label Filter",
-        "在底部按访达颜色标签筛选，可与名称搜索叠加。切换位置或关闭此功能会清除筛选。": "Filter by Finder color labels in the footer and combine with name search. Changing location or disabling this feature clears the filter.",
+        "点按或悬停颜色可筛选，并可与名称搜索叠加。切换位置或关闭此功能会清除筛选。": "Click or hover over a color to filter and combine it with name search. Changing location or disabling this feature clears the filter.",
         "清除颜色筛选": "Clear Color Filter",
         "试试其他颜色，或清除颜色筛选。": "Try another color or clear the color filter.",
         "白名单中的应用即使全屏也允许正常鼠标触发；未加入的应用继续遵守现有规则。": "Allowed apps can use normal pointer activation even in full screen. Unlisted apps continue to follow the existing rules.",
@@ -88,7 +92,7 @@ enum HubLocalizationCatalog {
         "未完成": "Incomplete",
         " · {0} 显示 / 隐藏": " · {0} Show / Hide",
         " 文件": " File",
-        "0 ms 关闭普通悬停切换；拖着文件时仍可悬停跳转。": "0 ms disables ordinary hover switching. File drags can still hover to switch.",
+        "工作区与颜色筛选共用此延迟。0 ms 关闭普通悬停选择；点击筛选和文件拖放仍可使用。": "Workspaces and color filters share this delay. 0 ms disables ordinary hover selection; click filtering and file drops remain available.",
         "0 ms 表示立即展开；点按呼出时不使用此延迟。": "0 ms opens immediately. Click activation does not use this delay.",
         "AirDrop · 拖入文件，或先选择文件后点按": "AirDrop · Drop files, or select files before clicking",
         "AirDrop 仅支持本机文件和文件夹，请先将链接内容保存为文件。": "AirDrop supports local files and folders. Save linked content as a file first.",

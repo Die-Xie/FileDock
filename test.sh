@@ -43,11 +43,11 @@ swiftc -swift-version 5 Sources/Localization.swift Sources/LocalizationCatalog.s
     -framework AppKit -framework Carbon -framework Combine -framework UniformTypeIdentifiers
 .build/file-appearance-tests
 swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
-    Sources/Localization.swift Sources/LocalizationCatalog.swift Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/WorkspaceShortcutOrder.swift Sources/HubModel.swift Sources/FolderWorkspacePreparation.swift Sources/FinderFileActions.swift Sources/FolderArtwork.swift Sources/DirectoryLoader.swift Tests/ModelTestSupport.swift Tests/ColorLabelFilterTests.swift -o .build/color-label-filter-tests \
-    -framework AppKit -framework Carbon -framework Combine -framework UniformTypeIdentifiers
+    Sources/Localization.swift Sources/LocalizationCatalog.swift Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/WorkspaceShortcutOrder.swift Sources/HubModel.swift Sources/FolderWorkspacePreparation.swift Sources/FinderFileActions.swift Sources/FolderArtwork.swift Sources/DirectoryLoader.swift Sources/InterfaceMotion.swift Sources/ColorLabelFilter.swift Sources/FileDropFeedback.swift Sources/WorkspaceTabInsertion.swift Tests/ModelTestSupport.swift Tests/ColorLabelFilterTests.swift -o .build/color-label-filter-tests \
+    -framework AppKit -framework Carbon -framework Combine -framework SwiftUI -framework UniformTypeIdentifiers
 .build/color-label-filter-tests
 swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
-    Sources/Localization.swift Sources/LocalizationCatalog.swift Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/WorkspaceShortcutOrder.swift Sources/HubModel.swift Sources/FolderWorkspacePreparation.swift Sources/FinderFileActions.swift Sources/FolderArtwork.swift Sources/DirectoryLoader.swift Sources/ColorLabelFilter.swift Tests/ColorLabelFilterLayoutTests.swift -o .build/color-label-filter-layout-tests \
+    Sources/Localization.swift Sources/LocalizationCatalog.swift Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/WorkspaceShortcutOrder.swift Sources/HubModel.swift Sources/FolderWorkspacePreparation.swift Sources/FinderFileActions.swift Sources/FolderArtwork.swift Sources/DirectoryLoader.swift Sources/InterfaceMotion.swift Sources/ColorLabelFilter.swift Sources/FileDropFeedback.swift Sources/WorkspaceTabInsertion.swift Tests/ColorLabelFilterLayoutTests.swift -o .build/color-label-filter-layout-tests \
     -framework AppKit -framework Carbon -framework Combine -framework SwiftUI -framework UniformTypeIdentifiers
 .build/color-label-filter-layout-tests
 swiftc -swift-version 5 Sources/Localization.swift Sources/LocalizationCatalog.swift -parse-as-library -module-cache-path .build/module-cache \
@@ -227,6 +227,12 @@ swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache
 .build/filename-tooltip-tests
 TASK_VIEW_TEST_SOURCES=(Sources/*.swift)
 TASK_VIEW_TEST_SOURCES=("${TASK_VIEW_TEST_SOURCES[@]:#Sources/AppMain.swift}")
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache "${TASK_VIEW_TEST_SOURCES[@]}" \
+    Tests/ModelTestSupport.swift Tests/ColorLabelDropTests.swift -o .build/color-label-drop-tests \
+    -framework AppKit -framework SwiftUI -framework Combine -framework Carbon -framework Quartz \
+    -framework QuickLookThumbnailing -framework ImageIO -framework ServiceManagement -framework UniformTypeIdentifiers -framework ApplicationServices \
+    -F "$TASK_SPARKLE" -framework Sparkle -Xlinker -rpath -Xlinker "$TASK_SPARKLE"
+.build/color-label-drop-tests
 swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache "${TASK_VIEW_TEST_SOURCES[@]}" \
     Tests/ModelTestSupport.swift Tests/InlineRenameTests.swift -o .build/inline-rename-tests \
     -framework AppKit -framework SwiftUI -framework Combine -framework Carbon -framework Quartz \

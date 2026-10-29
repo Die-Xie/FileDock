@@ -4,7 +4,7 @@ import SwiftUI
 /// Clip scrolled tabs to their own viewport so hidden tabs cannot accept a drop.
 enum HubFileDropRegion: Hashable {
     case content, workspace(UUID), staging, airDrop, item(URL), tabViewport(UUID)
-    case header, headerControls, headerMusic
+    case header, headerControls, headerMusic, colorLabel(Int)
 
     func visibleFrame(in regions: [Self: CGRect]) -> CGRect {
         let frame = regions[self] ?? .zero
@@ -19,7 +19,7 @@ enum HubFileDropRegion: Hashable {
         // Header destinations take priority over the content only at boundaries.
         for region in regions.keys {
             switch region {
-            case .workspace, .staging:
+            case .workspace, .staging, .colorLabel:
                 if region.visibleFrame(in: regions).contains(point) { return region }
             default: break
             }
@@ -36,7 +36,7 @@ struct HubFileDropRegionKey: PreferenceKey {
 }
 
 struct HubFileDropPlan {
-    enum Action { case move, copy, reference, reorder, airDrop, createWorkspace }
+    enum Action { case move, copy, reference, reorder, airDrop, createWorkspace, colorLabel }
     var workspaceID: UUID?
     var directory: URL?
     var item: URL?
@@ -61,6 +61,7 @@ struct HubFileDropFeedback: Equatable {
         case .reorder: return L("调整顺序")
         case .airDrop: return L("通过 AirDrop 发送")
         case .createWorkspace: return L("创建标签")
+        case .colorLabel: return L("设置颜色标签")
         }
     }
     private var symbol: String {
@@ -71,10 +72,12 @@ struct HubFileDropFeedback: Equatable {
         case .reorder: return "arrow.up.arrow.down"
         case .airDrop: return "airplayaudio"
         case .createWorkspace: return "folder.badge.plus"
+        case .colorLabel: return "tag"
         }
     }
     var prompt: String {
         if action == .createWorkspace { return L("松开以将文件夹添加为标签 · 数量：\(count)") }
+        if action == .colorLabel { return L("松开以设置 \(count) 项的颜色标签：\(title)") }
         return action == .airDrop ? L("松开以通过 AirDrop 发送 \(count) 项") : L("松开以\(verb) \(count) 项 · \(title)")
     }
     func overlay(in size: CGSize) -> some View {

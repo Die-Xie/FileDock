@@ -839,6 +839,7 @@ struct HubView: View {
                 guard let region = HubFileDropRegion.at(point, in: regions),
                       let plan = fileDropPlan(region: region, point: point, frames: frames, content: regions[.content] ?? .zero, order: order, payload: payload, copy: copy, urls: urls) else { return false }
                 if plan.action == .airDrop { return queueAirDropFiles(urls) }
+                if case .colorLabel(let label) = region { return model.applyDroppedColorLabel(label, urls: urls) }
                 if plan.action == .reorder { model.reorderEntries(urls, before: plan.slot?.before); return true }
                 if region == .staging { return model.stageFiles(urls) }
                 let accepted = model.acceptFileDrop(urls, workspaceID: plan.workspaceID, directory: plan.directory, copy: copy,
@@ -888,6 +889,10 @@ struct HubView: View {
     private func fileDropPlan(region: HubFileDropRegion, point: CGPoint, frames: [URL: CGRect], content: CGRect, order: [URL],
                               payload: HubFileDragPayload?, copy: Bool, urls: [URL]) -> HubFileDropPlan? {
         switch region {
+        case .colorLabel(let value):
+            guard canReceiveColorLabelDrop, let label = HubFinderLabel(rawValue: value),
+                  !urls.isEmpty, urls.count <= 1000 else { return nil }
+            return HubFileDropPlan(workspaceID: nil, directory: nil, item: nil, title: label.name, action: .colorLabel)
         case .airDrop:
             return HubFileDropPlan.airDrop(urls: urls, allowed: presentation.previewVisible && canReceiveAirDrop)
         case .workspace(let id):
@@ -1236,7 +1241,12 @@ struct HubView: View {
         HStack(spacing: 10) {
             iconButton("arrow.up", L("上一级"), disabled: !model.canGoUp) { model.goUp() }
             if model.settings.resolvedColorLabelFilterEnabled {
-                HubColorLabelFilterBar(selection: model.colorLabelFilter, onSelect: model.setColorLabelFilter)
+                HubColorLabelFilterBar(selection: model.colorLabelFilter, onSelect: model.setColorLabelFilter,
+                    hoverDelay: model.settings.switchDelay,
+                    hoverEnabled: presentation.previewVisible && !presentation.defersFileRendering && !presentation.windowMoving &&
+                        !presentation.layoutChanging && !presentation.surfaceAnimating && renameEntry == nil,
+                    canHover: { !HubFileDragState.isDragging && !HubWorkspaceDragState.isDragging &&
+                        NSEvent.pressedMouseButtons == 0 && NSApp.modalWindow == nil })
                     .disabled(model.selectedWorkspace == nil)
             }
             Spacer(minLength: 6)
@@ -1245,6 +1255,11 @@ struct HubView: View {
             Button { model.pinned.toggle() } label: { Image(systemName: model.pinned ? "pin.fill" : "pin").foregroundStyle(model.pinned ? Color.accentColor : Color.secondary).frame(width: 24, height: 23) }.buttonStyle(.plain).help(model.pinned ? L("取消固定") : L("固定窗口"))
             iconButton("gearshape", L("设置")) { onSettings() }
         }.padding(.horizontal, 13).padding(.vertical, 7)
+    }
+
+    private var canReceiveColorLabelDrop: Bool {
+        model.settings.resolvedColorLabelFilterEnabled && model.selectedWorkspace != nil && !model.stagingTransferInProgress &&
+            !model.sharingInProgress && model.fileOperationsInProgress == 0 && !HubImportActivity.isBusy
     }
 
     @ViewBuilder private var backgroundMenu: some View {

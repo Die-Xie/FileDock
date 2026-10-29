@@ -82,6 +82,8 @@ The following technical documents and most earlier release notes are currently i
 - [Code quality and performance review](docs/QUALITY_REVIEW.md)
 - [Release notes](docs/releases/)
 
+**1.33.0** expands color-button hit areas and adds hover filtering and drag-to-label without moving files. [Release notes](docs/releases/v1.33.0.md).
+
 **1.32.0** adds optional footer filtering by Finder color labels, combines it with name search, and removes the repeated footer path. [Release notes](docs/releases/v1.32.0.md).
 
 **1.31.2** switches directly to the settled hover destination and improves continuous selection motion. [Release notes](docs/releases/v1.31.2.md).

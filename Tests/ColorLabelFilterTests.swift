@@ -83,6 +83,16 @@ import Foundation
         object.removeValue(forKey: "colorLabelFilterEnabled")
         let legacy = try JSONDecoder().decode(HubSettings.self, from: JSONSerialization.data(withJSONObject: object))
         precondition(legacy.resolvedColorLabelFilterEnabled, "Older settings must decode without requiring a new field")
+        var input = HubColorLabelFilterInput()
+        input.hovered(.red)
+        precondition(input.click(.red, current: .red) == .red, "A first click after hover confirms instead of unexpectedly clearing the filter")
+        precondition(!input.permitsHover(.red))
+        precondition(input.click(.red, current: .red) == nil)
+        precondition(!input.permitsHover(.red), "Hover cannot immediately undo a deliberate clear")
+        input.exit(.red)
+        precondition(input.permitsHover(.red))
+        precondition(input.click(.blue, current: .red) == .blue)
+        precondition(input.click(nil, current: .blue) == nil)
         print("PASS: native Finder colors, all three views, combined search, cached ordering, selection pruning, filtered reorder, navigation/workspace reset, references, transient state and persisted/legacy feature toggle")
     }
 }
