@@ -1,11 +1,13 @@
 import AppKit
 import QuartzCore
 
-/// A fixed dark, passive native material behind the hosted browser. The parent
-/// owns the animated reveal mask, so glass never moves or scales file content.
+/// A passive native material behind the hosted browser. It inherits the window
+/// appearance; the parent owns the reveal mask and leaves file content static.
 @MainActor
 final class HubGlassMaterialView: NSView {
     enum RenderingMode { case hidden, solid, nativeGlass, visualEffect }
+    private static let lightTint = NSColor(calibratedWhite: 0.72, alpha: 0.22)
+    private static let lightOpaque = NSColor(calibratedWhite: 0.88, alpha: 1)
     private(set) var renderingMode: RenderingMode = .hidden
     private var material: NSView?
     private var cornerRadius: CGFloat = 21
@@ -20,7 +22,6 @@ final class HubGlassMaterialView: NSView {
         super.init(frame: frameRect)
         wantsLayer = true
         layer?.masksToBounds = true
-        appearance = NSAppearance(named: .darkAqua)
         isHidden = true
         setAccessibilityElement(false)
         setAccessibilityHidden(true)
@@ -31,9 +32,6 @@ final class HubGlassMaterialView: NSView {
     func configure(enabled: Bool, cornerRadius: CGFloat = 21, topExtension: CGFloat = 0,
                    bottomExtension: CGFloat = 0,
                    reduceTransparency: Bool = NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency) {
-        // Glass keeps its Control Center-like dark appearance independently of
-        // the system and the appearance preference used by the solid theme.
-        if appearance?.name != .darkAqua { appearance = NSAppearance(named: .darkAqua) }
         self.cornerRadius = cornerRadius.isFinite ? max(0, cornerRadius) : 21
         self.topExtension = topExtension.isFinite ? max(0, min(64, topExtension)) : 0
         self.bottomExtension = bottomExtension.isFinite ? max(0, min(64, bottomExtension)) : 0
@@ -105,7 +103,9 @@ final class HubGlassMaterialView: NSView {
         CATransaction.setDisableActions(true)
         if renderingMode == .solid {
             effectiveAppearance.performAsCurrentDrawingAppearance {
-                layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+                // Keep the accessible light fallback soft rather than pure
+                // white. Text inherits the same window appearance as the glass.
+                layer?.backgroundColor = isDark ? NSColor.windowBackgroundColor.cgColor : Self.lightOpaque.cgColor
             }
         } else { layer?.backgroundColor = NSColor.clear.cgColor }
         CATransaction.commit()
@@ -113,10 +113,16 @@ final class HubGlassMaterialView: NSView {
 
     private func updateMaterialAppearance() {
         if #available(macOS 26.0, *), let glass = material as? NSGlassEffectView {
-            // Keep the native dark glass and full content opacity; tinting or
-            // fading the entire view would also wash out file text and previews.
+            // Tint only the material in light mode to soften its native white.
+            // The hosted browser stays separate and fully opaque.
             if glass.style != .regular { glass.style = .regular }
-            if glass.tintColor != nil { glass.tintColor = nil }
+            let tint: NSColor? = isDark ? nil : Self.lightTint
+            if glass.tintColor != tint { glass.tintColor = tint }
+        } else if let blur = material as? NSVisualEffectView {
+            let desired: NSVisualEffectView.Material = isDark ? .hudWindow : .popover
+            if blur.material != desired { blur.material = desired }
         }
     }
+
+    private var isDark: Bool { effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua }
 }

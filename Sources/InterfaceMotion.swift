@@ -55,9 +55,11 @@ struct HubWorkspaceHoverDwell {
     private var deadline: TimeInterval = 0
 
     mutating func update(target: UUID, pointer: CGPoint, now: TimeInterval, delay: TimeInterval) -> Ticket? {
-        guard pointer.x.isFinite, pointer.y.isFinite, now.isFinite, delay.isFinite, delay > 0 else { cancel(); return nil }
+        guard pointer.x.isFinite, pointer.y.isFinite, now.isFinite, delay.isFinite, delay >= 0 else { cancel(); return nil }
         guard self.target != target || hypot(pointer.x - point.x, pointer.y - point.y) >= 1.5 else { return nil }
-        let nextDeadline = now + max(Self.quietInterval, min(2, delay))
+        // Zero means immediate, but still queue the selection until the next
+        // main-loop turn so newer targets can replace a pending callback.
+        let nextDeadline = now + (delay == 0 ? 0 : max(Self.quietInterval, min(2, delay)))
         guard nextDeadline.isFinite else { cancel(); return nil }
         self.target = target; point = pointer; generation &+= 1
         deadline = nextDeadline

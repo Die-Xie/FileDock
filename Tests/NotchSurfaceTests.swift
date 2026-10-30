@@ -122,7 +122,7 @@ struct NotchSurfaceTests {
         testEmbeddedSurface()
         testGlassMaterial()
 
-        print("PASS: continuous connection curves, no inward/outward bulges, animation-speed limits, static content, zero-frame reversal, reduced motion, window-shadow lifecycle, passive fixed dark glass")
+        print("PASS: continuous connection curves, no inward/outward bulges, animation-speed limits, static content, zero-frame reversal, reduced motion, window-shadow lifecycle, passive adaptive glass")
         print("LIMIT: offscreen layers do not establish rendered spring smoothness, display timing, or physical-notch alignment")
     }
 
@@ -132,7 +132,11 @@ struct NotchSurfaceTests {
 
     @MainActor private static func testGlassMaterial() {
         let parent = NSView(frame: NSRect(x: 0, y: 0, width: 700, height: 400))
-        parent.appearance = NSAppearance(named: .aqua)
+        let window = NSWindow(contentRect: parent.frame, styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.appearance = NSAppearance(named: .aqua)
+        window.contentView = parent
+        defer { window.contentView = nil; window.close() }
         let material = HubGlassMaterialView(frame: NSRect(x: 0, y: 0, width: 700, height: 400))
         parent.addSubview(material)
         material.configure(enabled: true, topExtension: 24, reduceTransparency: false)
@@ -147,41 +151,48 @@ struct NotchSurfaceTests {
             expect(material.renderingMode == .nativeGlass && material.subviews[0] is NSGlassEffectView,
                    "macOS 26 must use the system's native Liquid Glass")
             let native = material.subviews[0] as! NSGlassEffectView
-            expect(native.style == .regular && native.tintColor == nil && native.cornerRadius == 21 && native.contentView != nil &&
-                   native.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua,
-                   "A light parent must still show fixed dark regular glass, using the supported content slot")
-            parent.appearance = NSAppearance(named: .darkAqua)
+            expect(native.style == .regular && native.tintColor != nil && native.cornerRadius == 21 && native.contentView != nil &&
+                   native.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .aqua,
+                   "A light parent must show softly tinted native light glass, using the supported content slot")
+            window.appearance = NSAppearance(named: .darkAqua)
+            drainMainRunLoop(for: 0.05)
             expect(native.style == .regular && native.tintColor == nil &&
                    native.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua,
-                   "Changing the parent appearance must preserve the fixed dark glass without reconfiguration")
-            parent.appearance = NSAppearance(named: .aqua)
-            expect(native.style == .regular && native.tintColor == nil && material.alphaValue == 1 && native.alphaValue == 1 &&
-                   native.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua,
-                   "Returning the parent to light mode must preserve dark glass without fading content")
+                   "Changing the parent to dark must update the same native glass without reconfiguration")
+            window.appearance = NSAppearance(named: .aqua)
+            drainMainRunLoop(for: 0.05)
+            expect(native.style == .regular && native.tintColor != nil && material.alphaValue == 1 && native.alphaValue == 1 &&
+                   native.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .aqua,
+                   "Returning to light must restore the soft tint without fading content")
         } else {
             expect(material.renderingMode == .visualEffect && material.subviews[0] is NSVisualEffectView,
                    "Earlier macOS must use its supported native visual material")
             let native = material.subviews[0] as! NSVisualEffectView
-            expect(native.material == .hudWindow && native.blendingMode == .behindWindow && native.state == .active &&
-                   native.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua,
-                   "The compatibility material must also stay dark and blend with windows behind this panel")
+            expect(native.material == .popover && native.blendingMode == .behindWindow && native.state == .active &&
+                   native.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .aqua,
+                   "The compatibility material must support a light parent and blend with windows behind the panel")
+            window.appearance = NSAppearance(named: .darkAqua)
+            drainMainRunLoop(for: 0.05)
+            expect(native.material == .hudWindow && native.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua,
+                   "Compatibility material must follow a dark appearance")
         }
         let nativeMaterial = material.subviews[0]
-        parent.appearance = NSAppearance(named: .aqua)
+        window.appearance = NSAppearance(named: .aqua)
         material.configure(enabled: true, reduceTransparency: true)
         let light = NSColor(cgColor: material.layer!.backgroundColor!)!.usingColorSpace(.sRGB)!
         expect(material.renderingMode == .solid && material.isOpaque && nativeMaterial.isHidden && light.alphaComponent == 1,
                "Reduce Transparency must replace glass with a readable, fully opaque semantic color")
-        parent.appearance = NSAppearance(named: .darkAqua)
+        window.appearance = NSAppearance(named: .darkAqua)
         material.configure(enabled: true, reduceTransparency: true)
         let dark = NSColor(cgColor: material.layer!.backgroundColor!)!.usingColorSpace(.sRGB)!
-        expect(light == dark && dark.redComponent + dark.greenComponent + dark.blueComponent < 1,
-               "Reduced-transparency fallback must remain an opaque dark semantic color when its parent's appearance changes")
+        expect(light != dark && light.redComponent < 0.93 && light.redComponent > 0.75 &&
+               dark.redComponent + dark.greenComponent + dark.blueComponent < 1,
+               "Reduced-transparency fallback must track both appearances with a soft, readable light fill")
         material.configure(enabled: true, reduceTransparency: false)
         expect(nativeMaterial === material.subviews[0] && !nativeMaterial.isHidden && material.layer?.backgroundColor?.alpha == 0,
                "Restoring transparency must reuse the native material and remove the accessibility fill")
         expect(nativeMaterial.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua,
-               "Restored native glass must retain the fixed dark appearance")
+               "Restored native glass must inherit the current dark appearance")
         material.configure(enabled: false, reduceTransparency: false)
         expect(material.isHidden && nativeMaterial.isHidden && material.renderingMode == .hidden,
                "Disabling glass must stop rendering its native material")
@@ -223,6 +234,59 @@ struct NotchSurfaceTests {
         let colors = gradient?.colors as? [CGColor]
         expect(colors?.first?.alpha == 0 && colors?.last?.alpha == 1,
                "Glass should transition continuously from transparent material to the physical black notch")
+        let bodyWindow = NSWindow(contentRect: surface.frame, styleMask: .borderless, backing: .buffered, defer: false)
+        let bridgeWindow = NSWindow(contentRect: bridge.frame, styleMask: .borderless, backing: .buffered, defer: false)
+        bodyWindow.isReleasedWhenClosed = false; bridgeWindow.isReleasedWhenClosed = false
+        let previousApplicationAppearance = NSApp.appearance
+        defer {
+            NSApp.appearance = previousApplicationAppearance
+            bodyWindow.contentView = nil; bridgeWindow.contentView = nil
+            bodyWindow.close(); bridgeWindow.close()
+        }
+        bodyWindow.contentView = surface; bridgeWindow.contentView = bridge
+        surface.layoutSubtreeIfNeeded(); bridge.layoutSubtreeIfNeeded()
+        glass.configure(enabled: true, reduceTransparency: false)
+        bridgeGlass.configure(enabled: true, cornerRadius: 0, topExtension: 24, bottomExtension: 24, reduceTransparency: false)
+        let bodyMaterial = glass.subviews.first!, bridgeMaterial = bridgeGlass.subviews.first!
+        let bodyMask = surface.layer?.mask, bridgeMask = bridge.layer?.mask
+        var appearancePhase = "explicit"
+        func assertMatchingAppearance(_ appearance: NSAppearance.Name) {
+            let bodyAppearance = glass.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua])
+            let bridgeAppearance = bridgeGlass.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua])
+            expect(bodyAppearance == appearance && bridgeAppearance == appearance,
+                   "\(appearancePhase): wanted \(appearance); body \(String(describing: bodyAppearance)), bridge \(String(describing: bridgeAppearance)), app \(NSApp.effectiveAppearance.name), body window \(bodyWindow.effectiveAppearance.name), surface \(surface.effectiveAppearance.name), bridge window \(bridgeWindow.effectiveAppearance.name)")
+            expect(glass.subviews.first === bodyMaterial && bridgeGlass.subviews.first === bridgeMaterial &&
+                   surface.layer?.mask === bodyMask && bridge.layer?.mask === bridgeMask,
+                   "Appearance changes must reuse material and contour layers without disturbing a reveal")
+            if #available(macOS 26.0, *), let body = bodyMaterial as? NSGlassEffectView,
+               let connection = bridgeMaterial as? NSGlassEffectView {
+                expect(body.tintColor == connection.tintColor && (body.tintColor == nil) == (appearance == .darkAqua),
+                       "Body and bridge must use the same native tint in each appearance")
+            } else if let body = bodyMaterial as? NSVisualEffectView, let connection = bridgeMaterial as? NSVisualEffectView {
+                expect(body.material == connection.material && body.material == (appearance == .darkAqua ? .hudWindow : .popover),
+                       "Body and bridge must use the same compatibility material in each appearance")
+            }
+        }
+        for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+            bodyWindow.appearance = NSAppearance(named: appearance)
+            bridgeWindow.appearance = NSAppearance(named: appearance)
+            drainMainRunLoop(for: 0.05)
+            assertMatchingAppearance(appearance)
+        }
+        // nil is the app's follow-system setting. AppKit may defer app-level
+        // appearance propagation to hidden windows, so compare the actual
+        // window appearances rather than assuming a synthetic app change is a
+        // faithful substitute for a physical system theme change.
+        bodyWindow.appearance = nil; bridgeWindow.appearance = nil
+        appearancePhase = "inherited window appearance"
+        for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+            NSApp.appearance = NSAppearance(named: appearance)
+            drainMainRunLoop(for: 0.05)
+            let effective = bodyWindow.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua])!
+            expect(bridgeWindow.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == effective,
+                   "System-following body and bridge windows must resolve to the same effective appearance")
+            assertMatchingAppearance(effective)
+        }
         bridge.configure(sourceWidth: 200, bodyColor: .black, reduceMotion: false, liquidGlass: false)
         expect(bridgeGlass.isHidden && bridge.containsVisiblePoint(NSPoint(x: 400, y: 10)),
                "Disabling glass must preserve the existing bridge contour and hit region")

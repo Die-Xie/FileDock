@@ -77,10 +77,17 @@ struct HubSettingsView: View {
                     commitInteractionEdits()
                     NSApp.terminate(nil)
                 } label: {
-                    Label(L("退出 FileDock"), systemImage: "power")
+                    HStack(spacing: 9) {
+                        Image(systemName: "power").frame(width: 16)
+                            // Align the glyph with the sidebar icon column.
+                            .offset(x: -1.5).accessibilityHidden(true)
+                        Text(L("退出 FileDock"))
+                    }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.vertical, 7)
-                }.buttonStyle(.plain).padding(.horizontal, 18).padding(.bottom, 14)
+                        .contentShape(Rectangle())
+                }.buttonStyle(.plain).padding(.horizontal, 22).padding(.bottom, 14)
+                    .accessibilityLabel(L("退出 FileDock"))
                     .accessibilityIdentifier("filedock.settings.quit")
                     .help(L("退出应用；进行中的文件传输完成后退出"))
             }.frame(width: 166)
@@ -206,11 +213,19 @@ struct HubSettingsView: View {
                                 else { commitInteractionEdits() }
                             })
                 Divider()
+                Toggle(L("启用悬停切换"), isOn: Binding(
+                    get: { model.settings.resolvedHoverSwitchingEnabled },
+                    set: { enabled in
+                        if let draft = switchDelayDraft { model.settings.switchDelay = draft; switchDelayDraft = nil }
+                        model.settings.hoverSwitchingEnabled = enabled
+                    }))
+                    .accessibilityIdentifier("filedock.settings.hover-switching")
                 delayEditor(L("悬停切换工作区"), value: Binding(get: { switchDelay.wrappedValue * 1000 }, set: { switchDelay.wrappedValue = $0 / 1000 }), range: 0...1500,
-                            detail: L("工作区与颜色筛选共用此延迟。0 ms 关闭普通悬停选择；点击筛选和文件拖放仍可使用。"), onEditingChanged: { editing in
+                            detail: L("工作区和颜色筛选共用此延迟。0 ms 立即切换；非零值至少等待 50 ms 以避免误切。关闭后可点击，拖动仍可悬停跳转。"), onEditingChanged: { editing in
                                 if editing { switchDelayDraft = model.settings.switchDelay }
                                 else { commitInteractionEdits() }
                             })
+                    .disabled(!model.settings.resolvedHoverSwitchingEnabled)
             }
             section(L("全屏与应用限制")) {
                 Toggle(L("全屏时限制自动展开"), isOn: Binding(get: { model.settings.resolvedSuppressHoverInFullScreen }, set: { model.settings.suppressHoverInFullScreen = $0 }))
@@ -318,7 +333,13 @@ struct HubSettingsView: View {
                     }.pickerStyle(.segmented).labelsHidden().frame(width: 240)
                 }
                 if model.settings.resolvedBackgroundTheme == "liquidGlass" {
-                    Text(L("深色半透明玻璃，柔和模糊与边缘高光，不随系统明暗切换。macOS 26 使用原生玻璃，较早系统使用毛玻璃。"))
+                    settingsRow(L("外观")) {
+                        Picker(L("外观"), selection: Binding(get: { model.settings.resolvedGlassAppearance }, set: { model.settings.glassAppearance = $0 })) {
+                            Text(L("跟随系统")).tag("system"); Text(L("浅色")).tag("light"); Text(L("深色")).tag("dark")
+                        }.pickerStyle(.segmented).labelsHidden().frame(width: 240)
+                            .accessibilityIdentifier("filedock.settings.glass-appearance")
+                    }
+                    Text(L("macOS 26 使用原生玻璃，较早系统使用毛玻璃。"))
                         .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
                 if model.settings.resolvedBackgroundTheme == "solid" {

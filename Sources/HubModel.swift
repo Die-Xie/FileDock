@@ -64,6 +64,9 @@ struct HubSettings: Codable, Equatable {
     var resolvedLanguage: HubLanguage { language.flatMap(HubLanguage.init(rawValue:)) ?? .simplifiedChinese }
     var appearance: String = "system"
     var backgroundTheme: String? = "liquidGlass"
+    // Existing configurations used fixed dark glass, independently of the
+    // solid theme. Missing/invalid values keep that appearance on upgrade.
+    var glassAppearance: String? = "dark"
     var fontSize: Double = 13
     var iconSize: Double = 46
     var horizontalScroll = false
@@ -101,6 +104,10 @@ struct HubSettings: Codable, Equatable {
     var colorLabelFilterEnabled: Bool? = true
     var resolvedColorLabelFilterEnabled: Bool { colorLabelFilterEnabled ?? true }
     var switchDelay: Double = 0.1
+    // Before this field existed, zero delay disabled ordinary hover selection.
+    // normalize() captures that old intent once, independently of later edits.
+    var hoverSwitchingEnabled: Bool? = true
+    var resolvedHoverSwitchingEnabled: Bool { hoverSwitchingEnabled ?? (switchDelay.isFinite && switchDelay > 0) }
     var triggerMode: String = "both"
     var hotCorner: String = "notch"
     var secondaryScreens = true
@@ -113,7 +120,11 @@ struct HubSettings: Codable, Equatable {
 
     var resolvedGlobalShortcuts: HubGlobalShortcuts { globalShortcuts ?? .defaults }
     var resolvedBackgroundTheme: String { backgroundTheme == "liquidGlass" ? "liquidGlass" : "solid" }
-    var resolvedAppearance: String { resolvedBackgroundTheme == "liquidGlass" ? "dark" : appearance }
+    var resolvedGlassAppearance: String {
+        guard let glassAppearance, ["system", "dark", "light"].contains(glassAppearance) else { return "dark" }
+        return glassAppearance
+    }
+    var resolvedAppearance: String { resolvedBackgroundTheme == "liquidGlass" ? resolvedGlassAppearance : appearance }
     var resolvedAnimationSpeed: Double {
         let value = animationSpeed ?? 1
         return value.isFinite ? min(2, max(0.5, value)) : 1
@@ -149,12 +160,14 @@ struct HubSettings: Codable, Equatable {
         if shortcutOrder != nil { shortcutOrder = resolvedShortcutOrder.map(\.rawValue) }
         if !["system", "dark", "light"].contains(appearance) { appearance = "dark" }
         if backgroundTheme != nil { backgroundTheme = resolvedBackgroundTheme }
+        if glassAppearance != nil { glassAppearance = resolvedGlassAppearance }
         if !["both", "hover", "keyboard"].contains(triggerMode) { triggerMode = "both" }
         if !["notch", "topLeft", "topRight", "bottomLeft", "bottomRight"].contains(hotCorner) { hotCorner = "notch" }
         fontSize = min(22, max(10, fontSize.isFinite ? fontSize : 13))
         iconSize = min(100, max(24, iconSize.isFinite ? iconSize : 46))
         hoverDelay = min(3, max(0, hoverDelay.isFinite ? hoverDelay : 0.12))
         switchDelay = min(2, max(0, switchDelay.isFinite ? switchDelay : 0.2))
+        if hoverSwitchingEnabled == nil { hoverSwitchingEnabled = switchDelay > 0 }
         width = min(2000, max(540, width.isFinite ? width : 900))
         height = min(1400, max(300, height.isFinite ? height : 480))
         if animationSpeed != nil { animationSpeed = resolvedAnimationSpeed }

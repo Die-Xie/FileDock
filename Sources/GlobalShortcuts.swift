@@ -19,14 +19,16 @@ struct HubShortcut: Codable, Equatable {
         return nil
     }
 
-    var displayString: String {
-        var text = ""
-        if modifiers & UInt32(controlKey) != 0 { text += "⌃" }
-        if modifiers & UInt32(optionKey) != 0 { text += "⌥" }
-        if modifiers & UInt32(shiftKey) != 0 { text += "⇧" }
-        if modifiers & UInt32(cmdKey) != 0 { text += "⌘" }
-        return text + Self.keyLabel(keyCode)
+    var displayComponents: [String] {
+        var components: [String] = []
+        if modifiers & UInt32(controlKey) != 0 { components.append("⌃") }
+        if modifiers & UInt32(optionKey) != 0 { components.append("⌥") }
+        if modifiers & UInt32(shiftKey) != 0 { components.append("⇧") }
+        if modifiers & UInt32(cmdKey) != 0 { components.append("⌘") }
+        components.append(Self.keyLabel(keyCode))
+        return components
     }
+    var displayString: String { displayComponents.joined() }
 
     static func carbonModifiers(from flags: NSEvent.ModifierFlags) -> UInt32 {
         var result: UInt32 = 0

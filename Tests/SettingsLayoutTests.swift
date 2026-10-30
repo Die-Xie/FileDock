@@ -60,6 +60,30 @@ import SwiftUI
                         model.settings.allowedApplicationBundleIDs = ["com.apple.finder"]
                         settle(host)
                     }
+                    if page == .appearance {
+                        for scroll in descendants(host).compactMap({ $0 as? NSScrollView }) {
+                            guard let document = scroll.documentView, document.bounds.height > scroll.bounds.height + 50 else { continue }
+                            document.scrollToVisible(CGRect(x: 0, y: document.isFlipped ? 0 : document.bounds.maxY - 20, width: 1, height: 20))
+                        }
+                        model.settings.backgroundTheme = "liquidGlass"
+                        model.settings.glassAppearance = "light"
+                        settle(host)
+                        let lightGlassSelection = snapshot(host)
+                        model.settings.glassAppearance = "dark"
+                        settle(host)
+                        precondition(snapshot(host) != lightGlassSelection,
+                                     "The glass appearance picker must update in the mounted settings window")
+                        model.settings.appearance = "light"
+                        model.settings.backgroundTheme = "solid"
+                        settle(host)
+                        precondition(model.settings.resolvedAppearance == "light" && model.settings.resolvedGlassAppearance == "dark",
+                                     "Solid and glass appearance choices must remain independent")
+                        model.settings.backgroundTheme = "liquidGlass"
+                        settle(host)
+                        precondition(model.settings.resolvedAppearance == "dark")
+                        model.settings = settings
+                        settle(host)
+                    }
                     if page == .general {
                         model.settings.language = language == .english ? "zh-Hans" : "en"
                         settle(host)

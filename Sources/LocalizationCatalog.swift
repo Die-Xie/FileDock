@@ -4,6 +4,8 @@ import Foundation
 
 enum HubLocalizationCatalog {
     static let english: [String: String] = [
+        "启用悬停切换": "Enable Hover Switching",
+        "macOS 26 使用原生玻璃，较早系统使用毛玻璃。": "Uses native glass on macOS 26 and a translucent material on earlier versions.",
         "{0}：悬停筛选，拖入文件设置标签": "{0}: hover to filter, drop files to set their label",
         "将文件拖到颜色上松开以设置访达颜色标签；拖到“无颜色”可移除颜色。原文件位置不变。": "Drop files on a color to set their Finder color label, or on No Color to remove it. Files stay in place.",
         "设置颜色标签": "Set Color Label",
@@ -92,7 +94,7 @@ enum HubLocalizationCatalog {
         "未完成": "Incomplete",
         " · {0} 显示 / 隐藏": " · {0} Show / Hide",
         " 文件": " File",
-        "工作区与颜色筛选共用此延迟。0 ms 关闭普通悬停选择；点击筛选和文件拖放仍可使用。": "Workspaces and color filters share this delay. 0 ms disables ordinary hover selection; click filtering and file drops remain available.",
+        "工作区和颜色筛选共用此延迟。0 ms 立即切换；非零值至少等待 50 ms 以避免误切。关闭后可点击，拖动仍可悬停跳转。": "Workspaces and color filters share this delay. 0 ms switches immediately; nonzero values wait at least 50 ms to avoid accidental switches. Clicking and drag-hover navigation remain available when disabled.",
         "0 ms 表示立即展开；点按呼出时不使用此延迟。": "0 ms opens immediately. Click activation does not use this delay.",
         "AirDrop · 拖入文件，或先选择文件后点按": "AirDrop · Drop files, or select files before clicking",
         "AirDrop 仅支持本机文件和文件夹，请先将链接内容保存为文件。": "AirDrop supports local files and folders. Save linked content as a file first.",
@@ -497,7 +499,6 @@ enum HubLocalizationCatalog {
         "浏览文件夹中的全部项目，新文件自动出现。": "Browse all items in a folder. New files appear automatically.",
         "液态玻璃": "Liquid Glass",
         "深色": "Dark",
-        "深色半透明玻璃，柔和模糊与边缘高光，不随系统明暗切换。macOS 26 使用原生玻璃，较早系统使用毛玻璃。": "Dark translucent glass with soft blur and edge highlights, independent of system appearance. Uses native glass on macOS 26 and frosted material on earlier versions.",
         "深色背景": "Dark Background",
         "添加到暂存区": "Add to Staging",
         "添加工作区": "Add Workspace",

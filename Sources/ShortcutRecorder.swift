@@ -37,7 +37,9 @@ struct HubShortcutRecorder: NSViewRepresentable {
         init() {
             super.init(frame: .zero)
             bezelStyle = .rounded
-            font = .monospacedSystemFont(ofSize: 12, weight: .medium)
+            // SF's regular system symbols keep their natural widths; in the
+            // monospaced font even a thin space becomes a full character wide.
+            font = .systemFont(ofSize: 12, weight: .medium)
             target = self
             action = #selector(toggleRecording)
             setButtonType(.momentaryPushIn)
@@ -124,10 +126,12 @@ struct HubShortcutRecorder: NSViewRepresentable {
         }
 
         fileprivate func refreshTitle() {
-            title = isRecording ? (prompt ?? L("请按快捷键…")) : (shortcut?.displayString ?? L("未设置 · 点击录制"))
+            let display = isRecording ? (prompt ?? L("请按快捷键…")) :
+                (shortcut.map { $0.displayComponents.joined(separator: "\u{2009}") } ?? L("未设置 · 点击录制"))
+            title = display
             contentTintColor = isRecording ? .controlAccentColor : nil
             setAccessibilityLabel(L("\(recordingName)快捷键"))
-            setAccessibilityValue(isRecording ? L("正在录制，按 Escape 取消，按 Delete 清除") : title)
+            setAccessibilityValue(isRecording ? L("正在录制，按 Escape 取消，按 Delete 清除") : (shortcut?.displayString ?? display))
             setAccessibilityHelp(L("点击录制，组合至少包含 Command、Control 或 Option。点击其他位置取消。"))
         }
 

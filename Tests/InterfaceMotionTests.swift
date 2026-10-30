@@ -69,7 +69,10 @@ import Combine
         precondition(abs(next.deadline - 1.3) < 0.00001 && !dwell.isCurrent(previous), "Configured longer delay and latest-target invalidation must be preserved")
         dwell.cancel()
         precondition(!dwell.isCurrent(next))
-        precondition(dwell.update(target: ids[0], pointer: .zero, now: 2, delay: 0) == nil && dwell.target == nil)
+        let immediate = dwell.update(target: ids[0], pointer: .zero, now: 2, delay: 0)!
+        precondition(immediate.deadline == 2 && dwell.permits(immediate, pointer: .zero, now: 2),
+                     "Zero must not add the positive-delay pointer quiet interval")
+        precondition(dwell.update(target: ids[0], pointer: .zero, now: 2, delay: -1) == nil && dwell.target == nil)
         precondition(dwell.update(target: ids[0], pointer: CGPoint(x: CGFloat.nan, y: 0), now: 2, delay: 0.1) == nil)
     }
 
@@ -99,6 +102,21 @@ import Combine
         controller.cancel()
         try await Task.sleep(nanoseconds: 120_000_000)
         precondition(selected == [b, c])
+
+        // A zero delay schedules a main-queue callback instead of selecting
+        // inline, allowing the latest destination to supersede a pass-through.
+        selected = []; point = .zero
+        controller.update(target: a, pointer: point, delay: 0, canActivate: { true }, activate: { selected.append(a) })
+        point.x = 34
+        controller.update(target: b, pointer: point, delay: 0, canActivate: { true }, activate: { selected.append(b) })
+        precondition(selected.isEmpty, "Immediate hover must not mutate the view synchronously inside pointer tracking")
+        for _ in 0..<100 where selected.isEmpty { try await Task.sleep(nanoseconds: 10_000_000) }
+        precondition(selected == [b], "Zero-delay queued callbacks must select only the latest target in a run-loop turn")
+        var enabled = true
+        controller.update(target: c, pointer: point, delay: 0, canActivate: { enabled }, activate: { selected.append(c) })
+        enabled = false
+        try await Task.sleep(nanoseconds: 120_000_000)
+        precondition(selected == [b], "A pending immediate activation must honor the current disabled setting")
     }
 
     private static func policy() {

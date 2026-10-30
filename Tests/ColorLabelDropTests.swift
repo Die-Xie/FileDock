@@ -16,7 +16,8 @@ import SwiftUI
         var tags = URLResourceValues(); tags.tagNames = ["keep custom tag"]
         try file.setResourceValues(tags)
         let model = makeTestModel(storageURL: root.appendingPathComponent("config.json"))
-        model.settings.switchDelay = 0 // Disabling hover never disables click/filter drops.
+        model.settings.switchDelay = 0
+        model.settings.hoverSwitchingEnabled = false // Ordinary hover cannot disable label drops.
         let workspace = model.addWorkspace(name: "Drop fixture", mode: .folder, urls: [folder])!
         let state = HubPresentationState(); state.previewVisible = true
         let music = HubQQMusicController() // Never visible; no polling or authorization.

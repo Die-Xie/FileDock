@@ -53,7 +53,7 @@ Keep **QQ Music, Apple's Music app, and NetEase Cloud Music** close. Track infor
 | Make room while organizing | Drag the panel out to pin it; optionally hide it during an outgoing file drag and reopen at the trigger |
 | Stay focused in games and video | Full-screen and app restrictions, with optional temporary click activation |
 | Find files your way | Reorder tabs and pinned entries, use icon-only tabs, sort by list headers, and choose whether folders come first |
-| Match your desktop | Dark Liquid Glass or a solid theme that follows light and dark appearance |
+| Match your desktop | Choose light, dark, or system appearance independently for Liquid Glass and the solid theme |
 | Keep your own setup | Switch Chinese and English instantly; save preferences locally and import or export configuration |
 
 Large folders appear in batches while you remain free to switch workspaces. On a physical notch, adjust the pointer-entry threshold and optionally filter top-edge drags to avoid Mission Control conflicts.
@@ -81,6 +81,8 @@ The following technical documents and most earlier release notes are currently i
 - [Release workflow](docs/RELEASING.md)
 - [Code quality and performance review](docs/QUALITY_REVIEW.md)
 - [Release notes](docs/releases/)
+
+**1.34.0** refines settings and shortcuts, adds light Liquid Glass, and separates hover enablement from its delay. [Release notes](docs/releases/v1.34.0.md).
 
 **1.33.0** expands color-button hit areas and adds hover filtering and drag-to-label without moving files. [Release notes](docs/releases/v1.33.0.md).
 

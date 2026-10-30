@@ -10,6 +10,7 @@ struct GlobalShortcutTests {
         precondition(defaults.validationErrors.isEmpty)
         precondition(defaults.top?.displayString == "⌥⌘↓")
         precondition(defaults.cursor?.displayString == "⌥⌘→")
+        precondition(defaults.top?.displayComponents == ["⌥", "⌘", "↓"])
 
         for modifier in [UInt32(cmdKey), UInt32(controlKey), UInt32(optionKey), UInt32(cmdKey | shiftKey)] {
             precondition(HubShortcut(keyCode: UInt32(kVK_ANSI_A), modifiers: modifier).validationError == nil)
@@ -21,6 +22,8 @@ struct GlobalShortcutTests {
         precondition(HubShortcut(keyCode: 128, modifiers: UInt32(cmdKey)).validationError != nil)
         precondition(HubShortcut(keyCode: 0, modifiers: UInt32.max).validationError != nil)
         precondition(HubShortcut(keyCode: UInt32(kVK_F20), modifiers: UInt32(controlKey)).displayString == "⌃F20")
+        precondition(HubShortcut(keyCode: UInt32(kVK_F20), modifiers: UInt32(controlKey)).displayComponents == ["⌃", "F20"],
+                     "The multi-character key label remains one visual unit")
         precondition(HubShortcut(keyCode: UInt32(kVK_Space), modifiers: UInt32(controlKey | optionKey | shiftKey | cmdKey)).displayString == "⌃⌥⇧⌘空格")
 
         let flags: NSEvent.ModifierFlags = [.command, .option, .shift, .control, .capsLock, .function, .numericPad]

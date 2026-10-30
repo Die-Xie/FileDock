@@ -53,10 +53,12 @@ struct HubColorLabelFilterBar: View {
                                 Image(systemName: "line.diagonal").font(.system(size: 9)).foregroundStyle(.secondary)
                             } else {
                                 Circle().fill(Color(nsColor: label.color))
+                                    .overlay(Circle().strokeBorder(Color.primary.opacity(0.15), lineWidth: 0.5))
                             }
                             if selection == label {
                                 Image(systemName: "checkmark").font(.system(size: 8, weight: .bold))
-                                    .foregroundStyle(label == .none ? Color.primary : .white)
+                                    .foregroundStyle(label == .none ? Color.primary :
+                                        [.yellow, .orange, .green].contains(label) ? Color.black.opacity(0.85) : .white)
                             }
                         }.frame(width: 13, height: 13).frame(width: 28, height: 28)
                             .background(selection == label ? Color.primary.opacity(0.12) : .clear,
@@ -104,7 +106,7 @@ struct HubColorLabelFilterBar: View {
         case .ended:
             hover.cancel(target: id); input.exit(label)
         case .active:
-            guard hoverDelay.isFinite, hoverDelay > 0, hoverEnabled, isEnabled, canHover(), selection != label, input.permitsHover(label) else {
+            guard hoverDelay.isFinite, hoverDelay >= 0, hoverEnabled, isEnabled, canHover(), selection != label, input.permitsHover(label) else {
                 hover.cancel(target: id); return
             }
             hover.update(target: id, pointer: NSEvent.mouseLocation, delay: hoverDelay,

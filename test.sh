@@ -105,6 +105,10 @@ swiftc -swift-version 5 Sources/Localization.swift Sources/LocalizationCatalog.s
     Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift Sources/RecentFiles.swift Sources/FileAppearance.swift Sources/WorkspaceShortcutOrder.swift Sources/HubModel.swift Sources/FolderWorkspacePreparation.swift Sources/FinderFileActions.swift Sources/FolderArtwork.swift Sources/DirectoryLoader.swift Tests/ModelTestSupport.swift Tests/GlobalShortcutTests.swift -o .build/shortcut-tests \
     -framework AppKit -framework Carbon -framework Combine -framework UniformTypeIdentifiers
 .build/shortcut-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
+    Sources/Localization.swift Sources/LocalizationCatalog.swift Sources/GlobalShortcuts.swift Sources/ShortcutRecorder.swift Tests/ShortcutRecorderLayoutTests.swift -o .build/shortcut-recorder-layout-tests \
+    -framework AppKit -framework Carbon -framework SwiftUI
+.build/shortcut-recorder-layout-tests
 swiftc -swift-version 5 Sources/Localization.swift Sources/LocalizationCatalog.swift -parse-as-library -module-cache-path .build/module-cache \
     Sources/NativeFileDrag.swift Sources/NativeWorkspaceDrag.swift Tests/NativeFileDragTests.swift -o .build/native-drag-tests \
     -framework AppKit -framework SwiftUI -framework UniformTypeIdentifiers

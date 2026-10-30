@@ -10,6 +10,11 @@ import Foundation
     @MainActor static func main() async throws {
         let fm = FileManager.default
         var wakeSettings = HubSettings()
+        var immediateFactorySettings = HubSettings()
+        immediateFactorySettings.switchDelay = 0
+        immediateFactorySettings.normalize()
+        precondition(immediateFactorySettings.resolvedHoverSwitchingEnabled,
+                     "New configurations must interpret zero as enabled immediate hover")
         precondition(wakeSettings.resolvedBlockMissionControlAtNotch)
         wakeSettings.blockMissionControlAtNotch = false
         precondition(wakeSettings.resolvedNotchEntryThreshold == 0.75)
@@ -43,6 +48,44 @@ import Foundation
         let base = fm.temporaryDirectory.appendingPathComponent("FileDock-Tests-\(UUID().uuidString)", isDirectory: true)
         try fm.createDirectory(at: base, withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: base) }
+        let appearanceStorage = base.appendingPathComponent("appearance-config.json")
+        let appearanceModel = makeTestModel(storageURL: appearanceStorage, monitor: false)
+        precondition(appearanceModel.settings.resolvedHoverSwitchingEnabled)
+        let storedState = try JSONSerialization.jsonObject(with: Data(contentsOf: appearanceStorage)) as! [String: Any]
+        for oldDelay in [0.0, 0.2] {
+            var legacyState = storedState
+            var legacySettings = legacyState["settings"] as! [String: Any]
+            legacySettings.removeValue(forKey: "hoverSwitchingEnabled")
+            legacySettings["switchDelay"] = oldDelay
+            legacyState["settings"] = legacySettings
+            let legacyBytes = try JSONSerialization.data(withJSONObject: legacyState)
+            let legacyStorage = base.appendingPathComponent("hover-legacy-\(oldDelay).json")
+            try legacyBytes.write(to: legacyStorage)
+            let loaded = makeTestModel(storageURL: legacyStorage, monitor: false)
+            let previouslyEnabled = oldDelay > 0
+            precondition(loaded.settings.hoverSwitchingEnabled == previouslyEnabled && loaded.settings.resolvedHoverSwitchingEnabled == previouslyEnabled,
+                         "Missing old hover switch must migrate from the old delay exactly once")
+            loaded.settings.switchDelay = 0
+            precondition(loaded.settings.resolvedHoverSwitchingEnabled == previouslyEnabled,
+                         "Setting a migrated positive delay to zero must not silently disable the new switch")
+            loaded.settings.hoverSwitchingEnabled = true
+            let reopened = makeTestModel(storageURL: legacyStorage, monitor: false)
+            precondition(reopened.settings.resolvedHoverSwitchingEnabled && reopened.settings.switchDelay == 0,
+                         "Enabling immediate hover must persist after restart")
+            let imported = makeTestModel(storageURL: base.appendingPathComponent("hover-import-\(oldDelay).json"), monitor: false)
+            try imported.importConfiguration(data: legacyBytes)
+            precondition(imported.settings.hoverSwitchingEnabled == previouslyEnabled,
+                         "Imported legacy configurations must migrate the same way as startup")
+        }
+        appearanceModel.settings.appearance = "light"
+        for glassChoice in ["light", "system", "dark"] {
+            appearanceModel.settings.glassAppearance = glassChoice
+            let restored = makeTestModel(storageURL: appearanceStorage, monitor: false)
+            precondition(restored.settings.resolvedGlassAppearance == glassChoice && restored.settings.resolvedAppearance == glassChoice,
+                         "Changing the glass preference must persist across application restarts")
+            var solid = restored.settings; solid.backgroundTheme = "solid"
+            precondition(solid.resolvedAppearance == "light", "Glass changes must never overwrite the saved solid appearance")
+        }
         let source = base.appendingPathComponent("source", isDirectory: true)
         let target = base.appendingPathComponent("target", isDirectory: true)
         try fm.createDirectory(at: source, withIntermediateDirectories: true)
@@ -111,7 +154,17 @@ import Foundation
         for savedAppearance in ["system", "light", "dark"] {
             var settings = model.settings
             settings.appearance = savedAppearance
-            precondition(settings.resolvedAppearance == "dark", "Glass keeps a fixed dark appearance")
+            precondition(settings.resolvedAppearance == "dark", "Old and default glass preference remains dark")
+            for glassAppearance in ["system", "light", "dark"] {
+                settings.glassAppearance = glassAppearance
+                precondition(settings.resolvedAppearance == glassAppearance, "Glass must respect its own appearance preference")
+                let restored = try JSONDecoder().decode(HubSettings.self, from: JSONEncoder().encode(settings))
+                precondition(restored.resolvedGlassAppearance == glassAppearance && restored.appearance == savedAppearance,
+                             "Both theme preferences must survive configuration encoding independently")
+            }
+            settings.glassAppearance = "unknown"
+            settings.normalize()
+            precondition(settings.resolvedGlassAppearance == "dark" && settings.glassAppearance == "dark")
             settings.backgroundTheme = "solid"
             precondition(settings.resolvedAppearance == savedAppearance, "Solid appearance preference must be retained")
         }
@@ -232,8 +285,11 @@ import Foundation
         legacy.removeValue(forKey: "notchEntryThreshold")
         legacy.removeValue(forKey: "blockMissionControlAtNotch")
         legacy.removeValue(forKey: "backgroundTheme")
+        legacy.removeValue(forKey: "glassAppearance")
         legacy.removeValue(forKey: "foldersFirst")
         let oldSettings = try JSONDecoder().decode(HubSettings.self, from: JSONSerialization.data(withJSONObject: legacy))
+        precondition(oldSettings.glassAppearance == nil && oldSettings.resolvedGlassAppearance == "dark",
+                     "Older installations keep dark glass regardless of their solid-theme preference")
         precondition(oldSettings.notchEntryThreshold == nil && oldSettings.resolvedNotchEntryThreshold == 0.75)
         precondition(oldSettings.blockMissionControlAtNotch == nil && oldSettings.resolvedBlockMissionControlAtNotch)
         var normalizedLegacy = oldSettings; normalizedLegacy.normalize()

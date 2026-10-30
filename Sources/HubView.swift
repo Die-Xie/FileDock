@@ -181,6 +181,8 @@ struct HubView: View {
             if !$0 { clearFileDrop(); showsAirDropHint = false; tabRevealTask?.cancel(); renameEntry = nil }
         }
         .onChange(of: presentation.header) { _ in prepareWorkspaceHover() }
+        .onChange(of: model.settings.resolvedHoverSwitchingEnabled) { _ in workspaceHover.cancel() }
+        .onChange(of: model.settings.switchDelay) { _ in workspaceHover.cancel() }
         .onChange(of: canReceiveAirDrop) { if !$0 { showsAirDropHint = false; if airDropTargeted { clearFileDrop() } } }
         .onDisappear {
             clearFileDrop(); showsAirDropHint = false; workspaceHover.cancel(); tabRevealTask?.cancel()
@@ -428,8 +430,9 @@ struct HubView: View {
     }
 
     private func canHoverWorkspace(_ target: UUID) -> Bool {
-        let ready = renameEntry == nil && presentation.previewVisible && !presentation.windowMoving && !presentation.layoutChanging &&
-            !presentation.surfaceAnimating && !HubWorkspaceDragState.isDragging && !HubFileDragState.isDragging
+        let ready = model.settings.resolvedHoverSwitchingEnabled && renameEntry == nil && presentation.previewVisible && !presentation.windowMoving && !presentation.layoutChanging &&
+            !presentation.surfaceAnimating && !HubWorkspaceDragState.isDragging && !HubFileDragState.isDragging &&
+            NSEvent.pressedMouseButtons == 0
         guard HubWorkspaceHoverActivation.permits(target: target, current: model.selectedWorkspaceID, ready: ready,
             pointer: NSEvent.mouseLocation, origin: workspaceRevealPointer) else { return false }
         if workspaceRevealPointer != nil { workspaceRevealPointer = nil }
@@ -441,7 +444,7 @@ struct HubView: View {
         case .ended:
             workspaceHover.cancel(target: key)
         case .active:
-            guard model.settings.switchDelay > 0, canHoverWorkspace(key) else {
+            guard canHoverWorkspace(key) else {
                 workspaceHover.cancel(target: key); return
             }
             tabRevealTask?.cancel()
@@ -1243,9 +1246,9 @@ struct HubView: View {
             if model.settings.resolvedColorLabelFilterEnabled {
                 HubColorLabelFilterBar(selection: model.colorLabelFilter, onSelect: model.setColorLabelFilter,
                     hoverDelay: model.settings.switchDelay,
-                    hoverEnabled: presentation.previewVisible && !presentation.defersFileRendering && !presentation.windowMoving &&
+                    hoverEnabled: model.settings.resolvedHoverSwitchingEnabled && presentation.previewVisible && !presentation.defersFileRendering && !presentation.windowMoving &&
                         !presentation.layoutChanging && !presentation.surfaceAnimating && renameEntry == nil,
-                    canHover: { !HubFileDragState.isDragging && !HubWorkspaceDragState.isDragging &&
+                    canHover: { model.settings.resolvedHoverSwitchingEnabled && !HubFileDragState.isDragging && !HubWorkspaceDragState.isDragging &&
                         NSEvent.pressedMouseButtons == 0 && NSApp.modalWindow == nil })
                     .disabled(model.selectedWorkspace == nil)
             }
