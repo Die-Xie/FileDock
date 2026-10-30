@@ -79,6 +79,95 @@ import Foundation
             insertionOrder: asynchronous.fileOrderURLs, before: svg))
         try await wait { !asynchronous.directoryLoading && asynchronous.entries.count == 3 }
         precondition(Array(asynchronous.visibleEntries.map(\.url).prefix(2)) == [alpha, beta], "Staging insertion must publish a fresh asynchronous snapshot after changing reference order")
+        // Real filesystem fixtures exercise label-on-drop and undo without
+        // sending any test items to the user's Trash.
+        let labelsSource = base.appendingPathComponent("label-source"), labelsTarget = base.appendingPathComponent("label-target")
+        try fm.createDirectory(at: labelsSource, withIntermediateDirectories: true)
+        try fm.createDirectory(at: labelsTarget, withIntermediateDirectories: true)
+        let labelModel = makeTestModel(storageURL: base.appendingPathComponent("label-settings.json"))
+        labelModel.addWorkspace(name: "Labels", mode: .folder, urls: [labelsTarget])
+        let labelID = labelModel.selectedWorkspaceID!
+        let labelSource = labelsSource.appendingPathComponent("color.txt")
+        try Data("source".utf8).write(to: labelSource)
+        var sourceEditable = labelSource, tagValues = URLResourceValues()
+        try setFixtureTags(["keep custom tag"], on: labelSource)
+        tagValues.labelNumber = 6
+        try sourceEditable.setResourceValues(tagValues)
+        let expectedSourceLabel = FileEntry(url: labelSource).labelNumber
+        precondition(labelModel.acceptFileDrop([labelSource], workspaceID: labelID, directory: labelsTarget,
+                                                copy: true, labelOnDrop: .orange))
+        labelModel.setColorLabelFilter(.blue) // Must not retarget the in-flight operation.
+        try await wait { labelModel.fileOperationsInProgress == 0 }
+        let firstCopy = labelsTarget.appendingPathComponent("color.txt")
+        precondition(FileEntry(url: firstCopy).labelNumber == 7 && FileEntry(url: labelSource).labelNumber == expectedSourceLabel)
+        precondition(labelModel.dropUndoNotice == nil, "An unchanged copied source is safely journaled after color assignment")
+        precondition(FileEntry(url: firstCopy).tagNames.contains("keep custom tag"))
+        precondition(labelModel.acceptFileDrop([labelSource], workspaceID: labelID, directory: labelsTarget,
+                                                copy: true, labelOnDrop: .orange))
+        try await wait { labelModel.fileOperationsInProgress == 0 }
+        let namedCopy = labelsTarget.appendingPathComponent("color copy.txt")
+        precondition(fm.fileExists(atPath: namedCopy.path) && FileEntry(url: namedCopy).labelNumber == 7,
+                     "The actual collision-renamed destination receives the label")
+        precondition(labelModel.dropUndoNotice == nil, "Collision-renamed copies are compared against the original source")
+
+        let moveSource = labelsSource.appendingPathComponent("move.txt")
+        try Data("move".utf8).write(to: moveSource)
+        var moveEditable = moveSource, moveValues = URLResourceValues(); moveValues.labelNumber = 2
+        try moveEditable.setResourceValues(moveValues)
+        precondition(labelModel.acceptFileDrop([moveSource], workspaceID: labelID, directory: labelsTarget,
+                                                copy: false, labelOnDrop: .yellow))
+        try await wait { labelModel.fileOperationsInProgress == 0 }
+        let movedLabel = labelsTarget.appendingPathComponent("move.txt")
+        precondition(FileEntry(url: movedLabel).labelNumber == 5 && !fm.fileExists(atPath: moveSource.path))
+        precondition(labelModel.undoLastFileDrop())
+        try await wait { labelModel.fileOperationsInProgress == 0 }
+        precondition(fm.fileExists(atPath: moveSource.path) && !fm.fileExists(atPath: movedLabel.path))
+        precondition(FileEntry(url: moveSource).labelNumber == 2, "Undo restores the moved file's original color")
+
+        var local = firstCopy, localValues = URLResourceValues(); localValues.labelNumber = 4
+        try local.setResourceValues(localValues)
+        precondition(labelModel.acceptFileDrop([firstCopy], workspaceID: labelID, directory: labelsTarget,
+                                                copy: true, labelOnDrop: HubFinderLabel.none, preserveLocalInPlace: true))
+        try await wait { labelModel.fileOperationsInProgress == 0 }
+        precondition(FileEntry(url: firstCopy).labelNumber == 0, "No Color clears the existing Finder color in place")
+        precondition(labelModel.undoLastFileDrop())
+        try await wait { labelModel.fileOperationsInProgress == 0 }
+        precondition(FileEntry(url: firstCopy).labelNumber == 4, "Undo restores an in-place label without moving the file")
+
+        let refModel = makeTestModel(storageURL: base.appendingPathComponent("label-references-settings.json"))
+        refModel.addWorkspace(name: "References", mode: .references, urls: [])
+        let referenceID = refModel.selectedWorkspaceID!
+        precondition(refModel.acceptFileDrop([labelSource], workspaceID: referenceID, directory: nil, copy: false))
+        let priorReferenceOrder = refModel.workspaces.first { $0.id == referenceID }!.referencePaths
+        precondition(refModel.acceptFileDrop([labelSource, moveSource], workspaceID: referenceID, directory: nil,
+                                             copy: false, labelOnDrop: .red))
+        try await wait { refModel.fileOperationsInProgress == 0 }
+        precondition(refModel.undoLastFileDrop())
+        try await wait { refModel.fileOperationsInProgress == 0 }
+        precondition(refModel.workspaces.first { $0.id == referenceID }!.referencePaths == priorReferenceOrder,
+                     "Undo removes only newly added references and preserves the original order")
+        precondition(fm.fileExists(atPath: labelSource.path) && fm.fileExists(atPath: moveSource.path),
+                     "Reference undo must never move or delete source files")
+
+        let stageModel = makeTestModel(storageURL: base.appendingPathComponent("label-stage-settings.json"))
+        stageModel.setStagingEnabled(true); stageModel.openStagingWorkspace()
+        let stagingID = stageModel.selectedWorkspaceID!
+        precondition(stageModel.stageFiles([labelSource]))
+        let stagePriorOrder = stageModel.workspaces.first { $0.id == stagingID }!.referencePaths
+        precondition(stageModel.acceptFileDrop([labelSource, moveSource], workspaceID: stagingID, directory: nil,
+                                               copy: false, labelOnDrop: .purple))
+        try await wait { stageModel.fileOperationsInProgress == 0 }
+        precondition(stageModel.undoLastFileDrop())
+        try await wait { stageModel.fileOperationsInProgress == 0 }
+        precondition(stageModel.workspaces.first { $0.id == stagingID }!.referencePaths == stagePriorOrder)
+        precondition(fm.fileExists(atPath: labelSource.path) && fm.fileExists(atPath: moveSource.path))
+
+        precondition(labelModel.acceptFileDrop([firstCopy], workspaceID: labelID, directory: labelsTarget,
+                                                copy: false, labelOnDrop: .green, preserveLocalInPlace: true))
+        try await wait { labelModel.fileOperationsInProgress == 0 }
+        labelModel.performFinderAction(.label(6), urls: [firstCopy])
+        try await wait { labelModel.fileOperationsInProgress == 0 }
+        precondition(!labelModel.undoLastFileDrop(), "A later ordinary file action invalidates the stale drop journal")
         model.removeWorkspace(favoriteID)
         precondition(!model.acceptFileDrop([svg], workspaceID: favoriteID, directory: nil, copy: false))
         print("PASS: real cross-tab copy/move after UI changes, Finder-equivalent favorite references, SVG/directory/child preservation, moved/renamed descendant bookmarks and removed targets")

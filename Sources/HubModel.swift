@@ -358,6 +358,70 @@ enum HubFileOperations {
     }
 }
 
+/// Capture prior tag state before any metadata update; process in bounded
+/// batches so a large drop never skips labeling just because Finder actions
+/// have a per-request limit.
+private enum HubDropLabelWork {
+    struct Prior: Sendable { let label: Int; let tags: [String]; let tagSnapshot: HubDropUndo.TagSnapshot }
+    struct Outcome: Sendable {
+        var previous: [String: Prior] = [:]
+        var changed: Set<String> = []
+        var failures: [String] = []
+    }
+    static func validated(_ urls: [URL]) throws -> [URL] {
+        guard !urls.isEmpty, urls.count <= HubModel.maximumReferences else { throw HubFinderActionError.invalidSelection }
+        var files: [URL] = [], seen = Set<String>()
+        for start in stride(from: 0, to: urls.count, by: 1000) {
+            let batch = try HubFinderFileActions.files(Array(urls[start..<min(start + 1000, urls.count)]))
+            files += batch.filter { seen.insert($0.path).inserted }
+        }
+        return files
+    }
+    static func apply(_ label: HubFinderLabel, to urls: [URL]) -> Outcome {
+        var outcome = Outcome()
+        for var url in urls {
+            do {
+                // Capture the raw tag xattr before modifying the file. Read it
+                // and the color again to avoid journaling an unstable state.
+                let before = try HubDropUndo.captureTags(url)
+                url.removeAllCachedResourceValues()
+                let values = try url.resourceValues(forKeys: [.labelNumberKey, .tagNamesKey])
+                url.removeAllCachedResourceValues()
+                let color = try url.resourceValues(forKeys: [.labelNumberKey]).labelNumber ?? 0
+                let after = try HubDropUndo.captureTags(url)
+                guard before == after, color == (values.labelNumber ?? 0) else { continue }
+                outcome.previous[url.standardizedFileURL.path] = Prior(label: color, tags: values.tagNames ?? [], tagSnapshot: before)
+            } catch { continue }
+        }
+        for start in stride(from: 0, to: urls.count, by: 1000) {
+            let batch = Array(urls[start..<min(start + 1000, urls.count)])
+            do {
+                let result = try HubFinderFileActions.setLabel(label.rawValue, urls: batch)
+                outcome.changed.formUnion(result.changed.map { $0.standardizedFileURL.path })
+                outcome.failures += result.failures.map { L("设置颜色标签失败：\($0)") }
+            } catch { outcome.failures.append(L("设置颜色标签失败：\(error.localizedDescription)")) }
+        }
+        return outcome
+    }
+}
+
+private struct HubDropReferenceUndo {
+    let workspaceID: UUID
+    let prior: [String]
+    let expected: [String]
+}
+private struct HubDropDirectoryOrderUndo {
+    let workspaceID: UUID
+    let directoryPath: String
+    let prior: [String]?
+    let expected: [String]?
+}
+private struct HubDropUndoGroup {
+    var records: [HubDropUndo.Record]
+    var references: HubDropReferenceUndo?
+    var directoryOrder: HubDropDirectoryOrderUndo?
+}
+
 @MainActor final class HubModel: ObservableObject {
     @Published var shortcutRegistrationErrors: [String: String] = [:]
     @Published var workspaces: [Workspace] = [] { didSet { invalidateEntryOrder(); cachedStagedURLs = nil; persistIfReady() } }
@@ -402,6 +466,7 @@ enum HubFileOperations {
     @Published private(set) var recentFilesMessage: String?
     @Published private(set) var stagingTransferInProgress = false
     @Published private(set) var fileOperationsInProgress = 0
+    @Published var dropUndoNotice: String?
     @Published var sharingInProgress = false
 
     private let fm = FileManager.default
@@ -415,10 +480,13 @@ enum HubFileOperations {
     private var deferringInteractiveResize = false
     private var transferScopeURLs: [URL] = []
     private var dropScopeURLs: [UUID: [URL]] = [:]
+    private var fileDropUndoStack: [HubDropUndoGroup] = []
+    private var dropUndoInProgress = false
+    private var dropUndoGeneration: UInt = 0
     private(set) var configurationWriteCount = 0
     private static let maximumConfigurationBytes = 16 * 1024 * 1024
     static let maximumWorkspaces = 2000
-    static let maximumReferences = 20000
+    nonisolated static let maximumReferences = 20000
     /// Provider imports are owned by the UI; the model also guards their lifetime
     /// before replacing configuration or releasing its security scopes.
     var externalFileWorkInProgress: () -> Bool = { false }
@@ -952,20 +1020,21 @@ enum HubFileOperations {
     func stageFiles(_ urls: [URL]) -> Bool {
         beginPersistenceTransaction()
         defer { endPersistenceTransaction() }
-        guard settings.resolvedStagingEnabled, !stagingTransferInProgress else { return false }
+        guard settings.resolvedStagingEnabled, !stagingTransferInProgress, !dropUndoInProgress else { return false }
         let files = urls.filter(\.isFileURL).map(\.standardizedFileURL)
         guard !files.isEmpty else { return false }
         let paths = uniquePaths(stagedURLs.map(\.path) + files.map(\.path))
         guard canStoreReferences(paths), let workspace = ensureStagingWorkspace(),
               let index = workspaces.firstIndex(where: { $0.id == workspace.id }) else { return false }
         files.forEach(remember)
+        if workspaces[index].referencePaths != paths { invalidateFileDropUndo() }
         workspaces[index].referencePaths = paths
         if isStagingRoot { refresh() }
         return true
     }
 
     func removeStagedFiles(_ urls: [URL]) {
-        guard !stagingTransferInProgress else { return }
+        guard !stagingTransferInProgress, !dropUndoInProgress else { return }
         removeStagedPaths(Set(urls.filter(\.isFileURL).map { $0.standardizedFileURL.path }))
     }
 
@@ -973,6 +1042,7 @@ enum HubFileOperations {
 
     private func removeStagedPaths(_ paths: Set<String>) {
         guard let id = stagingWorkspace?.id, let index = workspaces.firstIndex(where: { $0.id == id }) else { return }
+        if workspaces[index].referencePaths.contains(where: { paths.contains(URL(fileURLWithPath: $0).standardizedFileURL.path) }) { invalidateFileDropUndo() }
         workspaces[index].referencePaths.removeAll { paths.contains(URL(fileURLWithPath: $0).standardizedFileURL.path) }
         if isStagingRoot { refresh() }
     }
@@ -981,10 +1051,11 @@ enum HubFileOperations {
     /// FileManager refuses collisions; unique destinations preserve pre-existing content.
     @discardableResult
     func transferStagedFiles(_ urls: [URL], to directory: URL, copy: Bool) async throws -> [URL] {
-        guard !stagingTransferInProgress else { return [] }
+        guard !stagingTransferInProgress, !dropUndoInProgress else { return [] }
         let stagedPaths = Set(stagedURLs.map(\.path))
         let requested = urls.filter(\.isFileURL).map(\.standardizedFileURL).filter { stagedPaths.contains($0.path) }
         guard !requested.isEmpty else { return [] }
+        invalidateFileDropUndo()
         let shelfID = stagingWorkspace?.id
         stagingTransferInProgress = true
         transferScopeURLs = requested + [directory.standardizedFileURL]
@@ -1216,20 +1287,24 @@ enum HubFileOperations {
     func appendReferences(_ urls: [URL]) {
         beginPersistenceTransaction()
         defer { endPersistenceTransaction() }
+        guard !dropUndoInProgress else { return }
         if isStagingRoot { _ = stageFiles(urls); return }
         guard let index = workspaces.firstIndex(where: { $0.id == selectedWorkspaceID }), workspaces[index].mode == .references else { return }
         let files = urls.filter(\.isFileURL).map(\.standardizedFileURL)
         let paths = uniquePaths(workspaces[index].referencePaths + files.map(\.path))
         guard canStoreReferences(paths) else { return }
         files.forEach(remember)
+        if workspaces[index].referencePaths != paths { invalidateFileDropUndo() }
         workspaces[index].referencePaths = paths
         refresh()
     }
 
     func removeReferences(_ urls: [URL]) {
+        guard !dropUndoInProgress else { return }
         if isStagingWorkspace { removeStagedFiles(urls); return }
         guard let index = workspaces.firstIndex(where: { $0.id == selectedWorkspaceID }), workspaces[index].mode == .references else { return }
         let paths = Set(urls.map { $0.standardizedFileURL.path })
+        if workspaces[index].referencePaths.contains(where: { paths.contains($0) }) { invalidateFileDropUndo() }
         workspaces[index].referencePaths.removeAll { paths.contains($0) }
         selectedIDs.subtract(urls)
         refresh()
@@ -1244,6 +1319,7 @@ enum HubFileOperations {
     func reorderEntries(_ urls: [URL], before target: URL?) {
         beginPersistenceTransaction()
         defer { endPersistenceTransaction() }
+        guard !dropUndoInProgress else { return }
         guard let index = workspaces.firstIndex(where: { $0.id == selectedWorkspaceID }),
               canReorderEntries else { return }
         let requested = Set(urls.filter(\.isFileURL).map { $0.standardizedFileURL.path })
@@ -1267,6 +1343,7 @@ enum HubFileOperations {
         var result = original.filter { !requested.contains($0) }
         let destination = targetPath.flatMap { result.firstIndex(of: $0) } ?? result.endIndex
         result.insert(contentsOf: moving, at: destination)
+        if result != original { invalidateFileDropUndo() }
         if isReferenceRoot {
             workspaces[index].referencePaths = result
             referenceManualOrder = true
@@ -1279,6 +1356,7 @@ enum HubFileOperations {
     }
 
     func setManualEntryOrder(_ enabled: Bool) {
+        guard !dropUndoInProgress else { return }
         if isReferenceRoot { referenceManualOrder = enabled; return }
         guard let index = workspaces.firstIndex(where: { $0.id == selectedWorkspaceID }), currentURL != nil else { return }
         let path = directoryOrderPath
@@ -1564,10 +1642,11 @@ enum HubFileOperations {
 
     /// UI file commands share admission/lifetime accounting with drag/drop.
     /// No persistence transaction spans await, and pending writes retain scopes.
-    private func performFileWork<Value: Sendable>(scopes: [URL], rememberScopes: Bool = true,
+    private func performFileWork<Value: Sendable>(scopes: [URL], rememberScopes: Bool = true, affectsDropUndo: Bool = true,
         work: @escaping @Sendable () throws -> Value,
         complete: @escaping @MainActor (Result<Value, Error>) -> Void) {
-        guard fileOperationsInProgress < 3 else { errorMessage = L("已有文件操作正在进行，请稍后重试。"); return }
+        guard fileOperationsInProgress < 3, !dropUndoInProgress else { errorMessage = L("已有文件操作正在进行，请稍后重试。"); return }
+        if affectsDropUndo { invalidateFileDropUndo() }
         let id = UUID()
         dropScopeURLs[id] = scopes
         beginPersistenceTransaction()
@@ -1586,14 +1665,118 @@ enum HubFileOperations {
         }
     }
 
+    private func rememberDropUndo(_ records: [HubDropUndo.Record], references: HubDropReferenceUndo? = nil,
+                                  directoryOrder: HubDropDirectoryOrderUndo? = nil) {
+        guard !records.isEmpty || references != nil || directoryOrder != nil else { return }
+        fileDropUndoStack.append(HubDropUndoGroup(records: records, references: references, directoryOrder: directoryOrder))
+        if fileDropUndoStack.count > 20 { fileDropUndoStack.removeFirst() }
+    }
+
+    private func invalidateFileDropUndo() {
+        dropUndoGeneration &+= 1
+        fileDropUndoStack.removeAll()
+    }
+
+    /// Consume Cmd-Z while a transfer is busy; never race a pending drop or
+    /// let the event fall through to an unrelated window action.
+    @discardableResult func undoLastFileDrop() -> Bool {
+        if fileOperationsInProgress > 0 || stagingTransferInProgress || sharingInProgress || dropUndoInProgress || externalFileWorkInProgress() {
+            errorMessage = L("已有文件操作正在进行，请稍后重试。")
+            return true
+        }
+        guard let group = fileDropUndoStack.popLast() else { return false }
+        let records = group.records
+        let scopes = records.flatMap { [$0.destination, $0.source].compactMap { $0 } }
+        let operationID = UUID()
+        dropScopeURLs[operationID] = scopes
+        dropUndoInProgress = true
+        fileOperationsInProgress += 1
+        Task { @MainActor in
+            let outcome = await Task.detached(priority: .userInitiated) { HubDropUndo.undo(records) }.value
+            beginPersistenceTransaction()
+            defer {
+                dropUndoInProgress = false; fileOperationsInProgress -= 1; dropScopeURLs.removeValue(forKey: operationID)
+                persistIfReady(); endPersistenceTransaction()
+            }
+                for (from, to) in outcome.relocations { self.relocateReferences(from: from, to: to, includingChildren: true) }
+                let restored = Set(outcome.restored.map { $0.standardizedFileURL.path })
+                let removedCopies = records.compactMap { record -> URL? in
+                    guard case .copy = record.transfer, restored.contains(record.destination.standardizedFileURL.path) else { return nil }
+                    return record.destination
+                }
+                if !removedCopies.isEmpty { self.finishTrashing(removedCopies.map { ($0, true) }) }
+                if !outcome.remaining.isEmpty { self.rememberDropUndo(outcome.remaining, references: group.references, directoryOrder: group.directoryOrder) }
+                self.directorySnapshots.removeAll()
+                HubFileIconCache.invalidate(outcome.restored)
+                self.refreshInBackground()
+                var failures = outcome.failures
+                if failures.isEmpty, let reference = group.references {
+                    if let index = workspaces.firstIndex(where: { $0.id == reference.workspaceID }), workspaces[index].referencePaths == reference.expected {
+                        workspaces[index].referencePaths = reference.prior
+                        refreshInBackground()
+                    } else { failures.append(L("引用列表已变化，未移除本次添加的引用。")) }
+                }
+                if failures.isEmpty, let order = group.directoryOrder {
+                    if let index = workspaces.firstIndex(where: { $0.id == order.workspaceID }), workspaces[index].directoryOrders?[order.directoryPath] == order.expected {
+                        if let prior = order.prior { workspaces[index].directoryOrders?[order.directoryPath] = prior }
+                        else { workspaces[index].directoryOrders?.removeValue(forKey: order.directoryPath) }
+                        refreshInBackground()
+                    } else { failures.append(L("排序已变化，未恢复本次拖放前的顺序。")) }
+                }
+                if !failures.isEmpty { self.errorMessage = failures.joined(separator: "\n") }
+            }
+        return true
+    }
+
     /// Native footer drops only assign metadata. Revalidate at release so a
     /// disabled setting, busy operation or invalid batch cannot mutate files.
     @discardableResult func applyDroppedColorLabel(_ value: Int, urls: [URL]) -> Bool {
-        guard settings.resolvedColorLabelFilterEnabled, HubFinderLabel(rawValue: value) != nil,
-              !stagingTransferInProgress, !sharingInProgress, fileOperationsInProgress == 0 else { return false }
-        do { _ = try HubFinderFileActions.files(urls) }
+        guard settings.resolvedColorLabelFilterEnabled, let label = HubFinderLabel(rawValue: value),
+              !stagingTransferInProgress, !sharingInProgress, !dropUndoInProgress, fileOperationsInProgress == 0 else { return false }
+        return assignDroppedColorLabel(label, urls: urls, references: nil)
+    }
+
+    private func assignDroppedColorLabel(_ label: HubFinderLabel, urls: [URL], references: HubDropReferenceUndo?) -> Bool {
+        guard !dropUndoInProgress, !stagingTransferInProgress, !sharingInProgress, fileOperationsInProgress == 0 else { return false }
+        let files: [URL]
+        do { files = try HubDropLabelWork.validated(urls) }
         catch { errorMessage = error.localizedDescription; return false }
-        performFinderAction(.label(value), urls: urls)
+        dropUndoGeneration &+= 1
+        let generation = dropUndoGeneration
+        dropUndoNotice = nil
+        performFileWork(scopes: files, rememberScopes: false, affectsDropUndo: false, work: {
+            let result = HubDropLabelWork.apply(label, to: files)
+            var records: [HubDropUndo.Record] = [], unavailable = 0
+            for url in files where result.changed.contains(url.path) {
+                guard let old = result.previous[url.path] else {
+                    unavailable += 1; continue
+                }
+                do { records.append(try HubDropUndo.capture(source: nil, destination: url, transfer: .metadataOnly,
+                    originalLabel: old.label, appliedLabel: label.rawValue, originalTags: old.tags,
+                    originalTagSnapshot: old.tagSnapshot)) }
+                catch { unavailable += 1 }
+            }
+            return (result.changed, records, result.failures, unavailable)
+        }) { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .success(let (changed, records, failures, unavailable)):
+                if self.dropUndoGeneration == generation {
+                    if unavailable > 0 { self.fileDropUndoStack.removeAll() }
+                    self.rememberDropUndo(records, references: unavailable == 0 ? references : nil)
+                } else if !records.isEmpty || references != nil {
+                    self.dropUndoNotice = L("操作已完成，\(changed.count) 项无法安全撤销。")
+                }
+                if !changed.isEmpty {
+                    self.directorySnapshots.removeAll()
+                    HubFileIconCache.invalidate(files.filter { changed.contains($0.path) })
+                    self.refreshInBackground()
+                }
+                if !failures.isEmpty { self.errorMessage = failures.joined(separator: "\n") }
+                if unavailable > 0 { self.dropUndoNotice = L("操作已完成，\(unavailable) 项无法安全撤销。") }
+            case .failure(let error): self.errorMessage = error.localizedDescription
+            }
+        }
         return true
     }
 
@@ -1605,7 +1788,7 @@ enum HubFileOperations {
         let workspaceID = selectedWorkspaceID, directory = currentURL, selection = selectedIDs
         let aliasSuffix = L("替身"), archiveName = L("归档")
         if case .information = action { NotificationCenter.default.post(name: Notification.Name("HubDismissForExternalFileAction"), object: nil) }
-        performFileWork(scopes: files + files.map { $0.deletingLastPathComponent() }, rememberScopes: false, work: {
+        performFileWork(scopes: files + files.map { $0.deletingLastPathComponent() }, rememberScopes: false, affectsDropUndo: action != .information, work: {
             switch action {
             case .label(let value): return try HubFinderFileActions.setLabel(value, urls: files)
             case .folderStyle(let label, let icon):
@@ -1761,33 +1944,52 @@ enum HubFileOperations {
     /// never redirects files or rejects a legitimate asynchronous transfer.
     @discardableResult
     func acceptFileDrop(_ urls: [URL], workspaceID: UUID?, directory: URL?, copy: Bool,
-                        insertionOrder: [URL]? = nil, before: URL? = nil) -> Bool {
+                        insertionOrder: [URL]? = nil, before: URL? = nil,
+                        labelOnDrop: HubFinderLabel? = nil, preserveLocalInPlace: Bool = false) -> Bool {
         guard let index = workspaces.firstIndex(where: { $0.id == workspaceID }), workspaces[index].mode != .recents,
-              !urls.isEmpty, urls.count <= Self.maximumReferences, fileOperationsInProgress < 3 else { return false }
-        let files = urls.filter(\.isFileURL).map(\.standardizedFileURL)
-        guard !files.isEmpty else { return false }
+              !urls.isEmpty, urls.count <= Self.maximumReferences, fileOperationsInProgress < 3, !dropUndoInProgress else { return false }
+        let files: [URL]
+        do { files = try HubDropLabelWork.validated(urls) }
+        catch { errorMessage = error.localizedDescription; return false }
+        if labelOnDrop != nil && (fileOperationsInProgress > 0 || sharingInProgress || stagingTransferInProgress) { return false }
         // Remembering every source must not write the entire configuration once
         // per item when a real folder receives a batch.
         beginPersistenceTransaction(); defer { endPersistenceTransaction() }
         if directory == nil && workspaceID == settings.stagingWorkspaceID {
+            let previous = workspaces[index].referencePaths
             let accepted = stageFiles(files)
             if accepted, let insertionOrder {
                 recordDropInsertion(files, workspaceID: workspaceID, directoryPath: nil, priorOrder: insertionOrder, before: before)
                 if isStagingRoot { refresh() }
             }
+            if accepted, let labelOnDrop, let id = workspaceID, let fresh = workspaces.first(where: { $0.id == id }) {
+                let references = previous == fresh.referencePaths ? nil : HubDropReferenceUndo(workspaceID: id, prior: previous, expected: fresh.referencePaths)
+                if !assignDroppedColorLabel(labelOnDrop, urls: files, references: references) { errorMessage = L("设置颜色标签失败：请稍后重试。") }
+            }
             return accepted
         }
         if directory == nil && workspaces[index].mode == .references {
             beginPersistenceTransaction(); defer { endPersistenceTransaction() }
+            let previous = workspaces[index].referencePaths
             let paths = uniquePaths(workspaces[index].referencePaths + files.map(\.path))
             guard canStoreReferences(paths) else { return false }
             files.forEach(remember)
             workspaces[index].referencePaths = paths
             if let insertionOrder { recordDropInsertion(files, workspaceID: workspaceID, directoryPath: nil, priorOrder: insertionOrder, before: before) }
+            if labelOnDrop == nil, previous != workspaces[index].referencePaths { invalidateFileDropUndo() }
             if selectedWorkspaceID == workspaceID { refresh() }
+            if let labelOnDrop, let id = workspaceID {
+                let expected = workspaces[index].referencePaths
+                let references = previous == expected ? nil : HubDropReferenceUndo(workspaceID: id, prior: previous, expected: expected)
+                if !assignDroppedColorLabel(labelOnDrop, urls: files, references: references) { errorMessage = L("设置颜色标签失败：请稍后重试。") }
+            }
             return true
         }
         guard let directory else { return false }
+        dropUndoGeneration &+= 1
+        let generation = dropUndoGeneration
+        if labelOnDrop == nil { fileDropUndoStack.removeAll() }
+        dropUndoNotice = nil
         let orderPath = selectedWorkspaceID == workspaceID && currentURL?.standardizedFileURL == directory.standardizedFileURL
             ? directoryOrderPath : directory.standardizedFileURL.path
         let operationID = UUID()
@@ -1797,28 +1999,63 @@ enum HubFileOperations {
         Task { @MainActor in
             defer { fileOperationsInProgress -= 1; dropScopeURLs.removeValue(forKey: operationID); persistIfReady() }
             let result = await Task.detached(priority: .userInitiated) {
-                var completed: [(URL, URL, Bool)] = [], failures: [String] = []
+                var completed: [(URL, URL, Bool, Bool, HubDropUndo.CopySnapshot?)] = [], failures: [String] = []
                 for source in HubFileOperations.topLevelURLs(files) {
                     let values = try? source.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
                     let directorySource = values?.isDirectory == true && values?.isSymbolicLink != true
-                    do { completed.append((source, try HubFileOperations.transfer(source, to: directory, copy: copy), directorySource)) }
+                    let local = preserveLocalInPlace && HubFileOperations.canonical(source.deletingLastPathComponent()) == HubFileOperations.canonical(directory)
+                    let itemCopy = copy && !local
+                    let copySource = itemCopy && labelOnDrop != nil ? try? HubDropUndo.captureCopySource(source) : nil
+                    do { completed.append((source, try HubFileOperations.transfer(source, to: directory, copy: itemCopy), directorySource, itemCopy, copySource)) }
                     catch { failures.append("\(source.lastPathComponent)：\(error.localizedDescription)") }
                 }
                 let positions = Dictionary(files.enumerated().map { ($0.element.path, $0.offset) }, uniquingKeysWith: min)
                 completed.sort { positions[$0.0.path, default: .max] < positions[$1.0.path, default: .max] }
-                return (completed, failures)
+                let labeling = labelOnDrop.map { HubDropLabelWork.apply($0, to: completed.map { $0.1 }) }
+                if let labeling { failures += labeling.failures }
+                var undo: [HubDropUndo.Record] = [], unavailable = 0
+                for (source, target, _, itemCopy, copySource) in completed where labelOnDrop != nil {
+                    let isMetadataOnly = !itemCopy && source.standardizedFileURL == target.standardizedFileURL
+                    let changed = labeling?.changed.contains(target.standardizedFileURL.path) == true
+                    if isMetadataOnly && !changed { continue }
+                    let previous = labeling?.previous[target.standardizedFileURL.path]
+                    if changed && previous == nil {
+                        if isMetadataOnly { unavailable += 1; continue }
+                        if !itemCopy { unavailable += 1 }
+                    }
+                    do {
+                        undo.append(try HubDropUndo.capture(source: itemCopy || isMetadataOnly ? nil : source, destination: target,
+                            transfer: isMetadataOnly ? .metadataOnly : itemCopy ? .copy : .move,
+                            originalLabel: changed ? previous?.label : nil, appliedLabel: changed && previous != nil ? labelOnDrop?.rawValue : nil,
+                            originalTags: changed ? previous?.tags : nil, copySource: copySource,
+                            originalTagSnapshot: changed ? previous?.tagSnapshot : nil))
+                    } catch { unavailable += 1 }
+                }
+                return (completed, failures, undo, unavailable)
             }.value
             beginPersistenceTransaction(); defer { endPersistenceTransaction() }
-            if !copy {
-                for (source, target, children) in result.0 where source != target {
+            for (source, target, children, itemCopy, _) in result.0 where !itemCopy && source != target {
                     relocateReferences(from: source, to: target, includingChildren: children)
+            }
+            if labelOnDrop != nil { directorySnapshots.removeAll(); HubFileIconCache.invalidate(result.0.map { $0.1 }) }
+            var undoOrder: HubDropDirectoryOrderUndo?
+            if let insertionOrder, !result.0.isEmpty {
+                let oldOrder = workspaces.first(where: { $0.id == workspaceID })?.directoryOrders?[orderPath]
+                recordDropInsertion(result.0.map { $0.1 }, workspaceID: workspaceID, directoryPath: orderPath, priorOrder: insertionOrder, before: before)
+                let newOrder = workspaces.first(where: { $0.id == workspaceID })?.directoryOrders?[orderPath]
+                if labelOnDrop != nil, oldOrder != newOrder, let id = workspaceID {
+                    undoOrder = HubDropDirectoryOrderUndo(workspaceID: id, directoryPath: orderPath, prior: oldOrder, expected: newOrder)
                 }
             }
-            if let insertionOrder, !result.0.isEmpty {
-                recordDropInsertion(result.0.map { $0.1 }, workspaceID: workspaceID, directoryPath: orderPath, priorOrder: insertionOrder, before: before)
+            if dropUndoGeneration == generation {
+                if result.3 > 0 { fileDropUndoStack.removeAll() }
+                rememberDropUndo(result.2, directoryOrder: result.3 == 0 ? undoOrder : nil)
+            } else if !result.2.isEmpty || undoOrder != nil {
+                dropUndoNotice = L("操作已完成，\(result.0.count) 项无法安全撤销。")
             }
             refreshInBackground()
             if !result.1.isEmpty { errorMessage = result.1.joined(separator: "\n") }
+            if result.3 > 0 { dropUndoNotice = L("操作已完成，\(result.3) 项无法安全撤销。") }
         }
         return true
     }

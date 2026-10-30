@@ -36,7 +36,7 @@ struct HubFileDropRegionKey: PreferenceKey {
 }
 
 struct HubFileDropPlan {
-    enum Action { case move, copy, reference, reorder, airDrop, createWorkspace, colorLabel }
+    enum Action { case move, copy, reference, reorder, airDrop, createWorkspace, colorLabel, colorLabelMove, colorLabelCopy }
     var workspaceID: UUID?
     var directory: URL?
     var item: URL?
@@ -61,7 +61,7 @@ struct HubFileDropFeedback: Equatable {
         case .reorder: return L("调整顺序")
         case .airDrop: return L("通过 AirDrop 发送")
         case .createWorkspace: return L("创建标签")
-        case .colorLabel: return L("设置颜色标签")
+        case .colorLabel, .colorLabelMove, .colorLabelCopy: return L("设置颜色标签")
         }
     }
     private var symbol: String {
@@ -72,12 +72,14 @@ struct HubFileDropFeedback: Equatable {
         case .reorder: return "arrow.up.arrow.down"
         case .airDrop: return "airplayaudio"
         case .createWorkspace: return "folder.badge.plus"
-        case .colorLabel: return "tag"
+        case .colorLabel, .colorLabelMove, .colorLabelCopy: return "tag"
         }
     }
     var prompt: String {
         if action == .createWorkspace { return L("松开以将文件夹添加为标签 · 数量：\(count)") }
         if action == .colorLabel { return L("松开以设置 \(count) 项的颜色标签：\(title)") }
+        if action == .colorLabelMove { return L("松开以移入并设色 \(count) 项 · \(title)；当前文件夹内仅设色") }
+        if action == .colorLabelCopy { return L("松开以拷入并设色 \(count) 项 · \(title)；当前文件夹内仅设色") }
         return action == .airDrop ? L("松开以通过 AirDrop 发送 \(count) 项") : L("松开以\(verb) \(count) 项 · \(title)")
     }
     func overlay(in size: CGSize) -> some View {
@@ -104,7 +106,7 @@ struct HubFileDropFeedback: Equatable {
             HStack(spacing: 7) {
                 Image(systemName: symbol)
                 Text(prompt).lineLimit(1).truncationMode(.middle)
-                if action == .move { Text(L("⌥ 复制")).foregroundStyle(.secondary) }
+                if action == .move || action == .colorLabelMove { Text(L("⌥ 复制")).foregroundStyle(.secondary) }
             }
             .font(.system(size: 11, weight: .medium))
             .padding(.horizontal, 12).padding(.vertical, 8)

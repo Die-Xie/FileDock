@@ -82,6 +82,8 @@ The following technical documents and most earlier release notes are currently i
 - [Code quality and performance review](docs/QUALITY_REVIEW.md)
 - [Release notes](docs/releases/)
 
+**1.34.1** applies the selected color when dropping files into a filtered view or onto a color button, with safe undo for supported color drops. [Release notes](docs/releases/v1.34.1.md).
+
 **1.34.0** refines settings and shortcuts, adds light Liquid Glass, and separates hover enablement from its delay. [Release notes](docs/releases/v1.34.0.md).
 
 **1.33.0** expands color-button hit areas and adds hover filtering and drag-to-label without moving files. [Release notes](docs/releases/v1.33.0.md).

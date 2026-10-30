@@ -25,6 +25,7 @@ struct HubColorLabelFilterInput {
 struct HubColorLabelFilterBar: View {
     let selection: HubFinderLabel?
     let onSelect: (HubFinderLabel?) -> Void
+    var movesDroppedFilesToCurrentDirectory = false
     var hoverDelay: TimeInterval = 0.1
     var hoverEnabled = true
     var canHover: () -> Bool = { true }
@@ -68,7 +69,9 @@ struct HubColorLabelFilterBar: View {
                         .accessibilityLabel(L("筛选：\(label.name)"))
                         .accessibilityAddTraits(selection == label ? .isSelected : [])
                         .accessibilityIdentifier("filedock.color-filter.\(label.rawValue)")
-                        .help(L("\(label.name)：悬停筛选，拖入文件设置标签"))
+                        .help(movesDroppedFilesToCurrentDirectory
+                              ? L("\(label.name)：悬停筛选；拖入设色，外部文件移入当前文件夹，按 ⌥ 复制")
+                              : L("\(label.name)：悬停筛选，拖入文件设置标签"))
                         .onContinuousHover(coordinateSpace: CoordinateSpace.local) { updateHover($0, label: label) }
                         .anchorPreference(key: HubFileDropRegionKey.self, value: .bounds) { [.colorLabel(label.rawValue): $0] }
                 }

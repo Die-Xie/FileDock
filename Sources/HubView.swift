@@ -86,6 +86,16 @@ struct HubView: View {
                     Button(L("重试")) { model.retryDirectoryLoad() }.controlSize(.small)
                 }.padding(.horizontal, 16).padding(.vertical, 8)
             }
+            if let notice = model.dropUndoNotice {
+                HStack(spacing: 10) {
+                    Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange)
+                    Text(notice).font(.caption).lineLimit(2)
+                    Spacer(minLength: 0)
+                    Button { model.dropUndoNotice = nil } label: {
+                        Image(systemName: "xmark")
+                    }.buttonStyle(.plain).accessibilityLabel(L("关闭"))
+                }.padding(.horizontal, 16).padding(.vertical, 8)
+            }
             if model.isStagingRoot { stagingActions }
             content
                 // Keep the surrounding viewport's existing window-layout
@@ -530,7 +540,7 @@ struct HubView: View {
                         delay: model.settings.switchDelay,
                         canActivate: { presentation.previewVisible && model.settings.resolvedStagingEnabled && !HubWorkspaceDragState.isDragging },
                         activate: { if !model.isStagingWorkspace { model.openStagingWorkspace() } },
-                        targeted: { stagingDropTargeted = $0; if $0 { presentation.setFileDragActive(true) } }, receive: receiveStagingDrop))
+                        targeted: { stagingDropTargeted = $0; if $0 { presentation.setFileDragActive(true) } }, receive: { receiveStagingDrop($0) }))
                     .anchorPreference(key: HubFileDropRegionKey.self, value: .bounds) { [.staging: $0] }
                     .contextMenu {
                         HubMenuButton(L("打开暂存区"), systemImage: "tray") { model.openStagingWorkspace() }
@@ -835,18 +845,33 @@ struct HubView: View {
                 let feedback = plan.map { HubFileDropFeedback(rect: $0.workspaceInsertion?.marker ?? $0.slot?.rect ?? $0.item.flatMap { frames[$0] } ?? region?.visibleFrame(in: regions) ?? .zero,
                     title: $0.title, count: urls.count, action: $0.action, insertion: $0.slot != nil || $0.workspaceInsertion != nil) }
                 if fileDropFeedback != feedback { fileDropFeedback = feedback }
-                return plan?.action == .move || plan?.action == .reorder ? .move : plan == nil ? [] : .copy
+                return plan?.action == .move || plan?.action == .colorLabelMove || plan?.action == .reorder ? .move : plan == nil ? [] : .copy
             }, exited: clearFileDrop,
             receive: { urls, payload, point, copy in
                 if let slot = insertion(at: point), !model.isKnownNonFolderDrop(urls, knownFolderURLs: payload?.folderURLs) { return model.addFolderWorkspaces(urls, before: slot.before) }
                 guard let region = HubFileDropRegion.at(point, in: regions),
                       let plan = fileDropPlan(region: region, point: point, frames: frames, content: regions[.content] ?? .zero, order: order, payload: payload, copy: copy, urls: urls) else { return false }
                 if plan.action == .airDrop { return queueAirDropFiles(urls) }
-                if case .colorLabel(let label) = region { return model.applyDroppedColorLabel(label, urls: urls) }
-                if plan.action == .reorder { model.reorderEntries(urls, before: plan.slot?.before); return true }
+                if case .colorLabel(let value) = region {
+                    guard let label = HubFinderLabel(rawValue: value) else { return false }
+                    if let directory = model.currentURL, model.selectedWorkspace?.mode != .recents {
+                        return model.acceptFileDrop(urls, workspaceID: model.selectedWorkspaceID, directory: directory,
+                            copy: copy, labelOnDrop: label, preserveLocalInPlace: true)
+                    }
+                    return model.applyDroppedColorLabel(value, urls: urls)
+                }
+                if plan.action == .reorder {
+                    if let label = model.colorLabelFilter {
+                        return model.acceptFileDrop(urls, workspaceID: plan.workspaceID, directory: plan.directory, copy: false,
+                            insertionOrder: order, before: plan.slot?.before, labelOnDrop: label)
+                    }
+                    model.reorderEntries(urls, before: plan.slot?.before)
+                    return true
+                }
                 if region == .staging { return model.stageFiles(urls) }
+                let label = region == .content && plan.item == nil ? model.colorLabelFilter : nil
                 let accepted = model.acceptFileDrop(urls, workspaceID: plan.workspaceID, directory: plan.directory, copy: copy,
-                    insertionOrder: plan.slot == nil ? nil : order, before: plan.slot?.before)
+                    insertionOrder: plan.slot == nil ? nil : order, before: plan.slot?.before, labelOnDrop: label)
                 if !accepted && model.errorMessage == nil { model.errorMessage = L("目标暂时不可用，文件尚未转移。请等待正在进行的操作完成后重试。") }
                 return accepted
             })
@@ -894,8 +919,13 @@ struct HubView: View {
         switch region {
         case .colorLabel(let value):
             guard canReceiveColorLabelDrop, let label = HubFinderLabel(rawValue: value),
-                  !urls.isEmpty, urls.count <= 1000 else { return nil }
-            return HubFileDropPlan(workspaceID: nil, directory: nil, item: nil, title: label.name, action: .colorLabel)
+                  !urls.isEmpty, urls.count <= HubModel.maximumReferences else { return nil }
+            let directory = model.currentURL
+            let hasDirectory = directory != nil && model.selectedWorkspace?.mode != .recents
+            // Compare normalized paths without filesystem I/O on the drag tracking path.
+            let hasExternal = hasDirectory && urls.contains { $0.deletingLastPathComponent().standardizedFileURL != directory?.standardizedFileURL }
+            let action: HubFileDropPlan.Action = !hasExternal ? .colorLabel : copy ? .colorLabelCopy : .colorLabelMove
+            return HubFileDropPlan(workspaceID: nil, directory: nil, item: nil, title: label.name, action: action)
         case .airDrop:
             return HubFileDropPlan.airDrop(urls: urls, allowed: presentation.previewVisible && canReceiveAirDrop)
         case .workspace(let id):
@@ -1245,6 +1275,7 @@ struct HubView: View {
             iconButton("arrow.up", L("上一级"), disabled: !model.canGoUp) { model.goUp() }
             if model.settings.resolvedColorLabelFilterEnabled {
                 HubColorLabelFilterBar(selection: model.colorLabelFilter, onSelect: model.setColorLabelFilter,
+                    movesDroppedFilesToCurrentDirectory: model.currentURL != nil && model.selectedWorkspace?.mode != .recents,
                     hoverDelay: model.settings.switchDelay,
                     hoverEnabled: model.settings.resolvedHoverSwitchingEnabled && presentation.previewVisible && !presentation.defersFileRendering && !presentation.windowMoving &&
                         !presentation.layoutChanging && !presentation.surfaceAnimating && renameEntry == nil,
@@ -1397,11 +1428,15 @@ struct HubView: View {
         if let payload = HubFileDragState.localPayload(for: providers), HubFileDragData.shouldReorder(payload, in: fileDragContext) {
             // A folder is also an ordering target for a local drag. Never turn
             // rearrangement into a filesystem move into that folder or itself.
+            if let label = model.colorLabelFilter {
+                return model.acceptFileDrop(payload.urls, workspaceID: model.selectedWorkspaceID, directory: model.currentURL,
+                    copy: false, insertionOrder: model.fileOrderURLs, before: entry.url, labelOnDrop: label)
+            }
             model.reorderEntries(payload.urls, before: entry.url)
             fileDropTarget = nil
             return true
         }
-        if model.isStagingRoot { return receiveStagingDrop(providers) }
+        if model.isStagingRoot { return receiveStagingDrop(providers, labelCurrentContext: true) }
         if model.isReferenceRoot { return receiveDrop(providers, destination: nil, reorderLocal: false) }
         guard entry.isDirectory && !entry.isPackage else { return false }
         return receiveDrop(providers, destination: entry.url, reorderLocal: false)
@@ -1411,19 +1446,24 @@ struct HubView: View {
         guard !model.isRecentsRoot else { return false }
         guard !HubFileDragState.isDragging || HubFileDragState.localPayload(for: providers) != nil else { return false }
         if reorderLocal, let payload = HubFileDragState.localPayload(for: providers), HubFileDragData.shouldReorder(payload, in: fileDragContext) {
+            if let label = model.colorLabelFilter {
+                return model.acceptFileDrop(payload.urls, workspaceID: model.selectedWorkspaceID, directory: model.currentURL,
+                    copy: false, insertionOrder: model.fileOrderURLs, labelOnDrop: label)
+            }
             model.reorderEntries(payload.urls, before: nil)
             return true
         }
-        if model.isStagingRoot { return receiveStagingDrop(providers) }
+        if model.isStagingRoot { return receiveStagingDrop(providers, labelCurrentContext: true) }
+        let label = destination?.standardizedFileURL == model.currentURL?.standardizedFileURL ? model.colorLabelFilter : nil
         let fileProviders = providers.filter { $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) }
-        if fileProviders.isEmpty { return receiveImageDrop(providers, destination: destination) }
+        if fileProviders.isEmpty { return receiveImageDrop(providers, destination: destination, label: label) }
         guard fileProviders.count <= 20000, let ticket = HubImportActivity.begin() else { return false }
         let copy = NSEvent.modifierFlags.contains(.option)
         let workspaceID = model.selectedWorkspaceID
         let batch = HubDropBatch(count: fileProviders.count) { urls in
             HubImportActivity.end(ticket)
             guard !urls.isEmpty else { model.errorMessage = L("无法读取拖入的文件地址。"); return }
-            if !model.acceptFileDrop(urls, workspaceID: workspaceID, directory: destination, copy: copy) {
+            if !model.acceptFileDrop(urls, workspaceID: workspaceID, directory: destination, copy: copy, labelOnDrop: label) {
                 model.errorMessage = L("目标工作区已不可用，或已有多个文件传输正在进行。")
             }
         }
@@ -1439,25 +1479,33 @@ struct HubView: View {
         }
         return true
     }
-    private func receiveStagingDrop(_ providers: [NSItemProvider]) -> Bool {
+    private func receiveStagingDrop(_ providers: [NSItemProvider], labelCurrentContext: Bool = false) -> Bool {
         guard model.settings.resolvedStagingEnabled, !model.stagingTransferInProgress else { return false }
-        if let payload = HubFileDragState.localPayload(for: providers) { return model.stageFiles(payload.urls) }
+        let label = labelCurrentContext ? model.colorLabelFilter : nil
+        let workspaceID = labelCurrentContext ? model.selectedWorkspaceID : nil
+        func store(_ urls: [URL]) -> Bool {
+            if labelCurrentContext { return model.acceptFileDrop(urls, workspaceID: workspaceID, directory: nil, copy: false, labelOnDrop: label) }
+            return model.stageFiles(urls)
+        }
+        if let payload = HubFileDragState.localPayload(for: providers) {
+            return store(payload.urls)
+        }
         guard !HubFileDragState.isDragging else { return false }
         return HubStagingDropReceiver.receive(providers) { urls, failures in
-            if !urls.isEmpty, !model.stageFiles(urls) {
+            if !urls.isEmpty, !store(urls) {
                 model.errorMessage = L("暂存区当前不可用。导入的文件已保留，请重新开启暂存区后添加。")
             } else if !failures.isEmpty {
                 model.errorMessage = failures.joined(separator: "\n")
             }
         }
     }
-    private func receiveImageDrop(_ providers: [NSItemProvider], destination: URL?) -> Bool {
+    private func receiveImageDrop(_ providers: [NSItemProvider], destination: URL?, label: HubFinderLabel?) -> Bool {
         let workspaceID = model.selectedWorkspaceID
         // One bounded importer handles images, SVG, promises and web images.
         // As with native files, collection roots accept references to imported
         // content and a captured folder remains the target after navigation.
         return HubStagingDropReceiver.receive(providers) { urls, failures in
-            if !urls.isEmpty, !model.acceptFileDrop(urls, workspaceID: workspaceID, directory: destination, copy: true) {
+            if !urls.isEmpty, !model.acceptFileDrop(urls, workspaceID: workspaceID, directory: destination, copy: true, labelOnDrop: label) {
                 model.errorMessage = L("目标工作区已不可用。导入内容已保留在本机暂存目录。")
             } else if !failures.isEmpty { model.errorMessage = failures.joined(separator: "\n") }
         }

@@ -295,7 +295,7 @@ struct HubSettingsView: View {
                 Toggle(L("显示颜色标签筛选"), isOn: Binding(get: { model.settings.resolvedColorLabelFilterEnabled }, set: { model.settings.colorLabelFilterEnabled = $0 }))
                     .accessibilityIdentifier("filedock.settings.color-label-filter")
                 note(L("点按或悬停颜色可筛选，并可与名称搜索叠加。切换位置或关闭此功能会清除筛选。"))
-                note(L("将文件拖到颜色上松开以设置访达颜色标签；拖到“无颜色”可移除颜色。原文件位置不变。"))
+                note(L("将文件拖到颜色上设置访达标签；在文件夹中，外部文件会移入当前目录，按住 Option 可复制。拖到“无颜色”可移除颜色。"))
                 Toggle(L("排序时文件夹优先"), isOn: Binding(get: { model.settings.resolvedFoldersFirst }, set: { model.settings.foldersFirst = $0 }))
                 note(L("关闭文件夹优先后，文件与文件夹按同一列混排。手动顺序和最近使用不受影响。"))
             }

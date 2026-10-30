@@ -479,6 +479,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
             switchWorkspace(character == "[" ? -1 : 1); return true
         }
         if HubInlinePreviewFocus.contains(panel.firstResponder) || panel.firstResponder is NSTextView { return false }
+        if event.window === panel, event.keyCode == UInt16(kVK_ANSI_Z),
+           flags.intersection([.command, .control, .option, .shift]) == .command {
+            return model.undoLastFileDrop()
+        }
         if event.keyCode == UInt16(kVK_Escape) { hidePanel(); return true }
         return false
     }
