@@ -1,0 +1,35 @@
+<?xml version="1.0" standalone="yes"?><!-- sparkle-sign-warning:
+IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+    <channel>
+        <title>FileDock</title>
+        <item>
+            <title>1.34.0</title>
+            <pubDate>Fri, 30 Oct 2026 11:36:00 +0800</pubDate>
+            <link>https://github.com/Die-Xie/FileDock</link>
+            <sparkle:version>79</sparkle:version>
+            <sparkle:shortVersionString>1.34.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown"><![CDATA[# FileDock 1.34.0
+
+- 设置侧栏的“退出 FileDock”与其他条目的图标和文字对齐。
+- 调整快捷键组合符号的视觉间距，保持按键录制与现有快捷键不变。
+- 液态玻璃新增浅色和跟随系统选项；升级时保留原有深色玻璃，纯色主题的外观偏好单独保存。
+- 悬停切换改为独立开关，0 ms 表示立即切换。旧版以 0 ms 关闭悬停的配置会保留关闭状态；文件拖放时仍可悬停切换。
+
+## English
+
+- Aligns Quit FileDock with the other settings sidebar icons and labels.
+- Improves spacing between shortcut symbols while preserving recording and existing shortcuts.
+- Adds light and system-following appearances for Liquid Glass. Existing installations retain dark glass, and the solid theme keeps its own appearance preference.
+- Uses a separate hover-switching toggle, with 0 ms meaning immediate selection. Legacy configurations that used 0 ms to disable hover remain disabled; drag-hover switching remains available.
+
+Requires macOS 13 or later. Universal build for Apple Silicon and Intel. Signed, not yet notarized by Apple. Existing settings and workspaces are preserved.
+]]></description>
+            <enclosure url="https://github.com/Die-Xie/FileDock/releases/download/v1.34.0/FileDock.zip" length="7313558" type="application/octet-stream" sparkle:edSignature="vcwd6MgAlpgeNKdYQ+flAT/e0wZnRHHRTPBpAf2fuLGzPEEjsOBODUg+d7+7vERk1FeRBmOXotq2dxZ2Ts5gCw=="></enclosure>
+        </item>
+    </channel>
+</rss><!-- sparkle-signatures:
+edSignature: NTUKNKPArsM2AXBhV4WpdwpSqzcqhO2Rk8zj8wHTnZquKfrxOhNcR0fxnV+0ox/sh07c0PXouvRu71bJliK8CA==
+length: 2351
+-->
