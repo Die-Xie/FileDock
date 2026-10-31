@@ -82,7 +82,7 @@ The following technical documents and most earlier release notes are currently i
 - [Code quality and performance review](docs/QUALITY_REVIEW.md)
 - [Release notes](docs/releases/)
 
-**1.35.0** adds an optional notch extension with subtle motion and improves color-button drops and undo focus. [Release notes](docs/releases/v1.35.0.md).
+**1.35.1** refines Notch Extension with a softer start and one subtle overshoot that settles naturally, while preserving the unified file-drop fixes from 1.35.0. [Release notes](docs/releases/v1.35.1.md).
 
 **1.34.1** applies the selected color when dropping files into a filtered view or onto a color button, with safe undo for supported color drops. [Release notes](docs/releases/v1.34.1.md).
 

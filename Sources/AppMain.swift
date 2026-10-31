@@ -394,7 +394,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
             MainActor.assumeIsolated {
                 guard let self, let window = note.object as? NSWindow, window === self.panel,
                       self.desiredVisible, !self.hasActiveDialog else { return }
-                self.windowDragSession = (self.panel.frame.origin, self.attachedToNotch, self.anchoredCorner)
+                self.windowDragSession = (self.logicalPanelFrame.origin, self.attachedToNotch, self.anchoredCorner)
                 self.windowDragReleased = false
             }
         })
@@ -535,12 +535,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
             bridgePanel.orderOut(nil)
             bridgeView.setPresented(false, animated: false) {}
             let frame = screen.visibleFrame
-            let width = min(max(model.settings.width, 600), frame.width - 24)
-            let height = min(max(model.settings.height, 300), frame.height - 24)
+            let width = min(requestedPanelSize.width, frame.width - 24)
+            let height = min(requestedPanelSize.height, frame.height - 24)
             restoringSize = true
-            panel.setFrame(NSRect(x: min(max(pointer.x - width / 2, frame.minX + 12), frame.maxX - width - 12),
+            setPanelLogicalFrame(NSRect(x: min(max(pointer.x - width / 2, frame.minX + 12), frame.maxX - width - 12),
                                   y: min(max(pointer.y - height - 14, frame.minY + 12), frame.maxY - height - 4),
-                                  width: width, height: height), display: true)
+                                  width: width, height: height), overscan: false)
             restoringSize = false
             updateSurfaceStyle()
         } else if anchoredCorner != nil { layoutCornerPanel(on: screen) }
@@ -636,6 +636,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
                               liquidGlass: model.settings.resolvedBackgroundTheme == "liquidGlass")
     }
 
+    /// Native backing space is separate from the user's visible panel size.
+    /// The spring can extend into this space without resizing the file view.
+    private var logicalPanelFrame: NSRect {
+        HubNotchMotion.extensionRestingBounds(in: panel.frame, enabled: surface.overscanEnabled)
+    }
+
+    private var requestedPanelSize: NSSize {
+        NSSize(width: model.settings.width.isFinite ? min(1600, max(600, model.settings.width)) : 900,
+               height: model.settings.height.isFinite ? min(1100, max(300, model.settings.height)) : 480)
+    }
+
+    private func setPanelLogicalFrame(_ frame: NSRect, overscan: Bool) {
+        let previousRestoring = restoringSize
+        restoringSize = true
+        defer { restoringSize = previousRestoring }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        if surface.overscanEnabled != overscan, surface.isAnimating {
+            surface.cancelAnimationsAndShow()
+        }
+        surface.setOverscanEnabled(overscan)
+        panel.minSize = HubNotchMotion.extensionWindowFrame(for: NSRect(x: 0, y: 0, width: 600, height: 300), enabled: overscan).size
+        panel.maxSize = HubNotchMotion.extensionWindowFrame(for: NSRect(x: 0, y: 0, width: 1600, height: 1100), enabled: overscan).size
+        let outer = HubNotchMotion.extensionWindowFrame(for: frame, enabled: overscan)
+        if panel.frame != outer { panel.setFrame(outer, display: false) }
+        surface.layoutSubtreeIfNeeded()
+        CATransaction.commit()
+        panel.displayIfNeeded()
+    }
+
     private func layoutAttachedPanel(on screen: NSScreen?) {
         guard let screen else { return }
         let wasEmbedded = presentation.header.embedded
@@ -650,9 +680,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
             let placement = HubEmbeddedPlacement.make(screenFrame: screen.frame, visibleFrame: screen.visibleFrame,
                                                       safeTop: screen.safeAreaInsets.top,
                                                       leftAuxiliary: screen.auxiliaryTopLeftArea, rightAuxiliary: screen.auxiliaryTopRightArea,
-                                                      requestedSize: NSSize(width: model.settings.width, height: model.settings.height))
+                                                      requestedSize: requestedPanelSize)
             restoringSize = true
-            if panel.frame != placement.bodyFrame { panel.setFrame(placement.bodyFrame, display: true) }
+            setPanelLogicalFrame(placement.bodyFrame, overscan: model.settings.resolvedNotchIntegrationStyle == "extension" && placement.headerExclusionWidth > 0)
             restoringSize = false
             presentation.header = .init(embedded: true, exclusionWidth: placement.headerExclusionWidth,
                                         topInset: placement.topInset, split: placement.usesSplitHeader)
@@ -666,10 +696,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         let placement = HubNotchPlacement.make(screenFrame: screen.frame, visibleFrame: screen.visibleFrame,
                                                safeTop: screen.safeAreaInsets.top,
                                                leftAuxiliary: screen.auxiliaryTopLeftArea, rightAuxiliary: screen.auxiliaryTopRightArea,
-                                               requestedSize: NSSize(width: model.settings.width, height: model.settings.height))
+                                               requestedSize: requestedPanelSize)
         attachedScreenNumber = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
         restoringSize = true
-        if panel.frame != placement.bodyFrame { panel.setFrame(placement.bodyFrame, display: true) }
+        setPanelLogicalFrame(placement.bodyFrame, overscan: false)
         if bridgePanel.frame != placement.bridgeFrame { bridgePanel.setFrame(placement.bridgeFrame, display: true) }
         restoringSize = false
         updateSurfaceStyle(sourceWidth: placement.sourceWidth)
@@ -684,7 +714,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         guard let screen, let corner = anchoredCorner,
               let placement = HubCornerPlacement.make(corner: corner, screenFrame: screen.frame,
                   visibleFrame: screen.visibleFrame,
-                  requestedSize: NSSize(width: model.settings.width, height: model.settings.height)) else { return }
+                  requestedSize: requestedPanelSize) else { return }
         attachedToNotch = false
         panel.allowsScreenTopOverlap = false
         presentation.header = .init()
@@ -693,7 +723,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         bridgePanel.orderOut(nil)
         bridgeView.setPresented(false, animated: false) {}
         restoringSize = true
-        panel.setFrame(placement.bodyFrame, display: true)
+        setPanelLogicalFrame(placement.bodyFrame, overscan: false)
         restoringSize = false
         updateSurfaceStyle()
         updatePanelLevel()
@@ -752,7 +782,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
 
     private func finishWindowDragIfReleased() {
         guard let session = windowDragSession else {
-            if presentation.windowMoving && NSEvent.pressedMouseButtons & 1 == 0 { presentation.endWindowMove(reduceMotion: reduceMotion) }
+            if presentation.windowMoving && NSEvent.pressedMouseButtons & 1 == 0 {
+                presentation.endWindowMove(reduceMotion: reduceMotion)
+                if !attachedToNotch, surface.overscanEnabled {
+                    setPanelLogicalFrame(logicalPanelFrame, overscan: false)
+                }
+            }
             return
         }
         guard (NSEvent.pressedMouseButtons & 1) == 0 else { windowDragReleased = false; return }
@@ -762,8 +797,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         windowDragSession = nil
         windowDragReleased = false
         presentation.endWindowMove(reduceMotion: reduceMotion)
+        // Keep backing insets unchanged while AppKit owns the drag, then remove
+        // them without moving any visible content when that drag is over.
+        defer {
+            if !attachedToNotch, surface.overscanEnabled {
+                setPanelLogicalFrame(logicalPanelFrame, overscan: false)
+            }
+        }
         guard desiredVisible, !attachedToNotch, anchoredCorner == nil, !hasActiveDialog, let screen = panel.screen else { return }
-        let moved = panel.frame.origin != session.origin
+        let moved = logicalPanelFrame.origin != session.origin
         if !moved, let corner = session.corner {
             anchoredCorner = corner
             model.pinned = windowAttachment.didAttach(currentlyPinned: model.pinned)
@@ -771,7 +813,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
             layoutCornerPanel(on: screen)
             return
         }
-        guard (moved && model.settings.hotCorner == "notch" && HubWindowAttachmentPolicy.shouldReattach(frame: panel.frame,
+        guard (moved && model.settings.hotCorner == "notch" && HubWindowAttachmentPolicy.shouldReattach(frame: logicalPanelFrame,
                     screenVisibleFrame: screen.visibleFrame, sourceWidth: bridgeView.sourceWidth)) ||
                 (!moved && session.wasAttached) else { return }
         attachedToNotch = true
@@ -852,13 +894,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         }
         guard !hasActiveDialog else { hoverDismissal.reset(); fileDragDismissal.reset(); return }
         if panel.isVisible, desiredVisible {
-            guard !surface.isAnimating, !bridgeView.isAnimating else { hoverDismissal.reset(); fileDragDismissal.reset(); return }
+            guard !surface.blocksAutomaticDismissal(now: uptime), !bridgeView.isAnimating else { hoverDismissal.reset(); fileDragDismissal.reset(); return }
             let localPoint = surface.convert(panel.convertPoint(fromScreen: pointer), from: nil)
             let insideSurface = surface.containsVisiblePoint(localPoint)
             let bridgePoint = bridgeView.convert(bridgePanel.convertPoint(fromScreen: pointer), from: nil)
             let insideBridge = attachedToNotch && !embeddedAtNotch && bridgeView.containsVisiblePoint(bridgePoint)
             if insideSurface { hoverDismissal.notePointerEntered() }
-            if !HubFileDragState.isDragging, !HubWorkspaceDragState.isDragging, !HubMarqueeSelectionState.isSelecting, !panel.inLiveResize,
+            if !surface.isAnimating, !HubFileDragState.isDragging, !HubWorkspaceDragState.isDragging, !HubMarqueeSelectionState.isSelecting, !panel.inLiveResize,
                windowDragSession == nil, now.timeIntervalSince(lastRefresh) > 2 {
                 model.refreshInBackground(ifDue: true); lastRefresh = now
             }
@@ -866,11 +908,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
             let sheetOpen = hasActiveDialog || menuOpen || HubInlineFileNameEditor.isEditing(in: panel)
             let previewVisible = QLPreviewPanel.sharedPreviewPanelExists() && QLPreviewPanel.shared()?.isVisible == true
             let insideCornerPath = cornerKeepAliveFrame.map { HubHoverGeometry.containsTriggerPoint(pointer, in: $0) } ?? false
-            let outside = !insideSurface && !insideBridge && !insideCornerPath && !panel.frame.insetBy(dx: -12, dy: -12).contains(pointer) && !hovering
+            let outside = !insideSurface && !insideBridge && !insideCornerPath && !logicalPanelFrame.insetBy(dx: -12, dy: -12).contains(pointer) && !hovering
             // Source ownership, pasteboard and native drag session remain alive
             // while the panel animates out. Never end/cancel the drag to hide it.
             // This explicit preference also allows pinned panels to make room.
-            let dragOutside = !insideSurface && !insideBridge && !panel.frame.insetBy(dx: -12, dy: -12).contains(pointer)
+            let dragOutside = !insideSurface && !insideBridge && !logicalPanelFrame.insetBy(dx: -12, dy: -12).contains(pointer)
             let canDismissDrag = model.settings.resolvedHideOnFileDragExit && !sheetOpen && !previewVisible &&
                 settingsWindow?.isVisible != true && !HubWorkspaceDragState.isDragging && !HubMarqueeSelectionState.isSelecting &&
                 !panel.inLiveResize && windowDragSession == nil
@@ -1037,14 +1079,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
                 return
             }
             let visible = screen.visibleFrame
-            let width = min(max(600, model.settings.width), visible.width - 24)
-            let height = min(max(300, model.settings.height), visible.height - 24)
-            if abs(panel.frame.width - width) > 1 || abs(panel.frame.height - height) > 1 {
-                let top = panel.frame.maxY
-                let x = min(max(panel.frame.minX, visible.minX + 12), visible.maxX - width - 12)
+            let width = min(requestedPanelSize.width, visible.width - 24)
+            let height = min(requestedPanelSize.height, visible.height - 24)
+            if abs(logicalPanelFrame.width - width) > 1 || abs(logicalPanelFrame.height - height) > 1 {
+                let top = logicalPanelFrame.maxY
+                let x = min(max(logicalPanelFrame.minX, visible.minX + 12), visible.maxX - width - 12)
                 let y = min(max(top - height, visible.minY + 12), visible.maxY - height - 4)
                 restoringSize = true
-                panel.setFrame(NSRect(x: x, y: y, width: width, height: height), display: true)
+                setPanelLogicalFrame(NSRect(x: x, y: y, width: width, height: height), overscan: surface.overscanEnabled)
                 restoringSize = false
             }
         }
@@ -1065,8 +1107,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
     func windowDidResize(_ notification: Notification) {
         guard desiredVisible, !restoringSize, let window = notification.object as? NSWindow, window === panel else { return }
         var settings = model.settings
-        settings.width = panel.frame.width
-        settings.height = panel.frame.height
+        settings.width = logicalPanelFrame.width
+        settings.height = logicalPanelFrame.height
         model.settings = settings
         if attachedToNotch { layoutAttachedPanel(on: attachmentScreen) }
         else if anchoredCorner != nil { layoutCornerPanel(on: attachmentScreen) }

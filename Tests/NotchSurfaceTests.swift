@@ -121,6 +121,11 @@ struct NotchSurfaceTests {
         testWindowShadowLifecycle()
         testEmbeddedSurface()
         testNotchExtensionSurface()
+        testExtensionReveal()
+        testExtensionOpeningCurve()
+        testExtensionOverscan()
+        testExtensionMidContourContinuation()
+        testExtensionTailInterruption()
         testGlassMaterial()
         testStalledTransitions()
 
@@ -462,11 +467,11 @@ struct NotchSurfaceTests {
         surface.setPresented(true, animated: true) { }
         expect(surface.isAnimating && content.frame == contentFrame && !animations(mask).isEmpty,
                "Opening must animate the contour while the browser remains fixed")
-        let opening = animations(mask).first as! CABasicAnimation
-        let openingFrom = opening.fromValue as! CGPath, openingTo = opening.toValue as! CGPath
-        expect(pathCommands(openingFrom) == pathCommands(openingTo) && openingFrom.boundingBoxOfPath.height == 0 &&
-               openingTo.boundingBoxOfPath == surface.bounds,
-               "One continuous contour must grow from the cutout to the complete bounded panel")
+        let opening = pathAnimation(mask)!
+        let contours = opening.values as! [CGPath]
+        expect(contours.first!.boundingBoxOfPath.height == 0 && contours.last!.boundingBoxOfPath == surface.bounds &&
+               contours.allSatisfy { pathCommands($0) == pathCommands(contours[0]) },
+               "The sampled reveal must preserve a continuous cutout-to-panel contour with matching path commands")
         surface.setPresented(false, animated: true) { }
         let reversing = mask.animation(forKey: "notchMorph") as! CABasicAnimation
         expect((reversing.fromValue as! CGPath).boundingBoxOfPath.height == 0,
@@ -499,6 +504,290 @@ struct NotchSurfaceTests {
         expect(content.frame == surface.bounds,
                "Floating and corner panels must never inherit the notch silhouette or dark band")
         expect(!surface.containsVisiblePoint(NSPoint(x: 2, y: 475)), "Detached panels retain their regular rounded corners")
+    }
+
+    @MainActor private static func testExtensionReveal() {
+        for (speed, normalized) in [(0.5, 0.5), (0.7, 0.7), (1.0, 1.0), (2.0, 2.0), (Double.nan, 1.0)] {
+            let content = NSView(frame: .zero)
+            let surface = HubNotchSurface(contentView: content)
+            surface.frame = CGRect(x: 0, y: 0, width: 900, height: 480)
+            surface.configure(attached: true, sourceWidth: 212, bodyColor: .black, reduceMotion: false,
+                              animationSpeed: speed, embedded: true, notchExtension: true)
+            surface.layoutSubtreeIfNeeded()
+            let frame = content.frame
+            let mask = surface.layer?.mask as! CAShapeLayer
+            let startedBefore = ProcessInfo.processInfo.systemUptime
+            var staleOpen = 0, closes = 0
+            surface.setPresented(true, animated: true) { staleOpen += 1 }
+            let startedAfter = ProcessInfo.processInfo.systemUptime
+            let motion = pathAnimation(mask)!
+            let values = motion.values as! [CGPath]
+            let times = motion.keyTimes!.map(\.doubleValue)
+            if speed == 1 { print("METRIC: extension reveal setup \((startedAfter - startedBefore) * 1000) ms, \(values.count) precomputed paths") }
+            expect(values.count == times.count && values.count == HubNotchMotion.extensionSampleCount && values.count <= 120 && times.first == 0 && times.last == 1,
+                   "The extension must use a fixed bounded number of precomputed contour samples")
+            let arrival = motion.duration * HubNotchMotion.extensionArrivalFraction * normalized
+            expect(abs(motion.duration - 0.38 / normalized) < 0.0001 && arrival >= 0.25 && arrival <= 0.26,
+                   "Only the extension uses a soft 0.38-second reveal, reaching the target near 0.252 seconds at normal speed")
+            expect(values.last!.boundingBoxOfPath == surface.bounds,
+                   "The final resting size must match the requested panel exactly")
+            var previousWidth: CGFloat = 0, previousHeight: CGFloat = 0
+            for path in values {
+                let rect = path.boundingBoxOfPath
+                expect(rect.minX.isFinite && rect.minY.isFinite && rect.maxX.isFinite && rect.maxY.isFinite &&
+                       rect.minX >= surface.bounds.minX - 0.00001 && rect.maxX <= surface.bounds.maxX + 0.00001 &&
+                       rect.minY >= surface.bounds.minY - 0.00001 && abs(rect.maxY - surface.bounds.maxY) < 0.00001 &&
+                       pathCommands(path) == pathCommands(values[0]),
+                       "Every contour must retain finite bounded geometry and the same interpolation topology")
+                expect(rect.width >= previousWidth - 0.00001 && rect.height >= previousHeight - 0.00001,
+                       "A compatibility caller without overscan must remain inside its native window")
+                previousWidth = rect.width
+                previousHeight = rect.height
+            }
+            expect(content.frame == frame && content.layer?.opacity == 1 && CATransform3DIsIdentity(content.layer!.transform) &&
+                   (content.layer?.animationKeys() ?? []).isEmpty,
+                   "The browser content must remain sharp and stationary during the sampled reveal")
+            expect(surface.blocksAutomaticDismissal(now: startedBefore) &&
+                   surface.blocksAutomaticDismissal(now: startedBefore + motion.duration * HubNotchMotion.extensionArrivalFraction - 0.001),
+                   "The first reveal must finish before automatic dismissal is eligible")
+            expect(surface.isAnimating && !surface.blocksAutomaticDismissal(now: startedAfter + motion.duration * HubNotchMotion.extensionArrivalFraction + 0.001),
+                   "The decorative tail must not hold an otherwise eligible automatic dismissal")
+            expect(surface.blocksAutomaticDismissal(now: .nan), "An invalid clock must not dismiss an in-flight reveal")
+            surface.setPresented(false, animated: true) { closes += 1 }
+            expect(surface.blocksAutomaticDismissal(now: startedAfter + 100),
+                   "Closing must discard the prior reveal's automatic-dismissal deadline")
+            let close = mask.animation(forKey: "notchMorph") as! CABasicAnimation
+            expect((close.fromValue as! CGPath).boundingBoxOfPath.height == 0,
+                   "An immediate reverse must use the unrendered opening seed rather than flash a full panel")
+            surface.recoverStalledTransition(now: startedAfter + 100)
+            surface.recoverStalledTransition(now: startedAfter + 200)
+            expect(staleOpen == 0 && closes == 1 && !surface.isAnimating && !surface.blocksAutomaticDismissal(now: startedAfter),
+                   "A closing watchdog must execute only the current completion and clear its eligibility")
+            surface.setPresented(true, animated: false) { }
+            surface.setPresented(false, animated: true) { staleOpen += 1 }
+            var settles = 0
+            surface.setPresented(true, animated: true) { settles += 1 }
+            expect(pathAnimation(mask) == nil,
+                   "Reopening a nearly full-size contour must settle directly without replaying its overshoot")
+            let settle = mask.animation(forKey: "notchMorph") as! CABasicAnimation
+            expect(settle.duration <= 0.12 / normalized + 0.0001,
+                   "A nearly complete reveal must use a short continuation")
+            surface.recoverStalledTransition(now: startedAfter + 300)
+            expect(settles == 1 && staleOpen == 0 && maskBounds(surface) == surface.bounds,
+                   "Only the current near-open continuation may complete")
+            surface.configure(attached: true, sourceWidth: 212, bodyColor: .black, reduceMotion: true,
+                              animationSpeed: speed, embedded: true, notchExtension: true)
+            surface.setPresented(false, animated: false) { }
+            surface.setPresented(true, animated: true) { }
+            expect(animations(mask).isEmpty && surface.blocksAutomaticDismissal(now: startedAfter + 1000),
+                   "Reduce Motion retains its short fade and never enables an overshoot tail")
+            surface.cancelAnimationsAndShow()
+            expect(!surface.blocksAutomaticDismissal(now: startedAfter), "Manual cancellation clears animation blocking")
+        }
+        expect(HubNotchMotion.extensionProgress(at: .nan) == 0 &&
+               HubNotchMotion.extensionProgress(at: .infinity) == 0,
+               "Invalid sample time must never produce non-finite geometry")
+    }
+
+    @MainActor private static func testExtensionOpeningCurve() {
+        let surface = HubNotchSurface(contentView: NSView(frame: .zero))
+        surface.frame = CGRect(x: 0, y: 0, width: 900, height: 480)
+        surface.configure(attached: true, sourceWidth: 212, bodyColor: .black, reduceMotion: false,
+                          embedded: true, notchExtension: true)
+        surface.setPresented(true, animated: true) { }
+        let opening = pathAnimation(surface.layer?.mask as! CAShapeLayer)!
+        let times = opening.keyTimes!.map(\.doubleValue)
+        expect(opening.calculationMode == .linear && opening.timingFunctions == nil &&
+               zip(times, times.dropFirst()).allSatisfy { $0 < $1 },
+               "One sampled trajectory must replace the independently eased opening and two tail phases")
+        let initialSlope = HubNotchMotion.extensionProgress(at: 0.00001) / 0.00001
+        expect(initialSlope >= 0 && initialSlope < 0.001,
+               "The contour must leave rest with zero velocity rather than a sudden first-frame impulse")
+        let first20ms = HubNotchMotion.extensionProgress(at: 0.020 / opening.duration)
+        expect(first20ms >= 0.02 && first20ms <= 0.06,
+               "The soft start must still visibly respond within the first 20 milliseconds")
+        let arrival = HubNotchMotion.extensionProgress(at: HubNotchMotion.extensionArrivalFraction)
+        expect(abs(arrival - 1) < 0.00000001,
+               "Automatic dismissal may become eligible only when the working extent reaches its target")
+        var previous: CGFloat = 0, maximum: CGFloat = 0
+        var falling = false, peaks = 0
+        let h = 0.001
+        var previousAcceleration: CGFloat?
+        for index in 0...1000 {
+            let t = Double(index) * h
+            let response = HubNotchMotion.extensionProgress(at: t)
+            expect(response.isFinite && response >= 0 && response <= 1.01,
+                   "The continuous response must remain finite with less than one percent overshoot")
+            if response < previous && !falling { peaks += 1; falling = true }
+            if falling { expect(response <= previous + 0.00000001 && response >= 1,
+                                "The single overshoot must return monotonically to the resting extent") }
+            maximum = max(maximum, response)
+            if index > 0 && index < 1000 {
+                let before = HubNotchMotion.extensionProgress(at: t - h)
+                let after = HubNotchMotion.extensionProgress(at: t + h)
+                let acceleration = (after - 2 * response + before) / CGFloat(h * h)
+                if let previousAcceleration {
+                    expect(abs(acceleration - previousAcceleration) < 0.2,
+                           "The unified trajectory must not introduce an acceleration pulse between independent tail easings")
+                }
+                previousAcceleration = acceleration
+            }
+            previous = response
+        }
+        expect(peaks == 1 && maximum > 1.008 && previous == 1,
+               "One genuine size overshoot must settle exactly at the final contour")
+        let tailStep = 0.0001
+        let tailVelocity = (HubNotchMotion.extensionProgress(at: 1) - HubNotchMotion.extensionProgress(at: 1 - tailStep)) / tailStep
+        let tailAcceleration = (HubNotchMotion.extensionProgress(at: 1) - 2 * HubNotchMotion.extensionProgress(at: 1 - tailStep) +
+                                HubNotchMotion.extensionProgress(at: 1 - 2 * tailStep)) / (tailStep * tailStep)
+        expect(abs(tailVelocity) < 0.0001 && abs(tailAcceleration) < 0.002,
+               "Both velocity and acceleration must vanish into the final resting contour")
+        surface.cancelAnimationsAndShow()
+    }
+
+    @MainActor private static func testExtensionOverscan() {
+        let screenRest = CGRect(x: 120, y: 140, width: 1600, height: 1100)
+        let canvas = HubNotchMotion.extensionWindowFrame(for: screenRest, enabled: true)
+        let roundTrip = HubNotchMotion.extensionRestingBounds(in: canvas, enabled: true)
+        expect(roundTrip == screenRest && canvas.maxY == screenRest.maxY && canvas.width == 1620 && canvas.height == 1112,
+               "Overscan must add only side and bottom room while preserving the logical screen rectangle")
+        expect(HubNotchMotion.extensionWindowFrame(for: screenRest, enabled: false) == screenRest &&
+               HubNotchMotion.extensionRestingBounds(in: screenRest, enabled: false) == screenRest &&
+               HubNotchMotion.extensionRestingBounds(in: .zero, enabled: true) == .zero &&
+               HubNotchMotion.extensionWindowFrame(for: CGRect(x: 0, y: 0, width: CGFloat.nan, height: 10), enabled: true) == .zero,
+               "Disabled, zero and invalid geometry must retain safe deterministic frame mappings")
+        let content = NSView(frame: .zero)
+        let surface = HubNotchSurface(contentView: content)
+        surface.frame = CGRect(origin: .zero, size: canvas.size)
+        expect(!surface.overscanEnabled && surface.restingBounds == surface.bounds,
+               "Existing surface callers must have no extra insets by default")
+        surface.setOverscanEnabled(true)
+        surface.configure(attached: true, sourceWidth: 80, bodyColor: .black, reduceMotion: false,
+                          animationSpeed: 0.7, embedded: true, notchExtension: true)
+        surface.setPresented(true, animated: true) { }
+        let resting = surface.restingBounds
+        let contentFrame = content.frame
+        expect(resting == CGRect(x: 10, y: 12, width: 1600, height: 1100) && contentFrame == resting.insetBy(dx: 16, dy: 0),
+               "The fixed content frame must use the original logical body rather than the larger native canvas")
+        let mask = surface.layer?.mask as! CAShapeLayer
+        let samples = pathAnimation(mask)!.values as! [CGPath]
+        let peak = samples.max { $0.boundingBoxOfPath.height < $1.boundingBoxOfPath.height }!
+        expect(peak.boundingBoxOfPath.minY < resting.minY - 9.5 && peak.boundingBoxOfPath.minX < resting.minX - 6,
+               "The real contour must visibly overshoot its final bottom and side extents")
+        for path in samples {
+            expect(pathControlPoints(path).allSatisfy { point in
+                point.x >= surface.bounds.minX - 0.00000001 && point.x <= surface.bounds.maxX + 0.00000001 &&
+                point.y >= surface.bounds.minY - 0.00000001 && point.y <= surface.bounds.maxY + 0.00000001
+            }, "Every interpolated control point must fit the native canvas, including the maximum supported logical size")
+            expect(abs(path.boundingBoxOfPath.maxY - resting.maxY) < 0.00000001,
+                   "The physical top join must remain fixed throughout the true overshoot")
+        }
+        expect(peak.contains(CGPoint(x: resting.midX, y: resting.minY - 5)) &&
+               !samples.last!.contains(CGPoint(x: resting.midX, y: resting.minY - 5)),
+               "The overshoot must move the visible lower boundary, rather than only invisible curve handles")
+        expect(samples.last!.boundingBoxOfPath == resting && content.frame == contentFrame,
+               "The final mask must rest exactly on the logical body without resizing file content")
+        surface.cancelAnimationsAndShow()
+        surface.configure(attached: false, sourceWidth: 80, bodyColor: .black, reduceMotion: false,
+                          notchExtension: false)
+        surface.layoutSubtreeIfNeeded()
+        expect(surface.overscanEnabled && surface.restingBounds == resting && content.frame == resting && maskBounds(surface) == resting,
+               "A detached style must retain its canvas insets until its native window drag has ended")
+        surface.setOverscanEnabled(false)
+        surface.layoutSubtreeIfNeeded()
+        expect(surface.restingBounds == surface.bounds && content.frame == surface.bounds,
+               "Removing the canvas insets must restore the normal surface API")
+    }
+
+    @MainActor private static func testExtensionMidContourContinuation() {
+        let content = NSView(frame: .zero)
+        let surface = HubNotchSurface(contentView: content)
+        surface.frame = CGRect(x: 0, y: 0, width: 900, height: 480)
+        surface.configure(attached: true, sourceWidth: 212, bodyColor: .black, reduceMotion: false,
+                          animationSpeed: 0.7, embedded: true, notchExtension: true)
+        surface.setOverscanEnabled(true)
+        surface.setPresented(true, animated: true) { }
+        let mask = surface.layer?.mask as! CAShapeLayer
+        let original = pathAnimation(mask)!.values as! [CGPath]
+        let middle = original[38], target = original.last!
+        let extent = middle.boundingBoxOfPath.height / surface.restingBounds.height
+        expect(extent > 0 && extent < 0.9,
+               "The synthetic continuation origin must retain a genuine in-flight contour")
+        surface.cancelAnimationsAndShow()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        mask.path = middle
+        CATransaction.commit()
+        expect(mask.presentation() == nil,
+               "This deterministic continuation test uses the supplied contour without claiming a rendered presentation layer")
+        let frame = content.frame
+        var stale = 0, closes = 0
+        surface.setPresented(true, animated: true) { stale += 1 }
+        let continuation = pathAnimation(mask)!.values as! [CGPath]
+        func equalPoints(_ first: CGPath, _ second: CGPath) -> Bool {
+            let a = pathControlPoints(first), b = pathControlPoints(second)
+            return pathCommands(first) == pathCommands(second) && a.count == b.count &&
+                zip(a, b).allSatisfy { abs($0.x - $1.x) < 0.00000001 && abs($0.y - $1.y) < 0.00000001 }
+        }
+        expect(equalPoints(continuation.first!, middle) && equalPoints(continuation.last!, target),
+               "A continuation must preserve every supplied contour control point and finish exactly at the logical resting contour")
+        surface.setPresented(false, animated: true) { closes += 1 }
+        let reverse = mask.animation(forKey: "notchMorph") as! CABasicAnimation
+        expect(equalPoints(reverse.fromValue as! CGPath, middle),
+               "A zero-frame reversal must retain the same curved origin instead of replacing it with a bounding rectangle")
+        surface.recoverStalledTransition(now: ProcessInfo.processInfo.systemUptime + 10)
+        surface.recoverStalledTransition(now: ProcessInfo.processInfo.systemUptime + 20)
+        expect(stale == 0 && closes == 1 && content.frame == frame,
+               "A synthetic mid-contour reversal must finish once with stationary content and no stale completion")
+    }
+
+    @MainActor private static func testExtensionTailInterruption() {
+        let content = NSView(frame: .zero)
+        let surface = HubNotchSurface(contentView: content)
+        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 900, height: 480),
+                              styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = surface
+        defer { window.contentView = nil; window.close() }
+        surface.configure(attached: true, sourceWidth: 212, bodyColor: .black, reduceMotion: false,
+                          embedded: true, notchExtension: true)
+        surface.setOverscanEnabled(true)
+        surface.layoutSubtreeIfNeeded()
+        let frame = content.frame
+        var oldShow = 0, closes = 0
+        let start = ProcessInfo.processInfo.systemUptime
+        surface.setPresented(true, animated: true) { oldShow += 1 }
+        drainMainRunLoop(for: HubNotchMotion.extensionOpeningDuration * 0.75)
+        let interruptedOpening = surface.isAnimating
+        if !interruptedOpening {
+            print("LIMIT: the hidden window completed Core Animation before the sampled tail; rendered timing and tail reversal require UI validation")
+        }
+        expect(!surface.blocksAutomaticDismissal(now: ProcessInfo.processInfo.systemUptime),
+               "Time advancing into the rebound must release automatic dismissal")
+        let mask = surface.layer?.mask as! CAShapeLayer
+        let liveBounds = mask.presentation()?.path?.boundingBoxOfPath
+        surface.setPresented(false, animated: true) { closes += 1 }
+        expect(surface.blocksAutomaticDismissal(now: start + 100), "A tail interruption immediately becomes a closing transition")
+        let closing = mask.animation(forKey: "notchMorph") as! CABasicAnimation
+        if let liveBounds {
+            let origin = (closing.fromValue as! CGPath).boundingBoxOfPath
+            expect(abs(origin.minX - liveBounds.minX) < 1 && abs(origin.minY - liveBounds.minY) < 1 &&
+                   abs(origin.width - liveBounds.width) < 1 && abs(origin.height - liveBounds.height) < 1,
+                   "Closing during the rebound must begin at the current rendered contour")
+        } else {
+            print("LIMIT: the hidden window exposes no presentation path; tail timing and completion are verified, rendered reversal needs UI validation")
+        }
+        drainMainRunLoop(for: 0.30)
+        expect(oldShow == (interruptedOpening ? 0 : 1) && closes == 1 && !surface.isAnimating && surface.layer?.opacity == 0 && content.frame == frame,
+               "Closing must complete once without restoring an interrupted show or changing content geometry")
+        for (attached, extensionStyle) in [(true, false), (false, true)] {
+            surface.configure(attached: attached, sourceWidth: 212, bodyColor: .black, reduceMotion: false,
+                              embedded: true, notchExtension: extensionStyle)
+            surface.setPresented(true, animated: true) { }
+            expect(surface.blocksAutomaticDismissal(now: start + 1000),
+                   "Ordinary embedded and floating modes must keep their existing full-animation guard")
+            surface.cancelAnimationsAndShow()
+        }
     }
 
     @MainActor private static func testLiquidBridge() {
@@ -905,6 +1194,23 @@ struct NotchSurfaceTests {
         var commands: [Int32] = []
         path.applyWithBlock { commands.append($0.pointee.type.rawValue) }
         return commands
+    }
+
+    private static func pathControlPoints(_ path: CGPath) -> [CGPoint] {
+        var points: [CGPoint] = []
+        path.applyWithBlock { pointer in
+            let element = pointer.pointee
+            let count: Int
+            switch element.type {
+            case .moveToPoint, .addLineToPoint: count = 1
+            case .addQuadCurveToPoint: count = 2
+            case .addCurveToPoint: count = 3
+            case .closeSubpath: count = 0
+            @unknown default: count = 0
+            }
+            points.append(contentsOf: UnsafeBufferPointer(start: element.points, count: count))
+        }
+        return points
     }
 
     private static func width(of path: CGPath, at y: CGFloat) -> CGFloat {

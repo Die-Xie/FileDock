@@ -13,6 +13,44 @@ enum HubNotchMotion {
     static let bodyOpeningLead: TimeInterval = 0.034
     static let bodyClosingDuration: TimeInterval = 0.18
     static let reducedMotionDuration: TimeInterval = 0.10
+    // The native extension canvas reserves room for one real size overshoot.
+    static let extensionOpeningDuration: TimeInterval = 0.38
+    static let extensionArrivalFraction: Double = (3 + sqrt(36.2)) / 13.6
+    static let extensionSettlingDuration: TimeInterval = 0.12
+    static let extensionSampleCount = 91
+    static let extensionSideOverscan: CGFloat = 10
+    static let extensionBottomOverscan: CGFloat = 12
+
+    static func extensionWindowFrame(for restingFrame: CGRect, enabled: Bool) -> CGRect {
+        guard validRectangle(restingFrame) else { return .zero }
+        guard enabled else { return restingFrame }
+        return CGRect(x: restingFrame.minX - extensionSideOverscan,
+                      y: restingFrame.minY - extensionBottomOverscan,
+                      width: restingFrame.width + 2 * extensionSideOverscan,
+                      height: restingFrame.height + extensionBottomOverscan)
+    }
+
+    static func extensionRestingBounds(in bounds: CGRect, enabled: Bool) -> CGRect {
+        guard validRectangle(bounds) else { return .zero }
+        guard enabled else { return bounds }
+        let side = min(extensionSideOverscan, bounds.width / 2)
+        let bottom = min(extensionBottomOverscan, bounds.height)
+        return CGRect(x: bounds.minX + side, y: bounds.minY + bottom,
+                      width: bounds.width - 2 * side, height: bounds.height - bottom)
+    }
+
+    private static func validRectangle(_ rect: CGRect) -> Bool {
+        !rect.isNull && !rect.isInfinite && rect.minX.isFinite && rect.minY.isFinite &&
+            rect.width.isFinite && rect.height.isFinite && rect.width >= 0 && rect.height >= 0
+    }
+
+    static func extensionProgress(at progress: Double) -> CGFloat {
+        let t = progress.isFinite ? min(1, max(0, progress)) : 0
+        // A single polynomial starts at zero velocity, passes the target once,
+        // and returns monotonically from its only peak. Velocity and
+        // acceleration reach zero at rest, without splicing two tail easings.
+        return CGFloat(1 - pow(1 - t, 3) * (1 + 3 * t - 6.8 * t * t))
+    }
 
     static func normalizedSpeed(_ speed: Double) -> Double {
         speed.isFinite ? min(2, max(0.5, speed)) : 1

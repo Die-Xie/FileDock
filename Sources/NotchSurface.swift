@@ -107,10 +107,13 @@ final class HubNotchSurface: NSView {
     private var sourceWidth: CGFloat = 200
     private var reduceMotion = false
     private var animationSpeed = 1.0
+    private(set) var overscanEnabled = false
+    var restingBounds: CGRect { HubNotchMotion.extensionRestingBounds(in: bounds, enabled: overscanEnabled) }
     private var presented = false
     private var generation: UInt64 = 0
     private var transitionDeadline: TimeInterval?
     private var transitionCompletion: (() -> Void)?
+    private var automaticDismissalReadyAt: TimeInterval?
     private var measuredSize = NSSize.zero
     private weak var shadowWindow: NSWindow?
     private var shadowBeforeAnimation: Bool?
@@ -151,6 +154,19 @@ final class HubNotchSurface: NSView {
         DispatchQueue.main.async { [weak self] in self?.effectiveAppearanceDidChange?() }
     }
 
+    /// The canvas can outlive the attached style while AppKit owns a native
+    /// window drag. Its logical resting rectangle must remain stable until the
+    /// caller removes the padding after that drag has ended.
+    func setOverscanEnabled(_ enabled: Bool) {
+        guard overscanEnabled != enabled else { return }
+        overscanEnabled = enabled
+        needsLayout = true
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        if !isAnimating { applyRestingState() }
+        CATransaction.commit()
+    }
+
     func configure(attached: Bool, sourceWidth: CGFloat, bodyColor: NSColor, reduceMotion: Bool, animationSpeed: Double = 1, embedded: Bool = false, liquidGlass: Bool = false,
                    notchExtension: Bool = false) {
         let wasExtension = self.notchExtension
@@ -182,10 +198,11 @@ final class HubNotchSurface: NSView {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         glassMaterial.frame = bounds
-        hostedContent.frame = notchExtension ? bounds.insetBy(dx: min(shoulderInset, bounds.width / 2), dy: 0) : bounds
+        let resting = restingBounds
+        hostedContent.frame = notchExtension ? resting.insetBy(dx: min(shoulderInset, resting.width / 2), dy: 0) : resting
         revealMask.frame = bounds
         outline.frame = bounds
-        outline.path = roundedPath(in: bounds.insetBy(dx: 0.5, dy: 0.5), radius: 20)
+        outline.path = roundedPath(in: resting.insetBy(dx: 0.5, dy: 0.5), radius: 20)
         if measuredSize != bounds.size {
             measuredSize = bounds.size
             // Do not replace an in-flight mask when AppKit performs an otherwise
@@ -201,13 +218,16 @@ final class HubNotchSurface: NSView {
         let token = generation
         transitionDeadline = nil
         transitionCompletion = nil
+        automaticDismissalReadyAt = nil
         let fromPath = currentContour(of: revealMask, animationKey: "notchMorph", animating: isAnimating) ?? closedPath()
         let fromOpacity = currentOpacity(of: layer, animationKey: "notchSurfaceOpacity", animating: isAnimating)
         presented = value
         removeTransitionAnimations()
 
         let morph = attached && !reduceMotion
-        let baseDuration = morph ? (value ? HubNotchMotion.openingDuration :
+        let usesExtensionReveal = morph && value && notchExtension &&
+            fromPath.boundingBoxOfPath.height < restingBounds.height * 0.90
+        let baseDuration = morph ? (value ? (notchExtension ? (usesExtensionReveal ? HubNotchMotion.extensionOpeningDuration : HubNotchMotion.extensionSettlingDuration) : HubNotchMotion.openingDuration) :
                                     notchExtension ? HubNotchMotion.closingDuration : HubNotchMotion.bodyClosingDuration) : 0.18
         let duration: CFTimeInterval = reduceMotion ? HubNotchMotion.reducedMotionDuration : HubNotchMotion.scaledDuration(baseDuration, speed: animationSpeed)
         let targetPath = value || !morph ? openPath() : closedPath()
@@ -233,8 +253,10 @@ final class HubNotchSurface: NSView {
         }
 
         isAnimating = true
-        transitionDeadline = ProcessInfo.processInfo.systemUptime + duration + 1
+        let startedAt = ProcessInfo.processInfo.systemUptime
+        transitionDeadline = startedAt + duration + 1
         transitionCompletion = completion
+        if usesExtensionReveal { automaticDismissalReadyAt = startedAt + duration * HubNotchMotion.extensionArrivalFraction }
         suspendWindowShadow()
         CATransaction.begin()
         CATransaction.setCompletionBlock { [weak self] in
@@ -245,14 +267,19 @@ final class HubNotchSurface: NSView {
 
         if morph {
             if value {
-                let shape = CABasicAnimation(keyPath: "path")
-                shape.fromValue = fromPath
-                shape.toValue = targetPath
-                // One continuous curve avoids the visible pause introduced by
-                // a second settling phase. Reversals start at the live path.
-                shape.timingFunction = notchExtension
-                    ? CAMediaTimingFunction(controlPoints: 0.22, 0.84, 0.30, 1)
-                    : CAMediaTimingFunction(controlPoints: 0.16, 0.90, 0.22, 1)
+                let shape: CAPropertyAnimation
+                if usesExtensionReveal, let frames = extensionOpeningAnimation(from: fromPath, to: targetPath) {
+                    shape = frames
+                } else {
+                    automaticDismissalReadyAt = nil
+                    let basic = CABasicAnimation(keyPath: "path")
+                    basic.fromValue = fromPath
+                    basic.toValue = targetPath
+                    basic.timingFunction = notchExtension
+                        ? CAMediaTimingFunction(controlPoints: 0.18, 0.82, 0.30, 1)
+                        : CAMediaTimingFunction(controlPoints: 0.16, 0.90, 0.22, 1)
+                    shape = basic
+                }
                 // An embedded surface already meets the physical top edge,
                 // so it needs no wait for the separate connecting neck.
                 let lead = !embedded && fromPath.boundingBoxOfPath.height <= 0.01 ? HubNotchMotion.scaledDuration(HubNotchMotion.bodyOpeningLead, speed: animationSpeed) : 0
@@ -290,10 +317,19 @@ final class HubNotchSurface: NSView {
         finishTransition(token: generation)
     }
 
+    /// The extension is usable at its first arrival. Its decorative overshoot
+    /// must not postpone an already eligible mouse-exit dismissal.
+    func blocksAutomaticDismissal(now: TimeInterval) -> Bool {
+        guard isAnimating else { return false }
+        guard presented, notchExtension, let ready = automaticDismissalReadyAt, now.isFinite else { return true }
+        return now < ready
+    }
+
     private func finishTransition(token: UInt64) {
         guard generation == token, isAnimating, let completion = transitionCompletion else { return }
         transitionDeadline = nil
         transitionCompletion = nil
+        automaticDismissalReadyAt = nil
         isAnimating = false
         removeTransitionAnimations()
         CATransaction.begin()
@@ -310,6 +346,7 @@ final class HubNotchSurface: NSView {
         generation &+= 1
         transitionDeadline = nil
         transitionCompletion = nil
+        automaticDismissalReadyAt = nil
         removeTransitionAnimations()
         presented = true
         isAnimating = false
@@ -366,14 +403,74 @@ final class HubNotchSurface: NSView {
     }
 
     private func openPath() -> CGPath {
-        notchExtension ? extensionPath(in: bounds, shoulder: shoulderInset, bottomRadius: 26) : roundedPath(in: bounds, radius: 21)
+        notchExtension ? extensionPath(in: restingBounds, shoulder: shoulderInset, bottomRadius: 26) : roundedPath(in: restingBounds, radius: 21)
     }
     private func closedPath() -> CGPath {
-        let width = min(bounds.width, sourceWidth + (embedded ? 0 : 12))
+        let resting = restingBounds
+        let width = min(resting.width, sourceWidth + (embedded ? 0 : 12))
         // Zero area means a fresh reveal needs no body-wide delayed opacity
         // fade to conceal a visible pill while the neck is still extending.
-        let rect = CGRect(x: bounds.midX - width / 2, y: bounds.maxY, width: width, height: 0)
+        let rect = CGRect(x: resting.midX - width / 2, y: resting.maxY, width: width, height: 0)
         return notchExtension ? extensionPath(in: rect, shoulder: 0, bottomRadius: 0) : roundedPath(in: rect, radius: 0)
+    }
+
+    private func extensionOpeningAnimation(from origin: CGPath, to destination: CGPath) -> CAKeyframeAnimation? {
+        typealias Element = (type: CGPathElementType, points: [CGPoint])
+        func elements(_ path: CGPath) -> [Element] {
+            var result: [Element] = []
+            path.applyWithBlock { pointer in
+                let element = pointer.pointee
+                let count: Int
+                switch element.type {
+                case .moveToPoint, .addLineToPoint: count = 1
+                case .addQuadCurveToPoint: count = 2
+                case .addCurveToPoint: count = 3
+                case .closeSubpath: count = 0
+                @unknown default: count = 0
+                }
+                result.append((element.type, Array(UnsafeBufferPointer(start: element.points, count: count))))
+            }
+            return result
+        }
+        let source = elements(origin), target = elements(destination)
+        guard source.count == target.count,
+              source.indices.allSatisfy({ source[$0].type == target[$0].type &&
+                  source[$0].points.count == target[$0].points.count }) else { return nil }
+        var paths: [CGPath] = [], times: [NSNumber] = []
+        paths.reserveCapacity(HubNotchMotion.extensionSampleCount)
+        times.reserveCapacity(HubNotchMotion.extensionSampleCount)
+        for index in 0..<HubNotchMotion.extensionSampleCount {
+            let t = Double(index) / Double(HubNotchMotion.extensionSampleCount - 1)
+            let response = HubNotchMotion.extensionProgress(at: t)
+            // Callers without a reserved native canvas keep their old window
+            // bounds; only an explicitly padded surface may overshoot them.
+            let progress = overscanEnabled ? response : min(1, response)
+            let path = CGMutablePath()
+            for elementIndex in target.indices {
+                func point(_ pointIndex: Int) -> CGPoint {
+                    let start = source[elementIndex].points[pointIndex]
+                    let end = target[elementIndex].points[pointIndex]
+                    return CGPoint(x: start.x + (end.x - start.x) * progress,
+                                   y: start.y + (end.y - start.y) * progress)
+                }
+                switch target[elementIndex].type {
+                case .moveToPoint: path.move(to: point(0))
+                case .addLineToPoint: path.addLine(to: point(0))
+                case .addQuadCurveToPoint: path.addQuadCurve(to: point(1), control: point(0))
+                case .addCurveToPoint: path.addCurve(to: point(2), control1: point(0), control2: point(1))
+                case .closeSubpath: path.closeSubpath()
+                @unknown default: return nil
+                }
+            }
+            paths.append(path)
+            times.append(NSNumber(value: t))
+        }
+        let animation = CAKeyframeAnimation(keyPath: "path")
+        animation.values = paths
+        animation.keyTimes = times
+        animation.calculationMode = .linear
+        animation.timingFunction = CAMediaTimingFunction(name: .linear)
+        return animation
     }
 
     /// Same four lines and four cubic curves as the rounded mask, so both
