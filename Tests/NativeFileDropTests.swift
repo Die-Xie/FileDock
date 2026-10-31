@@ -3,7 +3,27 @@ import UniformTypeIdentifiers
 
 @main struct NativeFileDropTests {
     @MainActor static func main() {
+        #if FILEDOCK_DRAG_DIAGNOSTICS
+        let diagnosticProbe = HubNativeFileDropBridge.DestinationView(frame: .zero)
+        precondition(diagnosticProbe.diagnosticRole == "unified-file")
+        #endif
         _ = NSApplication.shared
+        // Use real event classes: reading eventNumber from a scroll event
+        // raises NSInternalInconsistencyException rather than a Swift error.
+        let wheel = NSEvent(cgEvent: CGEvent(scrollWheelEvent2Source: nil, units: .pixel,
+            wheelCount: 1, wheel1: 5, wheel2: 0, wheel3: 0)!)!
+        precondition(wheel.type == .scrollWheel)
+        HubLocalFilePressDispatch.begin(wheel)
+        precondition(HubLocalFilePressDispatch.contains(wheel))
+        precondition(!HubNativeFileDropData.takesHitTest(type: wheel.type, mousePressed: true,
+            fileDrag: false, workspaceDrag: false, localPressDispatch: HubLocalFilePressDispatch.contains(wheel)),
+            "A wheel event dispatched by FileDock must reach its scroll view")
+        let key = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: wheel.timestamp,
+            windowNumber: wheel.windowNumber, context: nil, characters: "a", charactersIgnoringModifiers: "a",
+            isARepeat: false, keyCode: 0)!
+        precondition(!HubLocalFilePressDispatch.contains(key), "A retained wheel identity must safely reject a keyboard event")
+        RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        precondition(!HubLocalFilePressDispatch.contains(wheel), "Local event ownership expires after dispatch")
         let board = NSPasteboard.withUniqueName()
         defer { board.releaseGlobally() }
         let a = URL(fileURLWithPath: "/native-drop/A.svg"), b = URL(fileURLWithPath: "/native-drop/B.bundle")
@@ -43,9 +63,21 @@ import UniformTypeIdentifiers
         precondition(HubNativeFileDropData.urls(from: board).isEmpty,
                      "A mixed invalid selection must be rejected rather than silently sharing its valid subset")
         for event in [NSEvent.EventType.leftMouseDown, .rightMouseDown, .scrollWheel] {
-            precondition(!HubNativeFileDropData.takesHitTest(type: event, mousePressed: true, fileDrag: true, workspaceDrag: false))
+            precondition(!HubNativeFileDropData.takesHitTest(type: event, mousePressed: true, fileDrag: true, workspaceDrag: false, localPressDispatch: true))
         }
         precondition(HubNativeFileDropData.takesHitTest(type: .leftMouseDragged, mousePressed: true, fileDrag: false, workspaceDrag: false))
+        for event in [NSEvent.EventType.leftMouseDown, .rightMouseDown, .rightMouseUp, .otherMouseDown, .otherMouseUp, .scrollWheel] {
+            precondition(HubNativeFileDropData.takesHitTest(type: event, mousePressed: true, fileDrag: false,
+                workspaceDrag: false, localPressDispatch: false),
+                "A Finder drag must not depend on the age of this app's retained event")
+        }
+
+        precondition(!HubNativeFileDropData.takesHitTest(type: .leftMouseDown, mousePressed: true, fileDrag: false, workspaceDrag: false, localPressDispatch: true),
+                     "A slow local press must reach the file source")
+        precondition(HubNativeFileDropData.takesHitTest(type: .leftMouseDown, mousePressed: true, fileDrag: false, workspaceDrag: false, localPressDispatch: false),
+                     "A retained local event must not mask a Finder drag")
+        precondition(HubNativeFileDropData.takesHitTest(type: .leftMouseDown, mousePressed: true, fileDrag: true, workspaceDrag: false, localPressDispatch: false),
+                     "An already active local drag must continue to reach its target")
         precondition(!HubNativeFileDropData.takesHitTest(type: .leftMouseDragged, mousePressed: true, fileDrag: false, workspaceDrag: true))
         // Exercise the actual destination callbacks, including a spring-loaded
         // context change while one AppKit drag/pasteboard stays alive.

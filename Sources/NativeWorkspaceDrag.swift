@@ -66,6 +66,7 @@ enum HubWorkspaceDragState {
     private static weak var source: AnyObject?
     private static var pasteboard: NSPasteboard?
     private static var pasteboardChangeCount: Int?
+    private static var releasedAt: TimeInterval?
     static var isDragging: Bool { current != nil }
 
     static func begin(_ payload: HubWorkspaceDragPayload, source: AnyObject) {
@@ -73,6 +74,7 @@ enum HubWorkspaceDragState {
         self.source = source
         pasteboard = nil
         pasteboardChangeCount = nil
+        releasedAt = nil
         NotificationCenter.default.post(name: hubWorkspaceDragDidBegin, object: nil)
     }
 
@@ -94,11 +96,29 @@ enum HubWorkspaceDragState {
 
     static func end(_ id: UUID, source: AnyObject) {
         guard current?.id == id, self.source === source else { return }
+        finish(id)
+    }
+
+    private static func finish(_ id: UUID) {
+        guard current?.id == id else { return }
         current = nil
         self.source = nil
         pasteboard = nil
         pasteboardChangeCount = nil
+        releasedAt = nil
         NotificationCenter.default.post(name: hubWorkspaceDragDidEnd, object: nil)
+    }
+
+    /// A source view can be replaced while AppKit owns the drag. If AppKit
+    /// never sends its completion, recover only after a stable mouse release;
+    /// never interrupt a live drag or allow a late callback to end a new one.
+    static func reconcile(mousePressed: Bool, now: TimeInterval) {
+        guard let id = current?.id, now.isFinite else { return }
+        if mousePressed { releasedAt = nil; return }
+        guard let releasedAt, now >= releasedAt else { self.releasedAt = now; return }
+        guard now - releasedAt >= 0.6 else { return }
+        HubWorkspaceDragBridge.WorkspaceDragView.clearAbandoned(id)
+        finish(id)
     }
 }
 
@@ -304,6 +324,18 @@ struct HubWorkspaceDragBridge: NSViewRepresentable {
             activeCompletion = nil
             if Self.activeSource === self { Self.activeSource = nil }
             HubWorkspaceDragState.end(id, source: self)
+            completion?(false)
+        }
+
+        static func clearAbandoned(_ id: UUID) {
+            guard let source = activeSource, source.activeID == id else { return }
+            source.activeID = nil
+            source.activeSession = nil
+            source.press = nil
+            source.clearInsertion()
+            let completion = source.activeCompletion
+            source.activeCompletion = nil
+            activeSource = nil
             completion?(false)
         }
 

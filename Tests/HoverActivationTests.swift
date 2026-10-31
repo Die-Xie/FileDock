@@ -99,6 +99,18 @@ struct HoverActivationTests {
         precondition(gate.update(regionID: notch, now: 99.31, delay: 0.2))
 
         var dismissal = HubHoverDismissal()
+        dismissal.beginPresentation()
+        precondition(!dismissal.mayDismissAfterOpening(shownFromHover: false, panelIsKey: true),
+                     "A newly opened keyboard panel waits for pointer entry or focus loss")
+        precondition(dismissal.mayDismissAfterOpening(shownFromHover: true, panelIsKey: true))
+        precondition(dismissal.mayDismissAfterOpening(shownFromHover: false, panelIsKey: false))
+        dismissal.notePointerEntered()
+        dismissal.reset() // Sharing and modal suspension cancel dwell, not pointer history.
+        precondition(dismissal.mayDismissAfterOpening(shownFromHover: false, panelIsKey: true),
+                     "Returning from sharing must retain the prior pointer visit")
+        dismissal.beginPresentation()
+        precondition(!dismissal.mayDismissAfterOpening(shownFromHover: false, panelIsKey: true),
+                     "A new presentation does not inherit the previous pointer visit")
         precondition(!dismissal.update(outside: true, now: 0, delay: 0.55))
         precondition(!dismissal.update(outside: true, now: 0.54, delay: 0.55))
         precondition(dismissal.update(outside: true, now: 0.56, delay: 0.55))

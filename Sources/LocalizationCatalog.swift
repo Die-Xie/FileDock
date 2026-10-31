@@ -4,6 +4,21 @@ import Foundation
 
 enum HubLocalizationCatalog {
     static let english: [String: String] = [
+        "无法确定放置位置，请重试拖动排序。": "Could not determine the drop position. Try dragging again.",
+        "使用群组": "Use Groups",
+        "其他": "Other",
+        "可在同一群组内拖动排序；关闭群组后保留调整后的手动顺序。": "Drag to reorder within a group. Your adjusted order is retained when grouping is turned off.",
+        "只能在同一群组内调整顺序": "Items can only be reordered within the same group",
+        "无法确定插入位置，请重新拖动并在插入线出现后松开。": "Cannot determine the insertion position. Drag again and release when the insertion line appears.",
+        "空文件": "Empty files",
+        "小于 1 MB": "Less than 1 MB",
+        "1 MB 至 100 MB": "1 MB to 100 MB",
+        "100 MB 或更大": "100 MB or larger",
+        "日期未知": "Unknown date",
+        "显示": "View",
+        "显示选项…": "View Options…",
+        "刘海延展": "Notch Extension",
+        "刘海嵌入与刘海延展会避开中央刘海；空间不足时顶栏移至下方。无刘海屏幕与光标旁呼出沿用现有样式。": "Notch Embedded and Notch Extension avoid the center cutout; when space is tight, the toolbar moves below it. Screens without a notch and pointer-position opening keep their existing appearance.",
         "启用悬停切换": "Enable Hover Switching",
         "macOS 26 使用原生玻璃，较早系统使用毛玻璃。": "Uses native glass on macOS 26 and a translucent material on earlier versions.",
         "{0}：悬停筛选，拖入文件设置标签": "{0}: hover to filter, drop files to set their label",

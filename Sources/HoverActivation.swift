@@ -247,6 +247,16 @@ struct HubHoverDismissal {
     private var departedAt: TimeInterval?
     private var lastTime: TimeInterval?
     private var fired = false
+    private var pointerEntered = false
+
+    /// A manual opening stays available until the pointer visits the panel or
+    /// focus leaves. Suspending the countdown (for example during sharing)
+    /// must not erase the fact that the pointer already entered it.
+    mutating func beginPresentation() { pointerEntered = false; reset() }
+    mutating func notePointerEntered() { pointerEntered = true }
+    func mayDismissAfterOpening(shownFromHover: Bool, panelIsKey: Bool) -> Bool {
+        shownFromHover || pointerEntered || !panelIsKey
+    }
 
     mutating func update(outside: Bool, now: TimeInterval, delay: TimeInterval, enabled: Bool = true) -> Bool {
         guard now.isFinite, lastTime == nil || now >= lastTime! else {

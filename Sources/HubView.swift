@@ -1,6 +1,9 @@
 import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
+import os
+
+private let hubFileDropLogger = Logger(subsystem: "local.diexie.filedock", category: "FileDrop")
 
 private struct HubMenuButton: View {
     var title: String
@@ -14,6 +17,48 @@ private struct HubMenuButton: View {
 private struct HubWorkspaceControlsWidthKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+}
+
+/// A shallow full-width tint gives the notch join a shared surface; the
+/// cutout itself stays black until it clears the hardware safe area.
+private struct HubNotchFusionGradient: View {
+    let cutoutWidth: CGFloat
+    let topInset: CGFloat
+    let split: Bool
+    let height: CGFloat
+    @Environment(\.colorScheme) private var colorScheme
+    var body: some View {
+        GeometryReader { geometry in
+            let width = HubNotchFusionGeometry.width(container: geometry.size.width, cutout: cutoutWidth,
+                                                      protectSideControls: colorScheme == .light)
+            let half = HubNotchFusionGeometry.opaqueFraction(width: width, cutout: cutoutWidth)
+            let left = 0.5 - half
+            let right = 0.5 + half
+            let baseOpacity = colorScheme == .dark ? 0.34 : 0.12
+            ZStack(alignment: .top) {
+                LinearGradient(stops: [.init(color: .black.opacity(baseOpacity), location: 0),
+                                       .init(color: .black.opacity(baseOpacity * 0.55), location: 0.35),
+                                       .init(color: .black.opacity(baseOpacity * 0.08), location: 0.75),
+                                       .init(color: .clear, location: 1)], startPoint: .top, endPoint: .bottom)
+                    .mask(LinearGradient(stops: [.init(color: .clear, location: 0),
+                                                 .init(color: .white, location: 0.05),
+                                                 .init(color: .white, location: 0.95),
+                                                 .init(color: .clear, location: 1)], startPoint: .leading, endPoint: .trailing))
+                LinearGradient(stops: HubNotchFusionGeometry.verticalStops(topInset: topInset, height: height, split: split).map {
+                    .init(color: .black.opacity($0.opacity), location: $0.location)
+                }, startPoint: .top, endPoint: .bottom)
+                .mask(LinearGradient(stops: [.init(color: .clear, location: 0),
+                                             .init(color: .white.opacity(0.10), location: left * 0.28),
+                                             .init(color: .white.opacity(0.45), location: left * 0.70),
+                                             .init(color: .white, location: left),
+                                             .init(color: .white, location: right),
+                                             .init(color: .white.opacity(0.45), location: right + (1 - right) * 0.30),
+                                             .init(color: .white.opacity(0.10), location: right + (1 - right) * 0.72),
+                                             .init(color: .clear, location: 1)], startPoint: .leading, endPoint: .trailing))
+                .frame(width: width, height: height)
+            }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        }.frame(height: height).allowsHitTesting(false).accessibilityHidden(true)
+    }
 }
 
 private struct HubShortcutReorderRegions {
@@ -45,6 +90,7 @@ struct HubView: View {
     @Namespace private var viewModeSelection
     var onSettings: () -> Void
     var onClose: () -> Void
+    var onFileDropFeedbackChanged: ((HubFileDropFeedback?) -> Void)? = nil
     @State private var editingWorkspace: Workspace?
     @State private var folderStyleEntry: FileEntry?
     @State private var newFolder = false
@@ -56,6 +102,8 @@ struct HubView: View {
     @State private var showsAirDropHint = false
     @State private var fileDropTarget: URL?
     @State private var fileDropFeedback: HubFileDropFeedback?
+    @State private var nativeColorDropHint: (label: HubFinderLabel, text: String)?
+    @State private var contentDropSize: CGSize = .zero
     @State private var workspaceHover = HubWorkspaceHoverController()
     @StateObject private var parentDirectory = HubParentDirectory()
     @StateObject private var workspaceSpringLoader = HubWorkspaceSpringLoader()
@@ -106,7 +154,12 @@ struct HubView: View {
                     activityIndicator
                 }
                 .overlay(RoundedRectangle(cornerRadius: 10).stroke(dropTargeted && fileDropFeedback == nil && !model.isRecentsRoot ? Color.accentColor : .clear, lineWidth: 2).padding(4))
-                .onDrop(of: [hubFileDragType, .fileURL, .image, .url, .item], isTargeted: $dropTargeted) { receiveDrop($0, destination: model.currentURL) }
+                .background(GeometryReader { geometry in Color.clear.preference(key: HubContentDropSizeKey.self, value: geometry.size) })
+                .onPreferenceChange(HubContentDropSizeKey.self) { contentDropSize = $0 }
+                .onDrop(of: [hubFileDragType, .fileURL, .image, .url, .item], delegate: HubContentFileDropDelegate(
+                    size: contentDropSize, types: [hubFileDragType, .fileURL, .image, .url, .item],
+                    targeted: { dropTargeted = $0 }, receive: { receiveDrop($0, destination: model.currentURL) },
+                    accepts: { !model.groupingActive || model.colorLabelFilter != nil || !(HubFileDragState.current.map { HubFileDragData.shouldReorder($0, in: fileDragContext) } ?? false) }))
                 .transformAnchorPreference(key: HubFileDropRegionKey.self, value: .bounds) { regions, anchor in regions[.content] = anchor }
             Divider().opacity(0.45)
             if embeddedMusicLayout.placement == .bottom {
@@ -118,16 +171,18 @@ struct HubView: View {
         .font(.system(size: model.settings.fontSize))
         .environment(\.locale, model.settings.resolvedLanguage.locale)
         .environment(\.hubInterfaceMotion, interfaceMotion)
+        .background(alignment: .top) {
+            if notchExtensionActive {
+                HubNotchFusionGradient(cutoutWidth: presentation.header.exclusionWidth,
+                                       topInset: presentation.header.topInset, split: presentation.header.split,
+                                       height: notchFusionHeight)
+            }
+        }
         .background(backgroundColor)
         .background(HubKeyMonitor(handler: handleKey))
         .overlayPreferenceValue(HubFileDropRegionKey.self) { anchors in
             GeometryReader { geometry in
                 let regions = anchors.mapValues { geometry[$0] }
-                let frames = Dictionary(uniqueKeysWithValues: regions.compactMap { key, frame -> (URL, CGRect)? in
-                    if case .item(let url) = key { return (url, frame) }; return nil
-                })
-                nativeFileDrop(regions: regions, frames: frames, size: geometry.size)
-                    .frame(width: geometry.size.width, height: geometry.size.height)
                 nativeWorkspaceReorderDrop(regions: regions, size: geometry.size)
                     .frame(width: geometry.size.width, height: geometry.size.height)
                 if let feedback = fileDropFeedback { feedback.overlay(in: geometry.size) }
@@ -143,6 +198,18 @@ struct HubView: View {
             GeometryReader { geometry in
                 HubWindowDragHandle(dragRects: HubHeaderDragGeometry.rectangles(
                     in: CGRect(origin: .zero, size: geometry.size), regions: anchors.mapValues { geometry[$0] }))
+                    .frame(width: geometry.size.width, height: geometry.size.height)
+            }
+        }
+        // One native file destination owns the graph. Its hitTest passes
+        // ordinary clicks, window movement and private workspace drags through.
+        .overlayPreferenceValue(HubFileDropRegionKey.self) { anchors in
+            GeometryReader { geometry in
+                let regions = anchors.mapValues { geometry[$0] }
+                let frames = Dictionary(uniqueKeysWithValues: regions.compactMap { key, frame -> (URL, CGRect)? in
+                    if case .item(let url) = key { return (url, frame) }; return nil
+                })
+                nativeFileDrop(regions: regions, frames: frames, size: geometry.size)
                     .frame(width: geometry.size.width, height: geometry.size.height)
             }
         }
@@ -169,7 +236,7 @@ struct HubView: View {
             presentation.setFileDragActive(false)
             workspaceSpringLoader.cancel()
             fileDropTarget = nil
-            fileDropFeedback = nil
+            updateFileDropFeedback(nil)
             dropTargeted = false
             stagingDropTargeted = false
             airDropTargeted = false
@@ -188,8 +255,9 @@ struct HubView: View {
         .onChange(of: presentation.previewVisible) {
             activityVisibility.update(active: activityActive, presented: $0)
             prepareWorkspaceHover()
-            if !$0 { clearFileDrop(); showsAirDropHint = false; tabRevealTask?.cancel(); renameEntry = nil }
+            if !$0 { clearFileDrop(); nativeColorDropHint = nil; showsAirDropHint = false; tabRevealTask?.cancel(); renameEntry = nil }
         }
+        .onChange(of: presentation.fileDragActive) { if !$0 { nativeColorDropHint = nil } }
         .onChange(of: presentation.header) { _ in prepareWorkspaceHover() }
         .onChange(of: model.settings.resolvedHoverSwitchingEnabled) { _ in workspaceHover.cancel() }
         .onChange(of: model.settings.switchDelay) { _ in workspaceHover.cancel() }
@@ -287,6 +355,8 @@ struct HubView: View {
         HubQQMusicBar(controller: music, compact: true,
                       compactWidth: embeddedMusicLayout.displayWidth, isPresented: presentation.previewVisible,
                       onControlFocusChange: { musicControlsFocused = $0 })
+            .environment(\.colorScheme, notchExtensionActive ? .dark : colorScheme)
+            .background(Color.black.opacity(notchExtensionActive ? 0.72 : 0), in: RoundedRectangle(cornerRadius: 7))
             .anchorPreference(key: HubHeaderDragRegionKey.self, value: .bounds) { [.music: $0] }
             .transformAnchorPreference(key: HubFileDropRegionKey.self, value: .bounds) { $0[.headerMusic] = $1 }
     }
@@ -367,7 +437,8 @@ struct HubView: View {
                     .transformAnchorPreference(key: HubHeaderDragRegionKey.self, value: .bounds) { $0[.controls] = $1 }
                     .transformAnchorPreference(key: HubFileDropRegionKey.self, value: .bounds) { $0[.headerControls] = $1 }
             }.padding(.horizontal, 12).padding(.vertical, 10)
-                .padding(.top, presentation.header.embedded ? presentation.header.topInset : 0)
+                .padding(.top, presentation.header.embedded ? presentation.header.topInset +
+                         (notchExtensionActive ? HubNotchFusionGeometry.narrowToolbarClearance : 0) : 0)
         }
     }
 
@@ -503,7 +574,7 @@ struct HubView: View {
                                 }
                             } else {
                                 airDropTargeted = false
-                                if fileDropFeedback?.action == .airDrop { fileDropFeedback = nil }
+                                if fileDropFeedback?.action == .airDrop { updateFileDropFeedback(nil) }
                             }
                         }, receive: receiveAirDropFiles))
                     .anchorPreference(key: HubFileDropRegionKey.self, value: .bounds) { [.airDrop: $0] }
@@ -813,7 +884,9 @@ struct HubView: View {
                 action: .createWorkspace, workspaceInsertion: slot)
         }
         return HubNativeFileDropBridge(enabled: presentation.previewVisible,
-            contains: { point in insertion(at: point) != nil || HubFileDropRegion.at(point, in: regions) != nil },
+            contains: { point in
+                return insertion(at: point) != nil || HubFileDropRegion.at(point, in: regions) != nil
+            },
             operation: { point, urls, payload, copy in
                 let slot = insertion(at: point).flatMap { model.isKnownNonFolderDrop(urls, knownFolderURLs: payload?.folderURLs) ? nil : $0 }
                 let region = slot == nil ? HubFileDropRegion.at(point, in: regions) : nil
@@ -844,23 +917,32 @@ struct HubView: View {
                 if dropTargeted != targeted { dropTargeted = targeted }
                 let feedback = plan.map { HubFileDropFeedback(rect: $0.workspaceInsertion?.marker ?? $0.slot?.rect ?? $0.item.flatMap { frames[$0] } ?? region?.visibleFrame(in: regions) ?? .zero,
                     title: $0.title, count: urls.count, action: $0.action, insertion: $0.slot != nil || $0.workspaceInsertion != nil) }
-                if fileDropFeedback != feedback { fileDropFeedback = feedback }
-                return plan?.action == .move || plan?.action == .colorLabelMove || plan?.action == .reorder ? .move : plan == nil ? [] : .copy
+                if case .colorLabel(let value)? = region, let label = HubFinderLabel(rawValue: value), let feedback {
+                    if nativeColorDropHint?.label != label || nativeColorDropHint?.text != feedback.prompt {
+                        nativeColorDropHint = (label, feedback.prompt)
+                    }
+                } else { nativeColorDropHint = nil }
+                updateFileDropFeedback(feedback)
+                return plan?.action == .move || plan?.action == .colorLabelMove || plan?.action == .reorder ? .move :
+                    plan == nil || plan?.action == .groupedReorderBlocked ? [] : .copy
             }, exited: clearFileDrop,
             receive: { urls, payload, point, copy in
                 if let slot = insertion(at: point), !model.isKnownNonFolderDrop(urls, knownFolderURLs: payload?.folderURLs) { return model.addFolderWorkspaces(urls, before: slot.before) }
                 guard let region = HubFileDropRegion.at(point, in: regions),
                       let plan = fileDropPlan(region: region, point: point, frames: frames, content: regions[.content] ?? .zero, order: order, payload: payload, copy: copy, urls: urls) else { return false }
+                if plan.action == .groupedReorderBlocked { return false }
                 if plan.action == .airDrop { return queueAirDropFiles(urls) }
                 if case .colorLabel(let value) = region {
                     guard let label = HubFinderLabel(rawValue: value) else { return false }
-                    if let directory = model.currentURL, model.selectedWorkspace?.mode != .recents {
-                        return model.acceptFileDrop(urls, workspaceID: model.selectedWorkspaceID, directory: directory,
-                            copy: copy, labelOnDrop: label, preserveLocalInPlace: true)
-                    }
-                    return model.applyDroppedColorLabel(value, urls: urls)
+                    return acceptNativeColorDrop(label, urls: urls, payload: payload, copy: copy)
+                }
+                if region == .content, plan.action == .colorLabel, let label = model.colorLabelFilter {
+                    return model.applyDroppedColorLabel(label.rawValue, urls: urls)
                 }
                 if plan.action == .reorder {
+                    if let groupID = plan.groupID {
+                        return model.reorderGroupedEntries(urls, before: plan.slot?.before, groupID: groupID)
+                    }
                     if let label = model.colorLabelFilter {
                         return model.acceptFileDrop(urls, workspaceID: plan.workspaceID, directory: plan.directory, copy: false,
                             insertionOrder: order, before: plan.slot?.before, labelOnDrop: label)
@@ -872,13 +954,48 @@ struct HubView: View {
                 let label = region == .content && plan.item == nil ? model.colorLabelFilter : nil
                 let accepted = model.acceptFileDrop(urls, workspaceID: plan.workspaceID, directory: plan.directory, copy: copy,
                     insertionOrder: plan.slot == nil ? nil : order, before: plan.slot?.before, labelOnDrop: label)
+                if region == .content { hubFileDropLogger.notice("route=native-content color=\(label?.rawValue ?? -1, privacy: .public) folder=\(plan.item != nil, privacy: .public) accepted=\(accepted, privacy: .public)") }
                 if !accepted && model.errorMessage == nil { model.errorMessage = L("目标暂时不可用，文件尚未转移。请等待正在进行的操作完成后重试。") }
-                return accepted
+                return label == nil ? accepted : finishExternalColorDrop(accepted, payload: payload)
             })
     }
 
+    private func finishExternalColorDrop(_ accepted: Bool, payload: HubFileDragPayload?, frontmostPID: pid_t? = nil) -> Bool {
+        guard accepted, payload == nil, let pid = frontmostPID ?? NSWorkspace.shared.frontmostApplication?.processIdentifier else { return accepted }
+        NotificationCenter.default.post(name: hubExternalColorDropAccepted, object: nil,
+                                        userInfo: ["frontmostPID": pid])
+        return true
+    }
+
+    private func acceptNativeColorDrop(_ label: HubFinderLabel, urls: [URL], payload: HubFileDragPayload?, copy: Bool) -> Bool {
+        // The receiver can outlive its last hover update while SwiftUI tears
+        // down the footer or a concurrent operation starts.
+        guard presentation.previewVisible, canReceiveColorLabelDrop else {
+            hubFileDropLogger.notice("route=native-color color=\(label.rawValue, privacy: .public) accepted=false")
+            return false
+        }
+        let accepted: Bool
+        if let directory = model.currentURL, model.selectedWorkspace?.mode != .recents {
+            accepted = model.acceptFileDrop(urls, workspaceID: model.selectedWorkspaceID, directory: directory,
+                copy: copy, labelOnDrop: label, preserveLocalInPlace: true)
+        } else { accepted = model.applyDroppedColorLabel(label.rawValue, urls: urls) }
+        hubFileDropLogger.notice("route=native-color color=\(label.rawValue, privacy: .public) accepted=\(accepted, privacy: .public)")
+        return finishExternalColorDrop(accepted, payload: payload)
+    }
+
+    private func updateFileDropFeedback(_ feedback: HubFileDropFeedback?) {
+        guard fileDropFeedback != feedback else { return }
+        fileDropFeedback = feedback
+        #if FILEDOCK_DRAG_DIAGNOSTICS
+        if let feedback {
+            HubDragDiagnostics.log("feedback", "present=true insertion=\(feedback.insertion) width=\(Int(feedback.rect.width.rounded())) height=\(Int(feedback.rect.height.rounded()))")
+        } else { HubDragDiagnostics.log("feedback", "present=false") }
+        #endif
+        onFileDropFeedbackChanged?(feedback)
+    }
+
     private func clearFileDrop() {
-        fileDropTarget = nil; fileDropFeedback = nil; dropTargeted = false; stagingDropTargeted = false; airDropTargeted = false
+        fileDropTarget = nil; updateFileDropFeedback(nil); nativeColorDropHint = nil; dropTargeted = false; stagingDropTargeted = false; airDropTargeted = false
         workspaceSpringLoader.cancel()
     }
 
@@ -939,13 +1056,31 @@ struct HubView: View {
             guard let id = model.selectedWorkspaceID, !model.isRecentsRoot else { return nil }
             let hit = frames.first(where: { $0.value.contains(point) })?.key
             let reorder = payload.map { HubFileDragData.shouldReorder($0, in: fileDragContext) } ?? false
+            // Group membership is determined by metadata. Reordering may
+            // change presentation only and cannot move files across groups.
+            if model.groupingActive && reorder {
+                if let label = model.colorLabelFilter {
+                    return HubFileDropPlan(workspaceID: id, directory: model.currentURL, item: nil, title: label.name, action: .colorLabel)
+                }
+                let blocked = HubFileDropPlan(workspaceID: id, directory: model.currentURL, item: nil,
+                                              title: "", action: .groupedReorderBlocked)
+                guard let payload, let first = payload.urls.first, let group = model.visibleGroup(containing: first),
+                      payload.urls.allSatisfy({ model.visibleGroup(containing: $0)?.id == group.id }) else { return blocked }
+                let moving = Set(payload.urls.map(\.standardizedFileURL))
+                guard let closest = HubFileInsertionSlot.nearestItem(at: point, frames: frames, content: content, candidates: order, excluding: moving),
+                      model.visibleGroup(containing: closest)?.id == group.id,
+                      let slot = HubFileInsertionSlot.resolve(at: point, frames: frames, order: group.entries.map(\.url),
+                          content: content, horizontal: model.viewMode != .grid || model.settings.horizontalScroll, excluding: moving) else { return blocked }
+                return HubFileDropPlan(workspaceID: id, directory: model.currentURL, item: nil,
+                    title: group.title, action: .reorder, slot: slot, groupID: group.id)
+            }
             let folder = hit.flatMap { target -> URL? in
                 guard !reorder, !model.isReferenceRoot, !model.isStagingRoot, let entry = model.entries.first(where: { $0.url == target && $0.canNavigate }),
                       let frame = frames[target], frame.insetBy(dx: frame.width * 0.24, dy: frame.height * 0.18).contains(point) else { return nil }
                 return entry.url
             }
             let reference = model.isReferenceRoot || model.isStagingRoot
-            let slot = folder == nil ? HubFileInsertionSlot.resolve(at: point, frames: frames, order: order,
+            let slot = folder == nil && !model.groupingActive ? HubFileInsertionSlot.resolve(at: point, frames: frames, order: order,
                 content: content, horizontal: model.viewMode != .grid || model.settings.horizontalScroll,
                 excluding: reorder ? Set(payload?.urls ?? []) : []) : nil
             return HubFileDropPlan(workspaceID: id, directory: reference ? nil : folder ?? model.currentURL,
@@ -1009,8 +1144,9 @@ struct HubView: View {
                 Divider()
                 Toggle(L("升序"), isOn: $model.ascending)
                 Toggle(L("文件夹优先"), isOn: Binding(get: { model.settings.resolvedFoldersFirst },
-                    set: { model.settings.foldersFirst = $0 })).disabled(model.isManualEntryOrder)
+                    set: { model.settings.foldersFirst = $0 })).disabled(model.isManualEntryOrder && (!model.groupingActive || ![.kind, .size].contains(model.sortKey)))
                 Toggle(L("按手动顺序显示"), isOn: Binding(get: { model.isManualEntryOrder }, set: { model.setManualEntryOrder($0) }))
+                    .disabled(model.groupingActive)
             } label: { Image(systemName: "arrow.up.arrow.down").frame(width: 28, height: 27) }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                 .accessibilityLabel(model.isRecentsRoot ? L("按最近使用时间排序") : L("排序"))
@@ -1038,6 +1174,7 @@ struct HubView: View {
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
                 .opacity(model.directoryLoading && !activityVisibility.visible ? 0 : 1)
                 .animation(interfaceMotion.feedback, value: activityVisibility.visible)
+                .contentShape(Rectangle())
                 .contextMenu { backgroundMenu }
         } else {
             Group {
@@ -1046,7 +1183,7 @@ struct HubView: View {
                 case .list: list
                 case .columns: columns
                 }
-            }.contextMenu { backgroundMenu }
+            }
         }
     }
 
@@ -1071,16 +1208,49 @@ struct HubView: View {
     private var grid: some View {
         ScrollView(model.settings.horizontalScroll ? .horizontal : .vertical, showsIndicators: model.settings.showScrollbar) {
             if model.settings.horizontalScroll {
-                LazyHGrid(rows: [GridItem(.adaptive(minimum: model.settings.iconSize + 46), spacing: 8)], alignment: .top, spacing: 8) {
-                    ForEach(model.visibleEntries) { entry in gridCell(entry).frame(width: model.settings.iconSize + 52) }
-                }.padding(14)
+                if model.groupingActive {
+                    LazyHStack(alignment: .top, spacing: 20) {
+                        ForEach(model.visibleGroups) { group in
+                            VStack(alignment: .leading, spacing: 8) {
+                                groupHeader(group)
+                                LazyHGrid(rows: [GridItem(.adaptive(minimum: model.settings.iconSize + 46), spacing: 8)], alignment: .top, spacing: 8) {
+                                    ForEach(group.entries) { entry in gridCell(entry).frame(width: model.settings.iconSize + 52) }
+                                }
+                            }.frame(maxHeight: .infinity, alignment: .top)
+                        }
+                    }.padding(14)
+                } else {
+                    LazyHGrid(rows: [GridItem(.adaptive(minimum: model.settings.iconSize + 46), spacing: 8)], alignment: .top, spacing: 8) {
+                        ForEach(model.visibleEntries) { entry in gridCell(entry).frame(width: model.settings.iconSize + 52) }
+                    }.padding(14)
+                }
             } else {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: model.settings.iconSize + 52), spacing: 10)], alignment: .leading, spacing: 12) {
-                    ForEach(model.visibleEntries) { entry in gridCell(entry) }
-                }.padding(14)
+                if model.groupingActive {
+                    LazyVStack(alignment: .leading, spacing: 16) {
+                        ForEach(model.visibleGroups) { group in
+                            VStack(alignment: .leading, spacing: 8) {
+                                groupHeader(group)
+                                LazyVGrid(columns: [GridItem(.adaptive(minimum: model.settings.iconSize + 52), spacing: 10)], alignment: .leading, spacing: 12) {
+                                    ForEach(group.entries) { entry in gridCell(entry) }
+                                }
+                            }
+                        }
+                    }.padding(14)
+                } else {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: model.settings.iconSize + 52), spacing: 10)], alignment: .leading, spacing: 12) {
+                        ForEach(model.visibleEntries) { entry in gridCell(entry) }
+                    }.padding(14)
+                }
             }
         }
         .marqueeFileSelection(context: fileDragContext, selection: model.selectedIDs) { model.selectedIDs = $0 }
+        .contentShape(Rectangle())
+        .contextMenu { backgroundMenu }
+    }
+
+    private func groupHeader(_ group: HubEntryGroup) -> some View {
+        Text(group.title).font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
+            .accessibilityAddTraits(.isHeader)
     }
 
     private func gridCell(_ entry: FileEntry) -> some View {
@@ -1110,32 +1280,43 @@ struct HubView: View {
             }.font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary).padding(.horizontal, 24).padding(.vertical, 7).background(Color.primary.opacity(0.025))
             ScrollView(.vertical, showsIndicators: model.settings.showScrollbar) {
                 LazyVStack(spacing: 1) {
-                    ForEach(Array(model.visibleEntries.enumerated()), id: \.element.id) { index, entry in
-                        HStack(spacing: 9) {
-                            HubFileIcon(entry: entry, size: 22, allowsThumbnail: false, lightweight: presentation.defersFileRendering)
-                            fileName(entry)
-                            Text((model.isRecentsRoot ? model.lastUsedDate(for: entry.url) : entry.modified)?.formatted(.dateTime.locale(locale).year().month(.abbreviated).day().hour().minute()) ?? "—").font(.system(size: 10)).foregroundStyle(.secondary).frame(width: 120, alignment: .leading)
-                            Text(model.isCloudPlaceholder(entry) ? L("仅在云端") : entry.kind).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1).frame(width: 80, alignment: .leading)
-                            Text(entry.isDirectory || model.isCloudPlaceholder(entry) ? "—" : ByteCountFormatter.string(fromByteCount: entry.size, countStyle: .file)).font(.system(size: 10)).foregroundStyle(.secondary).frame(width: 66, alignment: .trailing)
+                    if model.groupingActive {
+                        ForEach(model.visibleGroups) { group in
+                            groupHeader(group).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 12).padding(.top, 8)
+                            ForEach(Array(group.entries.enumerated()), id: \.element.id) { index, entry in listRow(entry, index: index) }
                         }
-                        .padding(.horizontal, 12).padding(.vertical, 5)
-                        .background(model.selectedIDs.contains(entry.url) ? Color.accentColor.opacity(0.20) : Color.primary.opacity(index.isMultiple(of: 2) ? 0 : 0.025), in: RoundedRectangle(cornerRadius: 5))
-                        .contentShape(Rectangle())
-                        .fileNameHoverArea(entry.url.lastPathComponent, enabled: renameEntry?.url != entry.url)
-                        .contextMenu { fileMenu(entry) }
-                        .overlay(fileInteraction(for: entry))
-                        .overlay(dropIndicator(for: entry, beforeOnTop: true))
-                        .onDrop(of: [hubFileDragType, .fileURL, .image, .url], isTargeted: dropBinding(for: entry.url)) { receiveItemDrop($0, entry: entry) }
-                        .fileSelectionBounds(entry.url)
+                    } else {
+                        ForEach(Array(model.visibleEntries.enumerated()), id: \.element.id) { index, entry in listRow(entry, index: index) }
                     }
                 }.padding(.horizontal, 10).padding(.vertical, 5)
             }
             .marqueeFileSelection(context: fileDragContext, selection: model.selectedIDs) { model.selectedIDs = $0 }
+            .contentShape(Rectangle())
+            .contextMenu { backgroundMenu }
         }
     }
 
+    private func listRow(_ entry: FileEntry, index: Int) -> some View {
+        HStack(spacing: 9) {
+            HubFileIcon(entry: entry, size: 22, allowsThumbnail: false, lightweight: presentation.defersFileRendering)
+            fileName(entry)
+            Text((model.isRecentsRoot ? model.lastUsedDate(for: entry.url) : entry.modified)?.formatted(.dateTime.locale(locale).year().month(.abbreviated).day().hour().minute()) ?? "—").font(.system(size: 10)).foregroundStyle(.secondary).frame(width: 120, alignment: .leading)
+            Text(model.isCloudPlaceholder(entry) ? L("仅在云端") : entry.kind).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1).frame(width: 80, alignment: .leading)
+            Text(entry.isDirectory || model.isCloudPlaceholder(entry) ? "—" : ByteCountFormatter.string(fromByteCount: entry.size, countStyle: .file)).font(.system(size: 10)).foregroundStyle(.secondary).frame(width: 66, alignment: .trailing)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 5)
+        .background(model.selectedIDs.contains(entry.url) ? Color.accentColor.opacity(0.20) : Color.primary.opacity(index.isMultiple(of: 2) ? 0 : 0.025), in: RoundedRectangle(cornerRadius: 5))
+        .contentShape(Rectangle())
+        .fileNameHoverArea(entry.url.lastPathComponent, enabled: renameEntry?.url != entry.url)
+        .contextMenu { fileMenu(entry) }
+        .overlay(fileInteraction(for: entry))
+        .overlay(dropIndicator(for: entry, beforeOnTop: true))
+        .onDrop(of: [hubFileDragType, .fileURL, .image, .url], isTargeted: dropBinding(for: entry.url)) { receiveItemDrop($0, entry: entry) }
+        .fileSelectionBounds(entry.url)
+    }
+
     private func listSortColumn(_ title: String, key: SortKey, alignment: Alignment = .leading) -> some View {
-        let active = !model.isRecentsRoot && !model.isManualEntryOrder && model.sortKey == key
+        let active = !model.isRecentsRoot && (!model.isManualEntryOrder || model.groupingActive) && model.sortKey == key
         return Button { model.sortByColumn(key) } label: {
             HStack(spacing: 4) {
                 Text(title)
@@ -1183,24 +1364,19 @@ struct HubView: View {
                         Divider()
                         ScrollView(showsIndicators: model.settings.showScrollbar) {
                             LazyVStack(spacing: 1) {
-                                ForEach(model.visibleEntries) { entry in
-                                    HStack(spacing: 7) {
-                                        HubFileIcon(entry: entry, size: 20, allowsThumbnail: false, lightweight: presentation.defersFileRendering)
-                                        fileName(entry)
-                                        Spacer()
-                                        if entry.isDirectory && !entry.isPackage { Image(systemName: "chevron.right").font(.system(size: 8)).foregroundStyle(.secondary) }
-                                    }.padding(.horizontal, 9).padding(.vertical, 6)
-                                        .background(model.selectedIDs.contains(entry.url) ? Color.accentColor.opacity(0.20) : .clear, in: RoundedRectangle(cornerRadius: 5)).contentShape(Rectangle())
-                                        .fileNameHoverArea(entry.url.lastPathComponent, enabled: renameEntry?.url != entry.url)
-                                        .contextMenu { fileMenu(entry) }
-                                        .overlay(fileInteraction(for: entry, navigateOnClick: true))
-                                        .overlay(dropIndicator(for: entry, beforeOnTop: true))
-                                        .onDrop(of: [hubFileDragType, .fileURL, .image, .url], isTargeted: dropBinding(for: entry.url)) { receiveItemDrop($0, entry: entry) }
-                                        .fileSelectionBounds(entry.url)
+                                if model.groupingActive {
+                                    ForEach(model.visibleGroups) { group in
+                                        groupHeader(group).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 9).padding(.top, 8)
+                                        ForEach(group.entries) { entry in columnRow(entry) }
+                                    }
+                                } else {
+                                    ForEach(model.visibleEntries) { entry in columnRow(entry) }
                                 }
                             }.padding(5)
                         }
                         .marqueeFileSelection(context: fileDragContext, selection: model.selectedIDs) { model.selectedIDs = $0 }
+                        .contentShape(Rectangle())
+                        .contextMenu { backgroundMenu }
                     }.frame(width: layout.directoryWidth)
                     Divider().frame(width: layout.separatorWidth)
                     if let entry = model.visibleEntries.first(where: { model.selectedIDs.contains($0.url) }) {
@@ -1215,6 +1391,22 @@ struct HubView: View {
                 .frame(width: layout.totalWidth, height: geometry.size.height)
             }
         }
+    }
+
+    private func columnRow(_ entry: FileEntry) -> some View {
+        HStack(spacing: 7) {
+            HubFileIcon(entry: entry, size: 20, allowsThumbnail: false, lightweight: presentation.defersFileRendering)
+            fileName(entry)
+            Spacer()
+            if entry.isDirectory && !entry.isPackage { Image(systemName: "chevron.right").font(.system(size: 8)).foregroundStyle(.secondary) }
+        }.padding(.horizontal, 9).padding(.vertical, 6)
+            .background(model.selectedIDs.contains(entry.url) ? Color.accentColor.opacity(0.20) : .clear, in: RoundedRectangle(cornerRadius: 5)).contentShape(Rectangle())
+            .fileNameHoverArea(entry.url.lastPathComponent, enabled: renameEntry?.url != entry.url)
+            .contextMenu { fileMenu(entry) }
+            .overlay(fileInteraction(for: entry, navigateOnClick: true))
+            .overlay(dropIndicator(for: entry, beforeOnTop: true))
+            .onDrop(of: [hubFileDragType, .fileURL, .image, .url], isTargeted: dropBinding(for: entry.url)) { receiveItemDrop($0, entry: entry) }
+            .fileSelectionBounds(entry.url)
     }
 
     private func inlinePreview(_ entry: FileEntry) -> some View {
@@ -1275,6 +1467,7 @@ struct HubView: View {
             iconButton("arrow.up", L("上一级"), disabled: !model.canGoUp) { model.goUp() }
             if model.settings.resolvedColorLabelFilterEnabled {
                 HubColorLabelFilterBar(selection: model.colorLabelFilter, onSelect: model.setColorLabelFilter,
+                    nativeDropHint: { nativeColorDropHint?.label == $0 ? nativeColorDropHint?.text : nil },
                     movesDroppedFilesToCurrentDirectory: model.currentURL != nil && model.selectedWorkspace?.mode != .recents,
                     hoverDelay: model.settings.switchDelay,
                     hoverEnabled: model.settings.resolvedHoverSwitchingEnabled && presentation.previewVisible && !presentation.defersFileRendering && !presentation.windowMoving &&
@@ -1297,11 +1490,46 @@ struct HubView: View {
     }
 
     @ViewBuilder private var backgroundMenu: some View {
+        if let directory = model.currentURL {
+            HubMenuButton(L("新建文件夹…"), systemImage: "folder.badge.plus") { folderName = L("新建文件夹"); newFolder = true }
+                .disabled(model.fileOperationsInProgress > 0 || model.stagingTransferInProgress || model.sharingInProgress)
+            HubMenuButton(L("显示简介"), systemImage: "info.circle") { model.performFinderAction(.information, urls: [directory]) }
+                .disabled(model.fileOperationsInProgress > 0 || model.stagingTransferInProgress || model.sharingInProgress)
+            Divider()
+        }
         if model.canPasteFiles { HubMenuButton(L("粘贴"), systemImage: "doc.on.clipboard") { model.pasteFiles() } }
-        if model.currentURL != nil { HubMenuButton(L("新建文件夹…"), systemImage: "folder.badge.plus") { folderName = L("新建文件夹"); newFolder = true }; HubMenuButton(L("在访达中打开"), systemImage: "folder") { if let url = model.currentURL { NSWorkspace.shared.open(url) } } }
-        if let directory = model.currentURL { HubMenuButton(L("在终端中打开"), systemImage: "terminal") { model.openTerminal(at: directory) } }
         if model.selectedWorkspace?.mode == .references && model.currentURL == nil { HubMenuButton(L("添加项目…"), systemImage: "plus") { model.addReferences() } }
+        Menu(L("显示")) {
+            Picker(L("显示"), selection: $model.viewMode) {
+                Text(L("图标视图")).tag(HubViewMode.grid)
+                Text(L("列表视图")).tag(HubViewMode.list)
+                Text(L("分栏视图")).tag(HubViewMode.columns)
+            }
+        }
+        Toggle(L("使用群组"), isOn: Binding(get: { model.settings.resolvedGroupsEnabled }, set: { model.settings.groupsEnabled = $0 }))
+            .disabled(model.isRecentsRoot)
+            .help(L("可在同一群组内拖动排序；关闭群组后保留调整后的手动顺序。"))
+        Menu(L("排序方式")) {
+            Picker(L("排序方式"), selection: $model.sortKey) {
+                ForEach(SortKey.allCases) { key in Text(key.title).tag(key) }
+            }
+            Divider()
+            Toggle(L("升序"), isOn: $model.ascending)
+            Toggle(L("文件夹优先"), isOn: Binding(get: { model.settings.resolvedFoldersFirst }, set: { model.settings.foldersFirst = $0 }))
+                .disabled(model.isManualEntryOrder && (!model.groupingActive || ![.kind, .size].contains(model.sortKey)))
+            Toggle(L("按手动顺序显示"), isOn: Binding(get: { model.isManualEntryOrder }, set: { model.setManualEntryOrder($0) }))
+                .disabled(model.groupingActive)
+        }.disabled(model.isRecentsRoot)
+        Divider()
+        if let directory = model.currentURL {
+            HubMenuButton(L("在访达中打开"), systemImage: "folder") { NSWorkspace.shared.open(directory) }
+            HubMenuButton(L("在终端中打开"), systemImage: "terminal") { model.openTerminal(at: directory) }
+        }
         HubMenuButton(L("刷新"), systemImage: "arrow.clockwise") { model.refresh() }
+        HubMenuButton(L("显示选项…"), systemImage: "gearshape") {
+            onSettings()
+            DispatchQueue.main.async { NotificationCenter.default.post(name: Notification.Name("HubSelectAppearanceSettings"), object: nil) }
+        }
     }
 
     @ViewBuilder private func fileMenu(_ entry: FileEntry) -> some View {
@@ -1362,8 +1590,8 @@ struct HubView: View {
         if model.selectedWorkspace?.mode == .references && model.currentURL == nil {
             Divider()
             if let paths = model.selectedWorkspace?.referencePaths, let index = paths.firstIndex(of: entry.url.path) {
-                HubMenuButton(L("向前移动"), systemImage: "arrow.left") { if index > 0 { model.reorderReference(entry.url, before: URL(fileURLWithPath: paths[index - 1])) } }.disabled(index == 0)
-                HubMenuButton(L("向后移动"), systemImage: "arrow.right") { if index + 1 < paths.count { model.reorderReference(URL(fileURLWithPath: paths[index + 1]), before: entry.url) } }.disabled(index + 1 >= paths.count)
+                HubMenuButton(L("向前移动"), systemImage: "arrow.left") { if index > 0 { model.reorderReference(entry.url, before: URL(fileURLWithPath: paths[index - 1])) } }.disabled(index == 0 || model.groupingActive)
+                HubMenuButton(L("向后移动"), systemImage: "arrow.right") { if index + 1 < paths.count { model.reorderReference(URL(fileURLWithPath: paths[index + 1]), before: entry.url) } }.disabled(index + 1 >= paths.count || model.groupingActive)
             }
             HubMenuButton(model.isStagingRoot ? L("从暂存区移除引用") : L("从合集中移除引用"), systemImage: "minus.circle") { model.removeReferences(urls) }
                 .disabled(model.isStagingRoot && model.stagingTransferInProgress)
@@ -1411,9 +1639,9 @@ struct HubView: View {
     @ViewBuilder private func dropIndicator(for entry: FileEntry, beforeOnTop: Bool) -> some View {
         if fileDropFeedback == nil && !model.isRecentsRoot && fileDropTarget == entry.url {
             if let payload = HubFileDragState.current, HubFileDragData.shouldReorder(payload, in: fileDragContext) {
-                if beforeOnTop {
+                if !model.groupingActive && beforeOnTop {
                     Rectangle().fill(Color.accentColor).frame(height: 2).frame(maxHeight: .infinity, alignment: .top).allowsHitTesting(false)
-                } else {
+                } else if !model.groupingActive {
                     Rectangle().fill(Color.accentColor).frame(width: 2).frame(maxWidth: .infinity, alignment: .leading).allowsHitTesting(false)
                 }
             } else if entry.isDirectory && !entry.isPackage {
@@ -1426,6 +1654,11 @@ struct HubView: View {
         guard !model.isRecentsRoot else { return false }
         guard !HubFileDragState.isDragging || HubFileDragState.localPayload(for: providers) != nil else { return false }
         if let payload = HubFileDragState.localPayload(for: providers), HubFileDragData.shouldReorder(payload, in: fileDragContext) {
+            if model.groupingActive {
+                if let label = model.colorLabelFilter { return model.applyDroppedColorLabel(label.rawValue, urls: payload.urls) }
+                model.errorMessage = L("无法确定插入位置，请重新拖动并在插入线出现后松开。")
+                return false
+            }
             // A folder is also an ordering target for a local drag. Never turn
             // rearrangement into a filesystem move into that folder or itself.
             if let label = model.colorLabelFilter {
@@ -1442,23 +1675,27 @@ struct HubView: View {
         return receiveDrop(providers, destination: entry.url, reorderLocal: false)
     }
 
-    private func receiveDrop(_ providers: [NSItemProvider], destination: URL?, reorderLocal: Bool = true) -> Bool {
+    func receiveDrop(_ providers: [NSItemProvider], destination: URL?, reorderLocal: Bool = true) -> Bool {
         guard !model.isRecentsRoot else { return false }
         guard !HubFileDragState.isDragging || HubFileDragState.localPayload(for: providers) != nil else { return false }
         if reorderLocal, let payload = HubFileDragState.localPayload(for: providers), HubFileDragData.shouldReorder(payload, in: fileDragContext) {
             if let label = model.colorLabelFilter {
-                return model.acceptFileDrop(payload.urls, workspaceID: model.selectedWorkspaceID, directory: model.currentURL,
-                    copy: false, insertionOrder: model.fileOrderURLs, labelOnDrop: label)
+                return model.applyDroppedColorLabel(label.rawValue, urls: payload.urls)
             }
-            model.reorderEntries(payload.urls, before: nil)
-            return true
+            // This provider-only content fallback has no reliable item frames
+            // or insertion marker. Never silently move a local item to the end.
+            model.errorMessage = L("无法确定放置位置，请重试拖动排序。")
+            return false
         }
         if model.isStagingRoot { return receiveStagingDrop(providers, labelCurrentContext: true) }
         let label = destination?.standardizedFileURL == model.currentURL?.standardizedFileURL ? model.colorLabelFilter : nil
+        hubFileDropLogger.notice("route=swiftui-content color=\(label?.rawValue ?? -1, privacy: .public)")
         let fileProviders = providers.filter { $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) }
         if fileProviders.isEmpty { return receiveImageDrop(providers, destination: destination, label: label) }
         guard fileProviders.count <= 20000, let ticket = HubImportActivity.begin() else { return false }
-        let copy = NSEvent.modifierFlags.contains(.option)
+        // The provider-only path cannot inspect the source's operation mask.
+        // Preserve external originals when AppKit did not supply that mask.
+        let copy = HubFileDragState.localPayload(for: providers) == nil || NSEvent.modifierFlags.contains(.option)
         let workspaceID = model.selectedWorkspaceID
         let batch = HubDropBatch(count: fileProviders.count) { urls in
             HubImportActivity.end(ticket)
@@ -1509,6 +1746,14 @@ struct HubView: View {
                 model.errorMessage = L("目标工作区已不可用。导入内容已保留在本机暂存目录。")
             } else if !failures.isEmpty { model.errorMessage = failures.joined(separator: "\n") }
         }
+    }
+    private var notchExtensionActive: Bool {
+        presentation.header.embedded && presentation.header.exclusionWidth > 0 &&
+            model.settings.resolvedNotchIntegrationStyle == "extension"
+    }
+    private var notchFusionHeight: CGFloat {
+        HubNotchFusionGeometry.height(topInset: presentation.header.topInset, split: presentation.header.split,
+                                      headerHeight: embeddedMusicLayout.headerHeight, fontSize: model.settings.fontSize)
     }
     private var backgroundColor: Color {
         if model.settings.resolvedBackgroundTheme == "liquidGlass" { return .clear }

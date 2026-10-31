@@ -59,7 +59,9 @@ import SwiftUI
                 let host = NSHostingView(rootView: HubView(model: model, presentation: presentation, music: music, onSettings: {}, onClose: {}))
                 window.contentView = host
                 settle(host)
-                let native = descendants(host).compactMap { $0 as? HubNativeFileDropBridge.DestinationView }.first!
+                let receivers = descendants(host).compactMap { $0 as? HubNativeFileDropBridge.DestinationView }
+                precondition(receivers.count == 1, "Tab creation and transfers share the sole native file receiver")
+                let native = receivers[0]
                 let views = descendants(host).compactMap { $0 as? HubWorkspaceDragBridge.WorkspaceDragView }
                 let left = views.first { $0.workspaceID == a.id }!
                 let right = views.first { $0.workspaceID == b.id }!
@@ -67,7 +69,21 @@ import SwiftUI
                 let rightFrame = native.convert(right.bounds, from: right)
                 let gap = CGPoint(x: (leftFrame.maxX + rightFrame.minX) / 2, y: leftFrame.midY)
                 let center = CGPoint(x: rightFrame.midX, y: rightFrame.midY)
-                let board = NSPasteboard.withUniqueName(), source = NSObject(), session = UUID()
+                for domain in [HubWorkspaceDragDomain.workspace, .shortcut] {
+                    guard let privateSource = views.first(where: { $0.domain == domain }) else { preconditionFailure("Missing private drag domain") }
+                    let privateDrag = HubWorkspaceDragPayload(id: UUID(), workspaceID: privateSource.workspaceID, domain: domain)
+                    HubWorkspaceDragState.begin(privateDrag, source: privateSource)
+                    settle(host)
+                    precondition(native.hitTest(CGPoint(x: native.bounds.midX, y: native.bounds.midY)) == nil,
+                                 "The top file receiver must yield to private tab and shortcut reorders")
+                    let privateTargets = descendants(host).compactMap { $0 as? HubShortcutReorderDropBridge.DestinationView }
+                        .filter { $0.registeredDraggedTypes.contains(hubWorkspaceDragType) }
+                    precondition(!privateTargets.isEmpty && privateTargets.allSatisfy { $0.domain == domain },
+                                 "Only the active private reorder domain may register its UTI")
+                    HubWorkspaceDragState.end(privateDrag.id, source: privateSource)
+                    settle(host)
+                }
+                let board = NSPasteboard.withUniqueName(), source = HubFileDragBridge.FileDragView(frame: .zero), session = UUID()
                 let payload = HubFileDragPayload(id: session, context: .init(workspaceID: a.id, directory: root), urls: [incoming], folderURLs: [incoming])
                 // The local marker stands in for a held mouse for native hit
                 // testing. Finder-style inputs below have no private URL token.
@@ -130,6 +146,17 @@ import SwiftUI
                     "A local file at a tab edge after navigation remains a file transfer, never a create-tab operation")
                 precondition(model.fileOperationsInProgress == 0 && model.tabWorkspaces.count == 3)
                 native.draggingExited(fileInfo)
+                fileInfo.draggingSourceOperationMask = .copy
+                fileInfo.draggingLocation = native.convert(CGPoint(x: edge.midX, y: edge.midY), to: nil)
+                precondition(native.draggingEntered(fileInfo) == .copy)
+                precondition(native.prepareForDragOperation(fileInfo) && native.performDragOperation(fileInfo),
+                             "An existing tab center must perform the captured root transfer")
+                for _ in 0..<400 where model.fileOperationsInProgress > 0 { try await Task.sleep(nanoseconds: 5_000_000) }
+                let copied = root.appendingPathComponent(child.lastPathComponent)
+                precondition(model.fileOperationsInProgress == 0 && fm.fileExists(atPath: copied.path))
+                let copiedBytes = try Data(contentsOf: copied), sourceBytes = try Data(contentsOf: child)
+                precondition(copiedBytes == sourceBytes, "Cross-tab copy preserves SVG bytes")
+                try fm.removeItem(at: copied)
                 HubFileDragState.end(fileSession); fileBoard.releaseGlobally()
                 window.contentView = nil; window.close()
             }

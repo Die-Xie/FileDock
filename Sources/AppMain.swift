@@ -33,9 +33,14 @@ final class HubPanel: NSPanel {
         guard canHandleFileClipboard else { return }
         clipboardModel?.pasteFiles()
     }
+    @objc func undo(_ sender: Any?) {
+        guard canHandleFileClipboard else { return }
+        _ = clipboardModel?.undoLastFileDrop()
+    }
     override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
         if item.action == #selector(copy(_:)) { return canHandleFileClipboard && clipboardModel?.selectedURLs.isEmpty == false }
         if item.action == #selector(paste(_:)) { return canHandleFileClipboard && clipboardModel?.canPasteFiles == true }
+        if item.action == #selector(undo(_:)) { return canHandleFileClipboard && clipboardModel?.canUndoFileDrop == true }
         return super.validateUserInterfaceItem(item)
     }
     override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool { true }
@@ -90,7 +95,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
     private var shortcutRecordingActive = false
     private var registeredActions: [UInt32: Bool] = [:]
     private var nextHotKeyID: UInt32 = 0
-    private var panelPointerEntered = false
     private var surface: HubNotchSurface!
     private var bridgePanel: NSPanel!
     private var bridgeView: HubNotchBridgeView!
@@ -102,7 +106,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
     private let presentation = HubPresentationState()
 
     private var embeddedAtNotch: Bool {
-        attachedToNotch && model.settings.resolvedNotchIntegrationStyle == "embedded"
+        attachedToNotch && model.settings.resolvedNotchIntegrationStyle != "connected"
     }
 
     func applicationDidHide(_ notification: Notification) {
@@ -378,6 +382,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
     }
 
     private func configureNotifications() {
+        notificationTokens.append(NotificationCenter.default.addObserver(forName: hubExternalColorDropAccepted, object: nil, queue: .main) { [weak self] note in
+            guard let expected = note.userInfo?["frontmostPID"] as? pid_t else { return }
+            // Run after AppKit finishes the source application's drag callback.
+            DispatchQueue.main.async { [weak self] in self?.focusAfterExternalColorDrop(expectedFrontmostPID: expected) }
+        })
         notificationTokens.append(NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.synchronizeAuxiliaryWindows() }
         })
@@ -454,6 +463,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
             }
             notificationTokens.append(token)
         }
+    }
+
+    private func focusAfterExternalColorDrop(expectedFrontmostPID: pid_t) {
+        let blocked = !desiredVisible || !presentation.previewVisible || shortcutRecordingActive || hasActiveDialog ||
+            settingsWindow?.isVisible == true || NSMenuHasTrackingMenu() || HubInlineFileNameEditor.isEditing(in: panel) ||
+            HubInlinePreviewFocus.contains(panel.firstResponder) || HubFileDragState.isDragging || HubWorkspaceDragState.isDragging ||
+            (QLPreviewPanel.sharedPreviewPanelExists() && QLPreviewPanel.shared()?.isVisible == true)
+        _ = HubExternalDropFocus.restore(panel: panel, expectedFrontmostPID: expectedFrontmostPID,
+            currentFrontmostPID: NSWorkspace.shared.frontmostApplication?.processIdentifier,
+            ownPID: ProcessInfo.processInfo.processIdentifier, applicationIsActive: NSApp.isActive,
+            keyWindow: NSApp.keyWindow, panelVisible: panel.isVisible, blocked: blocked,
+            activate: { NSApp.activate(ignoringOtherApps: true) }, raise: { $0.makeKeyAndOrderFront(nil) })
     }
 
     private func configureKeyboard() {
@@ -546,8 +567,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
             self.model.refreshInBackground(ifDue: true)
         }
         NSApp.activate(ignoringOtherApps: true)
-        hoverDismissal.reset()
-        panelPointerEntered = false
+        hoverDismissal.beginPresentation()
         fileDragDismissal.reset()
     }
 
@@ -603,9 +623,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
     }
 
     private func updateSurfaceStyle(sourceWidth: CGFloat? = nil) {
+        // Auxiliary screen regions confirm a real cutout. Other screens keep
+        // the existing embedded shape even when this preference is selected.
+        let extensionAtNotch = embeddedAtNotch && model.settings.resolvedNotchIntegrationStyle == "extension" &&
+            presentation.header.exclusionWidth > 0
         surface.configure(attached: attachedToNotch, sourceWidth: sourceWidth ?? bridgeView?.sourceWidth ?? 186,
                           bodyColor: bodyColor, reduceMotion: reduceMotion, animationSpeed: model.settings.resolvedAnimationSpeed,
-                          embedded: embeddedAtNotch, liquidGlass: model.settings.resolvedBackgroundTheme == "liquidGlass")
+                          embedded: embeddedAtNotch, liquidGlass: model.settings.resolvedBackgroundTheme == "liquidGlass",
+                          notchExtension: extensionAtNotch)
         bridgeView?.configure(sourceWidth: sourceWidth ?? bridgeView?.sourceWidth ?? 186,
                               bodyColor: bodyColor, reduceMotion: reduceMotion, animationSpeed: model.settings.resolvedAnimationSpeed,
                               liquidGlass: model.settings.resolvedBackgroundTheme == "liquidGlass")
@@ -778,7 +803,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
 
     private func tick() {
         HubFileDragState.reconcile(mousePressed: NSEvent.pressedMouseButtons & 1 != 0, now: ProcessInfo.processInfo.systemUptime)
+        HubWorkspaceDragState.reconcile(mousePressed: NSEvent.pressedMouseButtons & 1 != 0, now: ProcessInfo.processInfo.systemUptime)
         guard let model, let panel else { return }
+        let uptime = ProcessInfo.processInfo.systemUptime
+        surface.recoverStalledTransition(now: uptime)
+        bridgeView.recoverStalledTransition(now: uptime)
         finishWindowDragIfReleased()
         updatePanelLevel()
         let fileDrag = HubFileDragState.isDragging || (presentation.fileDragActive && (NSEvent.pressedMouseButtons & 1) != 0)
@@ -828,7 +857,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
             let insideSurface = surface.containsVisiblePoint(localPoint)
             let bridgePoint = bridgeView.convert(bridgePanel.convertPoint(fromScreen: pointer), from: nil)
             let insideBridge = attachedToNotch && !embeddedAtNotch && bridgeView.containsVisiblePoint(bridgePoint)
-            if insideSurface { panelPointerEntered = true }
+            if insideSurface { hoverDismissal.notePointerEntered() }
             if !HubFileDragState.isDragging, !HubWorkspaceDragState.isDragging, !HubMarqueeSelectionState.isSelecting, !panel.inLiveResize,
                windowDragSession == nil, now.timeIntervalSince(lastRefresh) > 2 {
                 model.refreshInBackground(ifDue: true); lastRefresh = now
@@ -856,7 +885,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
             // A drag or resize starts a fresh delay after it ends, never during it.
             let canDismiss = !model.pinned && !sheetOpen && !previewVisible && settingsWindow?.isVisible != true &&
                 !HubFileDragState.isDragging && !HubWorkspaceDragState.isDragging && !panel.inLiveResize && (NSEvent.pressedMouseButtons & 1) == 0 &&
-                (shownFromHover || panelPointerEntered || !panel.isKeyWindow)
+                hoverDismissal.mayDismissAfterOpening(shownFromHover: shownFromHover, panelIsKey: panel.isKeyWindow)
             if hoverDismissal.update(outside: outside, now: ProcessInfo.processInfo.systemUptime,
                                      delay: model.settings.resolvedAutoHideDelay, enabled: canDismiss) { hidePanel() }
         } else { hoverDismissal.reset(); fileDragDismissal.reset() }
@@ -1164,7 +1193,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
             sharingWindows.end(restoring: restore)
             if !restore { desiredVisible = false; presentation.previewVisible = false }
             music.setVisible(restore && desiredVisible)
-            panelPointerEntered = false
             lastRefresh = Date()
         }
     }

@@ -101,6 +101,9 @@ struct HubSettings: Codable, Equatable {
     var stagingEnabled: Bool? = true
     var airDropEnabled: Bool? = true
     var foldersFirst: Bool? = false
+    // Grouping changes presentation only; it never overwrites manual order.
+    var groupsEnabled: Bool? = false
+    var resolvedGroupsEnabled: Bool { groupsEnabled ?? false }
     var colorLabelFilterEnabled: Bool? = true
     var resolvedColorLabelFilterEnabled: Bool { colorLabelFilterEnabled ?? true }
     var switchDelay: Double = 0.1
@@ -148,7 +151,13 @@ struct HubSettings: Codable, Equatable {
     var resolvedClickWakeWhenSuppressed: Bool { clickWakeWhenSuppressed ?? false }
     var resolvedStagingEnabled: Bool { stagingEnabled ?? true }
     var resolvedFoldersFirst: Bool { foldersFirst ?? true }
-    var resolvedNotchIntegrationStyle: String { notchIntegrationStyle == "embedded" ? "embedded" : "connected" }
+    var resolvedNotchIntegrationStyle: String {
+        switch notchIntegrationStyle {
+        case "embedded": return "embedded"
+        case "extension": return "extension"
+        default: return "connected"
+        }
+    }
     var resolvedAutoHideDelay: Double {
         let value = autoHideDelay ?? 0.55
         return value.isFinite ? min(3, max(0, value)) : 0.55
@@ -266,6 +275,90 @@ struct FileEntry: Identifiable, Hashable, Sendable {
         labelNumber = values?.labelNumber ?? 0
         tagNames = (values?.tagNames ?? []).sorted()
         folderAppearance = isDirectory && !isPackage ? HubFolderAppearance.read(freshURL) : HubFolderAppearance()
+    }
+}
+
+/// A group owns its visible entries in their existing relative order. Group
+/// headers never become filesystem items or participate in selection.
+struct HubEntryGroup: Identifiable {
+    let id: String
+    let title: String
+    var entries: [FileEntry]
+}
+
+enum HubEntryGrouping {
+    static func groups(_ entries: [FileEntry], by key: SortKey, ascending: Bool = true, foldersFirst: Bool = false,
+                       locale: Locale, calendar: Calendar = .current) -> [HubEntryGroup] {
+        var result: [HubEntryGroup] = []
+        var indices: [String: Int] = [:]
+        var nameBuckets: [String: String] = [:]
+        let other = L("其他"), folder = L("文件夹"), zero = L("空文件"), small = L("小于 1 MB")
+        let medium = L("1 MB 至 100 MB"), large = L("100 MB 或更大"), unknown = L("日期未知")
+        for entry in entries {
+            let identifier: String
+            let title: String
+            var dateTitle: Date?
+            switch key {
+            case .name:
+                let first = entry.name.first.map(String.init) ?? ""
+                let bucket: String
+                if let known = nameBuckets[first] { bucket = known }
+                else {
+                    let latin = (first.applyingTransform(.toLatin, reverse: false) ?? first)
+                        .folding(options: .diacriticInsensitive, locale: locale).uppercased()
+                    if let scalar = latin.unicodeScalars.first, (65...90).contains(scalar.value) { bucket = String(Character(scalar)) }
+                    else if let scalar = latin.unicodeScalars.first, (48...57).contains(scalar.value) { bucket = "0–9" }
+                    else { bucket = other }
+                    nameBuckets[first] = bucket
+                }
+                identifier = "name:" + bucket; title = bucket
+            case .kind:
+                identifier = "kind:" + entry.kind; title = entry.kind
+            case .size:
+                if entry.isDirectory && !entry.isPackage { identifier = "size:folder"; title = folder }
+                else if entry.size <= 0 { identifier = "size:zero"; title = zero }
+                else if entry.size < 1_000_000 { identifier = "size:small"; title = small }
+                else if entry.size < 100_000_000 { identifier = "size:medium"; title = medium }
+                else { identifier = "size:large"; title = large }
+            case .created, .modified, .added:
+                let date = key == .created ? entry.created : key == .modified ? entry.modified : entry.added
+                if let date {
+                    let parts = calendar.dateComponents([.era, .year, .month], from: date)
+                    identifier = "date:\(parts.era ?? 0):\(parts.year ?? 0):\(parts.month ?? 0)"
+                    dateTitle = date; title = ""
+                } else { identifier = "date:unknown"; title = unknown }
+            }
+            if let index = indices[identifier] { result[index].entries.append(entry) }
+            else {
+                indices[identifier] = result.count
+                let displayed = dateTitle?.formatted(.dateTime.locale(locale).year().month(.wide)) ?? title
+                result.append(HubEntryGroup(id: identifier, title: displayed, entries: [entry]))
+            }
+        }
+        let sizeOrder = ["size:folder": 0, "size:zero": 1, "size:small": 2, "size:medium": 3, "size:large": 4]
+        return result.sorted { lhs, rhs in
+            if foldersFirst, key == .size, (lhs.id == "size:folder") != (rhs.id == "size:folder") {
+                return lhs.id == "size:folder"
+            }
+            if foldersFirst, key == .kind, lhs.entries[0].canNavigate != rhs.entries[0].canNavigate {
+                return lhs.entries[0].canNavigate
+            }
+            if key == .created || key == .modified || key == .added {
+                if lhs.id == "date:unknown" { return false }
+                if rhs.id == "date:unknown" { return true }
+            }
+            let comparison: ComparisonResult
+            if key == .size {
+                let a = sizeOrder[lhs.id] ?? 0, b = sizeOrder[rhs.id] ?? 0
+                comparison = a == b ? .orderedSame : a < b ? .orderedAscending : .orderedDescending
+            } else if key == .created || key == .modified || key == .added {
+                func date(_ entry: FileEntry) -> Date? { key == .created ? entry.created : key == .modified ? entry.modified : entry.added }
+                let a = date(lhs.entries[0]) ?? .distantPast, b = date(rhs.entries[0]) ?? .distantPast
+                comparison = a == b ? .orderedSame : a < b ? .orderedAscending : .orderedDescending
+            } else { comparison = lhs.title.localizedStandardCompare(rhs.title) }
+            if comparison == .orderedSame { return lhs.id < rhs.id }
+            return ascending ? comparison == .orderedAscending : comparison == .orderedDescending
+        }
     }
 }
 
@@ -437,18 +530,21 @@ private struct HubDropUndoGroup {
     @Published var sortKey: SortKey = .modified { didSet {
         invalidateEntryOrder()
         beginPersistenceTransaction(); defer { endPersistenceTransaction() }
-        referenceManualOrder = false; if readyToSave { clearDirectoryOrder() }; persistIfReady()
+        if !groupingActive { referenceManualOrder = false; if readyToSave { clearDirectoryOrder() } }; persistIfReady()
     } }
     @Published var ascending = false { didSet {
         invalidateEntryOrder()
         beginPersistenceTransaction(); defer { endPersistenceTransaction() }
-        referenceManualOrder = false; if readyToSave { clearDirectoryOrder() }; persistIfReady()
+        if !groupingActive { referenceManualOrder = false; if readyToSave { clearDirectoryOrder() } }; persistIfReady()
     } }
     @Published var referenceManualOrder = true { didSet { invalidateEntryOrder(); persistIfReady() } }
     @Published var viewMode: HubViewMode = .grid { didSet { persistIfReady() } }
     @Published var settings = HubSettings() { didSet {
         if settings.resolvedLanguage != oldValue.resolvedLanguage { HubLocalization.select(settings.resolvedLanguage) }
         if settings.resolvedFoldersFirst != oldValue.resolvedFoldersFirst { invalidateEntryOrder() }
+        if settings.resolvedGroupsEnabled != oldValue.resolvedGroupsEnabled || settings.resolvedLanguage != oldValue.resolvedLanguage {
+            cachedVisibleEntries = nil; cachedVisibleGroups = nil
+        }
         if !settings.resolvedColorLabelFilterEnabled { setColorLabelFilter(nil) }
         if settings.stagingWorkspaceID != oldValue.stagingWorkspaceID || settings.favoriteWorkspaceID != oldValue.favoriteWorkspaceID { cachedStagedURLs = nil }
         persistIfReady()
@@ -483,6 +579,10 @@ private struct HubDropUndoGroup {
     private var fileDropUndoStack: [HubDropUndoGroup] = []
     private var dropUndoInProgress = false
     private var dropUndoGeneration: UInt = 0
+    var canUndoFileDrop: Bool {
+        !fileDropUndoStack.isEmpty && fileOperationsInProgress == 0 && !stagingTransferInProgress &&
+            !sharingInProgress && !dropUndoInProgress && !externalFileWorkInProgress()
+    }
     private(set) var configurationWriteCount = 0
     private static let maximumConfigurationBytes = 16 * 1024 * 1024
     static let maximumWorkspaces = 2000
@@ -513,6 +613,9 @@ private struct HubDropUndoGroup {
     private var cachedStagedURLs: [URL]?
     private var cachedOrderedEntries: [FileEntry]?
     private var cachedVisibleEntries: (search: String, label: HubFinderLabel?, entries: [FileEntry])?
+    private var cachedVisibleGroups: [HubEntryGroup]?
+    private var cachedVisibleGroupIndices: [URL: Int] = [:]
+    private(set) var entryGroupingCalculationCount = 0
     private(set) var entryOrderCalculationCount = 0
     private var nextPeriodicRefresh: TimeInterval = 0
     private var retryDirectoryNavigation: (url: URL, selecting: URL?)?
@@ -723,19 +826,45 @@ private struct HubDropUndoGroup {
     var visibleEntries: [FileEntry] {
         if let cached = cachedVisibleEntries, cached.search == search, cached.label == colorLabelFilter { return cached.entries }
         let ordered = orderedEntries
-        let result = search.isEmpty && colorLabelFilter == nil ? ordered : ordered.filter {
+        let filtered = search.isEmpty && colorLabelFilter == nil ? ordered : ordered.filter {
             (colorLabelFilter == nil || $0.labelNumber == colorLabelFilter?.rawValue) &&
                 (search.isEmpty || $0.name.localizedStandardContains(search))
         }
+        let result: [FileEntry]
+        if groupingActive {
+            entryGroupingCalculationCount += 1
+            let groups = HubEntryGrouping.groups(filtered, by: sortKey, ascending: ascending,
+                                                  foldersFirst: settings.resolvedFoldersFirst, locale: settings.resolvedLanguage.locale)
+            cachedVisibleGroups = groups
+            cachedVisibleGroupIndices = [:]
+            for (index, group) in groups.enumerated() {
+                for entry in group.entries { cachedVisibleGroupIndices[entry.url.standardizedFileURL] = index }
+            }
+            result = groups.flatMap(\.entries)
+        } else { cachedVisibleGroups = nil; cachedVisibleGroupIndices = [:]; result = filtered }
         cachedVisibleEntries = (search, colorLabelFilter, result)
         return result
+    }
+
+    var groupingActive: Bool { settings.resolvedGroupsEnabled && !isRecentsRoot }
+    var visibleGroups: [HubEntryGroup] {
+        _ = visibleEntries
+        return cachedVisibleGroups ?? []
+    }
+
+    /// Resolve against the same cached display snapshot used by selection.
+    func visibleGroup(containing url: URL) -> HubEntryGroup? {
+        _ = visibleEntries
+        guard let index = cachedVisibleGroupIndices[url.standardizedFileURL],
+              let groups = cachedVisibleGroups, groups.indices.contains(index) else { return nil }
+        return groups[index]
     }
 
     func setColorLabelFilter(_ label: HubFinderLabel?) {
         let next = settings.resolvedColorLabelFilterEnabled ? label : nil
         guard colorLabelFilter != next else { return }
         colorLabelFilter = next
-        cachedVisibleEntries = nil
+        cachedVisibleEntries = nil; cachedVisibleGroups = nil
         selectedIDs = []
     }
 
@@ -743,7 +872,7 @@ private struct HubDropUndoGroup {
         guard !isRecentsRoot else { return }
         beginPersistenceTransaction()
         defer { endPersistenceTransaction() }
-        if sortKey == key && !isManualEntryOrder { ascending.toggle() }
+        if sortKey == key && (!isManualEntryOrder || groupingActive) { ascending.toggle() }
         else { sortKey = key; ascending = true }
     }
 
@@ -758,7 +887,7 @@ private struct HubDropUndoGroup {
         return selectedWorkspace?.directoryOrders?[path] != nil
     }
 
-    private func invalidateEntryOrder() { cachedOrderedEntries = nil; cachedVisibleEntries = nil }
+    private func invalidateEntryOrder() { cachedOrderedEntries = nil; cachedVisibleEntries = nil; cachedVisibleGroups = nil }
 
     private var orderedEntries: [FileEntry] {
         if let cachedOrderedEntries { return cachedOrderedEntries }
@@ -1317,6 +1446,33 @@ private struct HubDropUndoGroup {
 
     /// Changes presentation order only. No file-system move, rename or copy is performed.
     func reorderEntries(_ urls: [URL], before target: URL?) {
+        guard !groupingActive else { return }
+        performEntryReorder(urls, before: target)
+    }
+
+    /// Reordering within one group is a presentation change only. A nil
+    /// target means the end of that group, never the end of another group.
+    @discardableResult
+    func reorderGroupedEntries(_ urls: [URL], before target: URL?, groupID: String) -> Bool {
+        guard groupingActive, !dropUndoInProgress, canReorderEntries, !urls.isEmpty,
+              urls.allSatisfy({ $0.isFileURL && visibleGroup(containing: $0)?.id == groupID }),
+              target.map({ visibleGroup(containing: $0)?.id == groupID }) ?? true,
+              let group = visibleGroups.first(where: { $0.id == groupID }) else { return false }
+        let moving = Set(urls.map { $0.standardizedFileURL.path })
+        guard !moving.isEmpty, target.map({ !moving.contains($0.standardizedFileURL.path) }) ?? true else { return false }
+        let anchor: URL?
+        if let target { anchor = target }
+        else {
+            let groupPaths = Set(group.entries.map { $0.url.standardizedFileURL.path })
+            let original = orderedEntries.map(\.url)
+            guard let last = original.lastIndex(where: { groupPaths.contains($0.path) && !moving.contains($0.path) }) else { return false }
+            anchor = original.dropFirst(last + 1).first { !moving.contains($0.path) }
+        }
+        performEntryReorder(urls, before: anchor)
+        return true
+    }
+
+    private func performEntryReorder(_ urls: [URL], before target: URL?) {
         beginPersistenceTransaction()
         defer { endPersistenceTransaction() }
         guard !dropUndoInProgress else { return }
@@ -1356,7 +1512,7 @@ private struct HubDropUndoGroup {
     }
 
     func setManualEntryOrder(_ enabled: Bool) {
-        guard !dropUndoInProgress else { return }
+        guard !dropUndoInProgress, !groupingActive else { return }
         if isReferenceRoot { referenceManualOrder = enabled; return }
         guard let index = workspaces.firstIndex(where: { $0.id == selectedWorkspaceID }), currentURL != nil else { return }
         let path = directoryOrderPath

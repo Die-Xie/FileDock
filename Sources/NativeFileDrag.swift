@@ -1,6 +1,23 @@
 import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
+#if FILEDOCK_DRAG_DIAGNOSTICS
+import os
+
+/// Diagnostic builds only: aggregate drag phase/status without paths or names.
+@MainActor enum HubDragDiagnostics {
+    private static let logger = Logger(subsystem: "local.diexie.filedock", category: "DragTrace")
+    private static var last: [String: TimeInterval] = [:]
+    static func log(_ phase: String, _ detail: String) {
+        let now = ProcessInfo.processInfo.systemUptime
+        let key = phase + "|" + detail
+        if let previous = last[key], now - previous < 1 { return }
+        if last.count > 128 { last.removeAll(keepingCapacity: true) }
+        last[key] = now
+        logger.notice("phase=\(phase, privacy: .public) status=\(detail, privacy: .public)")
+    }
+}
+#endif
 
 let hubFileDragType = UTType(exportedAs: "com.filedock.replica.file-drag-context")
 let hubFileDragDidEnd = Notification.Name("HubFileDragDidEnd")
@@ -100,6 +117,9 @@ enum HubFileDragState {
         current = payload
         draggingPasteboard = nil
         pasteboardChangeCount = nil
+        #if FILEDOCK_DRAG_DIAGNOSTICS
+        HubDragDiagnostics.log("source-begin", "count=\(payload.urls.count) workspace=\(payload.context.workspaceID != nil) folder=\(payload.context.directory != nil)")
+        #endif
     }
 
     /// Bind only the real source session's pasteboard, never the general or a
@@ -108,10 +128,16 @@ enum HubFileDragState {
         guard current?.id == id else { return }
         draggingPasteboard = pasteboard
         pasteboardChangeCount = pasteboard.changeCount
+        #if FILEDOCK_DRAG_DIAGNOSTICS
+        HubDragDiagnostics.log("source-bind", "items=\(pasteboard.pasteboardItems?.count ?? -1) change=\(pasteboard.changeCount)")
+        #endif
     }
 
     static func end(_ id: UUID) {
         guard current?.id == id else { return }
+        #if FILEDOCK_DRAG_DIAGNOSTICS
+        HubDragDiagnostics.log("source-end", "active=true")
+        #endif
         current = nil
         source = nil
         releasedAt = nil
@@ -133,6 +159,9 @@ enum HubFileDragState {
     }
 
     static func localPayload(source: AnyObject?, pasteboard: NSPasteboard) -> HubFileDragPayload? {
+        #if FILEDOCK_DRAG_DIAGNOSTICS
+        HubDragDiagnostics.log("authentication", "source=\(source != nil && self.source === source) bound=\(draggingPasteboard != nil) board=\(draggingPasteboard?.name == pasteboard.name) change=\(pasteboard.changeCount == pasteboardChangeCount)")
+        #endif
         guard let source, self.source === source, draggingPasteboard?.name == pasteboard.name,
               pasteboard.changeCount == pasteboardChangeCount else { return nil }
         return validatedPayload()

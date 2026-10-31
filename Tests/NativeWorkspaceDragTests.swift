@@ -143,10 +143,71 @@ struct NativeWorkspaceDragTests {
         HubWorkspaceDragState.end(second.id, source: otherSource)
         precondition(!HubWorkspaceDragState.isDragging && notifications == 2)
 
+        // A native source can disappear during a SwiftUI rebuild without its
+        // completion callback. Only a sustained release may clear that state.
+        let abandoned = HubWorkspaceDragPayload(id: UUID(), workspaceID: UUID())
+        HubWorkspaceDragState.begin(abandoned, source: source)
+        write(abandoned)
+        HubWorkspaceDragState.bind(pasteboard: pasteboard, source: source, for: abandoned.id)
+        HubWorkspaceDragState.reconcile(mousePressed: true, now: 10)
+        HubWorkspaceDragState.reconcile(mousePressed: false, now: 11)
+        HubWorkspaceDragState.reconcile(mousePressed: false, now: 11.3)
+        precondition(HubWorkspaceDragState.isDragging && notifications == 2)
+        HubWorkspaceDragState.reconcile(mousePressed: true, now: 11.4)
+        HubWorkspaceDragState.reconcile(mousePressed: false, now: 12)
+        HubWorkspaceDragState.reconcile(mousePressed: false, now: 12.7)
+        precondition(!HubWorkspaceDragState.isDragging && notifications == 3)
+        precondition(HubWorkspaceDragState.localPayload(source: source, pasteboard: pasteboard) == nil)
+        HubWorkspaceDragState.end(abandoned.id, source: source)
+        precondition(notifications == 3, "A late AppKit completion cannot repeat cleanup")
+
+        let newer = HubWorkspaceDragPayload(id: UUID(), workspaceID: UUID())
+        HubWorkspaceDragState.begin(newer, source: otherSource)
+        HubWorkspaceDragState.end(abandoned.id, source: source)
+        HubWorkspaceDragState.reconcile(mousePressed: true, now: 20)
+        precondition(HubWorkspaceDragState.current == newer && notifications == 3,
+                     "An old completion must not end a newer active drag")
+        HubWorkspaceDragState.end(newer.id, source: otherSource)
+        precondition(!HubWorkspaceDragState.isDragging && notifications == 4)
+
+        testAbandonedRealSource()
+        precondition(notifications == 6, "Each recovered native source sends exactly one end notification")
         testDomainsAndDestinations()
         testClicksAndPreview()
-        print("PASS: workspace/shortcut domain isolation, native destination lifecycle, file drag pass-through, midpoint insertion, click-only selection, preview, private pasteboard authentication and stale session callbacks")
+        print("PASS: workspace/shortcut domain isolation, native destination lifecycle, file drag pass-through, midpoint insertion, click-only selection, preview, private pasteboard authentication, stale callbacks and released-session recovery")
         print("LIMIT: Real pointer dragging, native destination routing, edge autoscroll and animated tab reorder require UI verification; tests create no visible windows or files")
+    }
+
+    @MainActor private static func testAbandonedRealSource() {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 100, height: 50),
+                              styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        let view = HubWorkspaceDragBridge.WorkspaceDragView(frame: NSRect(x: 0, y: 0, width: 30, height: 32))
+        window.contentView!.addSubview(view)
+        var phases = [Bool]()
+        view.onDragStateChanged = { phases.append($0) }
+        let now = ProcessInfo.processInfo.systemUptime
+        func event(_ type: NSEvent.EventType, x: CGFloat) -> NSEvent {
+            NSEvent.mouseEvent(with: type, location: view.convert(NSPoint(x: x, y: 12), to: nil),
+                modifierFlags: [], timestamp: now, windowNumber: window.windowNumber, context: nil,
+                eventNumber: 1, clickCount: 1, pressure: 1)!
+        }
+        func start() {
+            view.mouseDown(with: event(.leftMouseDown, x: 5))
+            view.mouseDragged(with: event(.leftMouseDragged, x: 15))
+        }
+        start()
+        precondition(HubWorkspaceDragState.isDragging && phases == [true], "A native source session must start")
+        HubWorkspaceDragState.reconcile(mousePressed: false, now: now)
+        HubWorkspaceDragState.reconcile(mousePressed: false, now: now + 0.7)
+        precondition(!HubWorkspaceDragState.isDragging && phases == [true, false], "Recovery clears the real source and completion")
+        start()
+        precondition(HubWorkspaceDragState.isDragging && phases == [true, false, true], "An abandoned source must not block a later drag")
+        HubWorkspaceDragState.reconcile(mousePressed: false, now: now + 1)
+        HubWorkspaceDragState.reconcile(mousePressed: false, now: now + 1.7)
+        precondition(!HubWorkspaceDragState.isDragging && phases == [true, false, true, false])
+        precondition(!window.isVisible, "The native source test must not show a window")
     }
 
     @MainActor private static func testDomainsAndDestinations() {

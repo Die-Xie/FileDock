@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 
 /// A click following hover confirms the color. A deliberate second click can
 /// clear it without stationary hover immediately selecting it again.
@@ -25,6 +26,7 @@ struct HubColorLabelFilterInput {
 struct HubColorLabelFilterBar: View {
     let selection: HubFinderLabel?
     let onSelect: (HubFinderLabel?) -> Void
+    var nativeDropHint: (HubFinderLabel) -> String? = { _ in nil }
     var movesDroppedFilesToCurrentDirectory = false
     var hoverDelay: TimeInterval = 0.1
     var hoverEnabled = true
@@ -47,33 +49,7 @@ struct HubColorLabelFilterBar: View {
                     .accessibilityIdentifier("filedock.color-filter.all")
                     .onContinuousHover(coordinateSpace: CoordinateSpace.local) { updateHover($0, label: nil) }
                 ForEach(HubFinderLabel.colors + [.none]) { label in
-                    Button { click(label) } label: {
-                        ZStack {
-                            if label == .none {
-                                Circle().strokeBorder(Color.secondary, lineWidth: 1.2)
-                                Image(systemName: "line.diagonal").font(.system(size: 9)).foregroundStyle(.secondary)
-                            } else {
-                                Circle().fill(Color(nsColor: label.color))
-                                    .overlay(Circle().strokeBorder(Color.primary.opacity(0.15), lineWidth: 0.5))
-                            }
-                            if selection == label {
-                                Image(systemName: "checkmark").font(.system(size: 8, weight: .bold))
-                                    .foregroundStyle(label == .none ? Color.primary :
-                                        [.yellow, .orange, .green].contains(label) ? Color.black.opacity(0.85) : .white)
-                            }
-                        }.frame(width: 13, height: 13).frame(width: 28, height: 28)
-                            .background(selection == label ? Color.primary.opacity(0.12) : .clear,
-                                        in: RoundedRectangle(cornerRadius: 5))
-                            .contentShape(Rectangle())
-                    }.buttonStyle(.plain)
-                        .accessibilityLabel(L("筛选：\(label.name)"))
-                        .accessibilityAddTraits(selection == label ? .isSelected : [])
-                        .accessibilityIdentifier("filedock.color-filter.\(label.rawValue)")
-                        .help(movesDroppedFilesToCurrentDirectory
-                              ? L("\(label.name)：悬停筛选；拖入设色，外部文件移入当前文件夹，按 ⌥ 复制")
-                              : L("\(label.name)：悬停筛选，拖入文件设置标签"))
-                        .onContinuousHover(coordinateSpace: CoordinateSpace.local) { updateHover($0, label: label) }
-                        .anchorPreference(key: HubFileDropRegionKey.self, value: .bounds) { [.colorLabel(label.rawValue): $0] }
+                    colorButton(label)
                 }
             }.fixedSize()
             Menu {
@@ -97,6 +73,43 @@ struct HubColorLabelFilterBar: View {
             .onChange(of: hoverEnabled) { if !$0 { hover.cancel() } }
             .onChange(of: isEnabled) { if !$0 { hover.cancel() } }
             .onDisappear { hover.cancel() }
+    }
+
+    private func colorButton(_ label: HubFinderLabel) -> some View {
+        let hint = nativeDropHint(label)
+        return Button { click(label) } label: {
+            colorDot(label)
+                .frame(width: 13, height: 13).frame(width: 28, height: 28)
+                .background(selection == label || hint != nil ? Color.primary.opacity(0.12) : .clear,
+                            in: RoundedRectangle(cornerRadius: 5))
+                .overlay(RoundedRectangle(cornerRadius: 5).stroke(hint == nil ? Color.clear : Color.accentColor, lineWidth: 1.5))
+                .contentShape(Rectangle())
+        }.buttonStyle(.plain)
+            .accessibilityLabel(L("筛选：\(label.name)"))
+            .accessibilityAddTraits(selection == label ? .isSelected : [])
+            .accessibilityIdentifier("filedock.color-filter.\(label.rawValue)")
+            .help(movesDroppedFilesToCurrentDirectory
+                  ? L("\(label.name)：悬停筛选；拖入设色，外部文件移入当前文件夹，按 ⌥ 复制")
+                  : L("\(label.name)：悬停筛选，拖入文件设置标签"))
+            .onContinuousHover(coordinateSpace: CoordinateSpace.local) { updateHover($0, label: label) }
+            .anchorPreference(key: HubFileDropRegionKey.self, value: .bounds) { [.colorLabel(label.rawValue): $0] }
+    }
+
+    private func colorDot(_ label: HubFinderLabel) -> some View {
+        ZStack {
+            if label == .none {
+                Circle().strokeBorder(Color.secondary, lineWidth: 1.2)
+                Image(systemName: "line.diagonal").font(.system(size: 9)).foregroundStyle(.secondary)
+            } else {
+                Circle().fill(Color(nsColor: label.color))
+                    .overlay(Circle().strokeBorder(Color.primary.opacity(0.15), lineWidth: 0.5))
+            }
+            if selection == label {
+                Image(systemName: "checkmark").font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(label == .none ? Color.primary :
+                        [.yellow, .orange, .green].contains(label) ? Color.black.opacity(0.85) : .white)
+            }
+        }
     }
 
     private func click(_ label: HubFinderLabel?) {

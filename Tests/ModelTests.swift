@@ -305,7 +305,7 @@ import Foundation
         precondition(oldSettings.resolvedBackgroundTheme == "solid" && oldSettings.resolvedFoldersFirst,
                      "New factory defaults must not change missing legacy settings")
         var malformed = HubSettings()
-        for (value, expected) in [("embedded", "embedded"), ("connected", "connected"), ("unknown", "connected"), ("", "connected")] {
+        for (value, expected) in [("embedded", "embedded"), ("extension", "extension"), ("connected", "connected"), ("unknown", "connected"), ("", "connected")] {
             malformed.notchIntegrationStyle = value
             precondition(malformed.resolvedNotchIntegrationStyle == expected)
             malformed.normalize()

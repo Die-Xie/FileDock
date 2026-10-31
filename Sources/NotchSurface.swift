@@ -29,6 +29,60 @@ private func contourValue(_ value: Any?) -> CGPath? {
     return (value as! CGPath)
 }
 
+/// Geometry for the hosted header's notch-to-material transition.
+enum HubNotchFusionGeometry {
+    static func height(topInset: CGFloat, split: Bool, headerHeight: CGFloat, fontSize: CGFloat) -> CGFloat {
+        let inset = topInset.isFinite ? max(0, topInset) : 0
+        // Leave a genuinely black continuation below the physical cutout,
+        // then use enough distance to dissolve into either material smoothly.
+        return min(220, max(108, inset + 112))
+    }
+
+    /// The reported exclusion includes 12 points of toolbar padding on either
+    /// side. Keep the physical cutout opaque and fade outside its edges.
+    static func width(container: CGFloat, cutout: CGFloat, protectSideControls: Bool = false) -> CGFloat {
+        guard container.isFinite, cutout.isFinite, container > 0, cutout > 0 else { return 0 }
+        // Light toolbars use dark glyphs. Complete the black join before the
+        // side-control region rather than placing dark glyphs on black.
+        return min(container, protectSideControls ? cutout + 8 : max(cutout + 160, container * 0.78))
+    }
+    static func opaqueFraction(width: CGFloat, cutout: CGFloat) -> CGFloat {
+        guard width.isFinite, cutout.isFinite, width > 0, cutout > 0 else { return 0 }
+        return min(0.5, max(0, cutout - 24) / (2 * width))
+    }
+    static let narrowToolbarClearance: CGFloat = 28
+    static func verticalStops(topInset: CGFloat, height: CGFloat, split: Bool = true) -> [(location: CGFloat, opacity: CGFloat)] {
+        guard height.isFinite, height > 0 else { return [(0, 0), (1, 0)] }
+        let inset = topInset.isFinite ? max(0, topInset) : 0
+        if !split {
+            // The narrow toolbar spans the center. Its dedicated clearance
+            // lets the black join finish before any dark toolbar glyphs begin.
+            let hold = min(0.8, max(0, (inset + 2) / height))
+            let end = min(1, max(hold, (inset + narrowToolbarClearance) / height))
+            let range = end - hold
+            return [(0, 1), (hold, 1), (hold + range * 0.35, 0.70),
+                    (hold + range * 0.72, 0.18), (end, 0), (1, 0)]
+        }
+        // The compact music control starts immediately below the safe area;
+        // hold a dark surface behind it before fading into the selected theme.
+        let hold = min(0.8, max(0, (inset + 29) / height))
+        let remaining = 1 - hold
+        return [(0, 1), (hold, 1), (hold + remaining * 0.30, 0.72),
+                (hold + remaining * 0.65, 0.20), (1, 0)]
+    }
+    static func verticalOpacity(at fraction: CGFloat, topInset: CGFloat, height: CGFloat, split: Bool = true) -> CGFloat {
+        guard fraction.isFinite else { return 0 }
+        let x = min(1, max(0, fraction))
+        let stops = verticalStops(topInset: topInset, height: height, split: split)
+        for (left, right) in zip(stops, stops.dropFirst()) where x <= right.location {
+            guard right.location > left.location else { return right.opacity }
+            let t = (x - left.location) / (right.location - left.location)
+            return left.opacity + t * (right.opacity - left.opacity)
+        }
+        return 0
+    }
+}
+
 @MainActor
 private func currentOpacity(of layer: CALayer?, animationKey: String, animating: Bool) -> Float {
     if let opacity = layer?.presentation()?.opacity { return opacity }
@@ -48,11 +102,15 @@ final class HubNotchSurface: NSView {
     private let outline = CAShapeLayer()
     private var attached = true
     private var embedded = false
+    private var notchExtension = false
+    private let shoulderInset: CGFloat = 16
     private var sourceWidth: CGFloat = 200
     private var reduceMotion = false
     private var animationSpeed = 1.0
     private var presented = false
     private var generation: UInt64 = 0
+    private var transitionDeadline: TimeInterval?
+    private var transitionCompletion: (() -> Void)?
     private var measuredSize = NSSize.zero
     private weak var shadowWindow: NSWindow?
     private var shadowBeforeAnimation: Bool?
@@ -93,22 +151,30 @@ final class HubNotchSurface: NSView {
         DispatchQueue.main.async { [weak self] in self?.effectiveAppearanceDidChange?() }
     }
 
-    func configure(attached: Bool, sourceWidth: CGFloat, bodyColor: NSColor, reduceMotion: Bool, animationSpeed: Double = 1, embedded: Bool = false, liquidGlass: Bool = false) {
+    func configure(attached: Bool, sourceWidth: CGFloat, bodyColor: NSColor, reduceMotion: Bool, animationSpeed: Double = 1, embedded: Bool = false, liquidGlass: Bool = false,
+                   notchExtension: Bool = false) {
+        let wasExtension = self.notchExtension
         self.attached = attached
         self.embedded = attached && embedded
+        self.notchExtension = attached && embedded && notchExtension
         self.sourceWidth = max(80, sourceWidth.isFinite ? sourceWidth : 200)
         self.reduceMotion = reduceMotion
         self.animationSpeed = HubNotchMotion.normalizedSpeed(animationSpeed)
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         layer?.backgroundColor = liquidGlass ? NSColor.clear.cgColor : bodyColor.cgColor
-        glassMaterial.configure(enabled: liquidGlass, cornerRadius: 21,
-                                topExtension: attached && !embedded ? 24 : 0)
+        glassMaterial.configure(enabled: liquidGlass, cornerRadius: self.notchExtension ? 0 : 21,
+                                topExtension: self.notchExtension ? 64 : attached && !embedded ? 24 : 0,
+                                bottomExtension: self.notchExtension ? 64 : 0,
+                                sideExtension: self.notchExtension ? 64 : 0)
         // The bridge joins the middle of the body's top edge. A perimeter line
         // here would expose a horizontal seam between two otherwise joined parts.
         outline.isHidden = attached || liquidGlass
+        needsLayout = true
         if !isAnimating { applyRestingState() }
         CATransaction.commit()
+        if self.notchExtension { suspendWindowShadow() }
+        else if wasExtension { restoreWindowShadowIfVisible() }
     }
 
     override func layout() {
@@ -116,7 +182,7 @@ final class HubNotchSurface: NSView {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         glassMaterial.frame = bounds
-        hostedContent.frame = bounds
+        hostedContent.frame = notchExtension ? bounds.insetBy(dx: min(shoulderInset, bounds.width / 2), dy: 0) : bounds
         revealMask.frame = bounds
         outline.frame = bounds
         outline.path = roundedPath(in: bounds.insetBy(dx: 0.5, dy: 0.5), radius: 20)
@@ -133,13 +199,16 @@ final class HubNotchSurface: NSView {
         layoutSubtreeIfNeeded()
         generation &+= 1
         let token = generation
+        transitionDeadline = nil
+        transitionCompletion = nil
         let fromPath = currentContour(of: revealMask, animationKey: "notchMorph", animating: isAnimating) ?? closedPath()
         let fromOpacity = currentOpacity(of: layer, animationKey: "notchSurfaceOpacity", animating: isAnimating)
         presented = value
         removeTransitionAnimations()
 
         let morph = attached && !reduceMotion
-        let baseDuration = morph ? (value ? HubNotchMotion.openingDuration : HubNotchMotion.bodyClosingDuration) : 0.18
+        let baseDuration = morph ? (value ? HubNotchMotion.openingDuration :
+                                    notchExtension ? HubNotchMotion.closingDuration : HubNotchMotion.bodyClosingDuration) : 0.18
         let duration: CFTimeInterval = reduceMotion ? HubNotchMotion.reducedMotionDuration : HubNotchMotion.scaledDuration(baseDuration, speed: animationSpeed)
         let targetPath = value || !morph ? openPath() : closedPath()
 
@@ -154,6 +223,7 @@ final class HubNotchSurface: NSView {
         hostedContent.layer?.transform = CATransform3DIdentity
         CATransaction.commit()
 
+        if value && notchExtension { suspendWindowShadow() }
         guard animated, bounds.width > 0, bounds.height > 0 else {
             isAnimating = false
             applyRestingState()
@@ -163,18 +233,13 @@ final class HubNotchSurface: NSView {
         }
 
         isAnimating = true
+        transitionDeadline = ProcessInfo.processInfo.systemUptime + duration + 1
+        transitionCompletion = completion
         suspendWindowShadow()
         CATransaction.begin()
         CATransaction.setCompletionBlock { [weak self] in
             DispatchQueue.main.async {
-                guard let self, self.generation == token else { return }
-                self.isAnimating = false
-                CATransaction.begin()
-                CATransaction.setDisableActions(true)
-                self.applyRestingState()
-                CATransaction.commit()
-                self.restoreWindowShadowIfVisible()
-                completion()
+                self?.finishTransition(token: token)
             }
         }
 
@@ -183,9 +248,11 @@ final class HubNotchSurface: NSView {
                 let shape = CABasicAnimation(keyPath: "path")
                 shape.fromValue = fromPath
                 shape.toValue = targetPath
-                // The connecting curve shares this timing. File content stays
-                // fixed while both masks widen without lateral overshoot.
-                shape.timingFunction = CAMediaTimingFunction(controlPoints: 0.16, 0.90, 0.22, 1)
+                // One continuous curve avoids the visible pause introduced by
+                // a second settling phase. Reversals start at the live path.
+                shape.timingFunction = notchExtension
+                    ? CAMediaTimingFunction(controlPoints: 0.22, 0.84, 0.30, 1)
+                    : CAMediaTimingFunction(controlPoints: 0.16, 0.90, 0.22, 1)
                 // An embedded surface already meets the physical top edge,
                 // so it needs no wait for the separate connecting neck.
                 let lead = !embedded && fromPath.boundingBoxOfPath.height <= 0.01 ? HubNotchMotion.scaledDuration(HubNotchMotion.bodyOpeningLead, speed: animationSpeed) : 0
@@ -215,10 +282,34 @@ final class HubNotchSurface: NSView {
         CATransaction.commit()
     }
 
+    /// Recover a missing Core Animation completion without cutting short the
+    /// configured transition. Generation and the pending closure ensure a
+    /// reversed animation and a late callback can never finish each other.
+    func recoverStalledTransition(now: TimeInterval) {
+        guard now.isFinite, let deadline = transitionDeadline, now >= deadline else { return }
+        finishTransition(token: generation)
+    }
+
+    private func finishTransition(token: UInt64) {
+        guard generation == token, isAnimating, let completion = transitionCompletion else { return }
+        transitionDeadline = nil
+        transitionCompletion = nil
+        isAnimating = false
+        removeTransitionAnimations()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        applyRestingState()
+        CATransaction.commit()
+        restoreWindowShadowIfVisible()
+        completion()
+    }
+
     /// Used when the user begins manually moving/resizing the panel. The content
     /// becomes a normal fully interactive floating surface without a stale hide.
     func cancelAnimationsAndShow() {
         generation &+= 1
+        transitionDeadline = nil
+        transitionCompletion = nil
         removeTransitionAnimations()
         presented = true
         isAnimating = false
@@ -263,7 +354,9 @@ final class HubNotchSurface: NSView {
     }
 
     private func restoreWindowShadowIfVisible() {
-        guard presented, let shadowBeforeAnimation else { return }
+        // The extension has no rim or late shadow: restoring a WindowServer
+        // alpha shadow after its mask settles creates an obvious outline pop.
+        guard presented, !notchExtension, let shadowBeforeAnimation else { return }
         if let shadowWindow {
             shadowWindow.hasShadow = shadowBeforeAnimation
             if shadowBeforeAnimation { shadowWindow.invalidateShadow() }
@@ -272,12 +365,44 @@ final class HubNotchSurface: NSView {
         shadowWindow = nil
     }
 
-    private func openPath() -> CGPath { roundedPath(in: bounds, radius: 21) }
+    private func openPath() -> CGPath {
+        notchExtension ? extensionPath(in: bounds, shoulder: shoulderInset, bottomRadius: 26) : roundedPath(in: bounds, radius: 21)
+    }
     private func closedPath() -> CGPath {
         let width = min(bounds.width, sourceWidth + (embedded ? 0 : 12))
         // Zero area means a fresh reveal needs no body-wide delayed opacity
         // fade to conceal a visible pill while the neck is still extending.
-        return roundedPath(in: CGRect(x: bounds.midX - width / 2, y: bounds.maxY, width: width, height: 0), radius: 0)
+        let rect = CGRect(x: bounds.midX - width / 2, y: bounds.maxY, width: width, height: 0)
+        return notchExtension ? extensionPath(in: rect, shoulder: 0, bottomRadius: 0) : roundedPath(in: rect, radius: 0)
+    }
+
+    /// Same four lines and four cubic curves as the rounded mask, so both
+    /// opening and interrupted closing interpolate without scaling content.
+    private func extensionPath(in rect: CGRect, shoulder: CGFloat, bottomRadius: CGFloat) -> CGPath {
+        let s = max(0, min(shoulder, rect.width / 4, rect.height / 4))
+        let left = rect.minX + s, right = rect.maxX - s
+        let r = max(0, min(bottomRadius, (right - left) / 2, (rect.height - s) / 2))
+        let k: CGFloat = 0.552284749831
+        let p = CGMutablePath()
+        p.move(to: CGPoint(x: rect.minX, y: rect.maxY))
+        p.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+        p.addCurve(to: CGPoint(x: right, y: rect.maxY - s),
+                   control1: CGPoint(x: rect.maxX - s * k, y: rect.maxY),
+                   control2: CGPoint(x: right, y: rect.maxY - s + s * k))
+        p.addLine(to: CGPoint(x: right, y: rect.minY + r))
+        p.addCurve(to: CGPoint(x: right - r, y: rect.minY),
+                   control1: CGPoint(x: right, y: rect.minY + r - r * k),
+                   control2: CGPoint(x: right - r + r * k, y: rect.minY))
+        p.addLine(to: CGPoint(x: left + r, y: rect.minY))
+        p.addCurve(to: CGPoint(x: left, y: rect.minY + r),
+                   control1: CGPoint(x: left + r - r * k, y: rect.minY),
+                   control2: CGPoint(x: left, y: rect.minY + r - r * k))
+        p.addLine(to: CGPoint(x: left, y: rect.maxY - s))
+        p.addCurve(to: CGPoint(x: rect.minX, y: rect.maxY),
+                   control1: CGPoint(x: left, y: rect.maxY - s + s * k),
+                   control2: CGPoint(x: rect.minX + s * k, y: rect.maxY))
+        p.closeSubpath()
+        return p
     }
 
     // Both resting shapes use the same four lines and four cubic curves. Core
@@ -313,6 +438,8 @@ final class HubNotchBridgeView: NSView {
     private var animationSpeed = 1.0
     private var presented = false
     private var generation: UInt64 = 0
+    private var transitionDeadline: TimeInterval?
+    private var transitionCompletion: (() -> Void)?
     private var liquidGlass = false
     var animationStateChanged: (() -> Void)?
     private(set) var isAnimating = false { didSet { if oldValue != isAnimating { animationStateChanged?() } } }
@@ -352,6 +479,8 @@ final class HubNotchBridgeView: NSView {
         layoutSubtreeIfNeeded()
         generation &+= 1
         let token = generation
+        transitionDeadline = nil
+        transitionCompletion = nil
         let fromPath = currentContour(of: liquidMask, animationKey: "liquidNeck", animating: isAnimating) ?? path(.closed)
         let fromOpacity = currentOpacity(of: layer, animationKey: "liquidFade", animating: isAnimating)
         let depth = min(HubNotchMotion.neckDepth, bounds.height)
@@ -382,13 +511,12 @@ final class HubNotchBridgeView: NSView {
         }
 
         isAnimating = true
+        transitionDeadline = ProcessInfo.processInfo.systemUptime + duration + 1
+        transitionCompletion = completion
         CATransaction.begin()
         CATransaction.setCompletionBlock { [weak self] in
             DispatchQueue.main.async {
-                guard let self, self.generation == token else { return }
-                self.isAnimating = false
-                self.settle()
-                completion()
+                self?.finishTransition(token: token)
             }
         }
         if reduceMotion {
@@ -441,8 +569,26 @@ final class HubNotchBridgeView: NSView {
         CATransaction.commit()
     }
 
+    func recoverStalledTransition(now: TimeInterval) {
+        guard now.isFinite, let deadline = transitionDeadline, now >= deadline else { return }
+        finishTransition(token: generation)
+    }
+
+    private func finishTransition(token: UInt64) {
+        guard generation == token, isAnimating, let completion = transitionCompletion else { return }
+        transitionDeadline = nil
+        transitionCompletion = nil
+        isAnimating = false
+        liquidMask.removeAnimation(forKey: "liquidNeck")
+        layer?.removeAnimation(forKey: "liquidFade")
+        settle()
+        completion()
+    }
+
     func cancelAnimationsAndShow() {
         generation &+= 1
+        transitionDeadline = nil
+        transitionCompletion = nil
         liquidMask.removeAnimation(forKey: "liquidNeck")
         layer?.removeAnimation(forKey: "liquidFade")
         presented = true

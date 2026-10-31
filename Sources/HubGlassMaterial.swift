@@ -13,6 +13,7 @@ final class HubGlassMaterialView: NSView {
     private var cornerRadius: CGFloat = 21
     private var topExtension: CGFloat = 0
     private var bottomExtension: CGFloat = 0
+    private var sideExtension: CGFloat = 0
 
     override var isOpaque: Bool { renderingMode == .solid }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
@@ -30,11 +31,12 @@ final class HubGlassMaterialView: NSView {
     required init?(coder: NSCoder) { nil }
 
     func configure(enabled: Bool, cornerRadius: CGFloat = 21, topExtension: CGFloat = 0,
-                   bottomExtension: CGFloat = 0,
+                   bottomExtension: CGFloat = 0, sideExtension: CGFloat = 0,
                    reduceTransparency: Bool = NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency) {
         self.cornerRadius = cornerRadius.isFinite ? max(0, cornerRadius) : 21
         self.topExtension = topExtension.isFinite ? max(0, min(64, topExtension)) : 0
         self.bottomExtension = bottomExtension.isFinite ? max(0, min(64, bottomExtension)) : 0
+        self.sideExtension = sideExtension.isFinite ? max(0, min(64, sideExtension)) : 0
         if !enabled {
             renderingMode = .hidden
             isHidden = true
@@ -63,8 +65,8 @@ final class HubGlassMaterialView: NSView {
         CATransaction.setDisableActions(true)
         // Extending the material beyond a connecting edge keeps its native rim
         // out of the shared seam. The parent contour still clips every pixel.
-        material?.frame = NSRect(x: bounds.minX, y: bounds.minY - bottomExtension,
-                                 width: bounds.width, height: bounds.height + bottomExtension + topExtension)
+        material?.frame = NSRect(x: bounds.minX - sideExtension, y: bounds.minY - bottomExtension,
+                                 width: bounds.width + sideExtension * 2, height: bounds.height + bottomExtension + topExtension)
         CATransaction.commit()
     }
 

@@ -42,8 +42,9 @@ import SwiftUI
             surface.setPresented(true, animated: false) {}
             settle(surface)
             let root = flatten(host).compactMap { $0 as? HubWindowDragHandle.DragHandleView }.first { $0.dragRects != nil }!
-            let files = flatten(host).compactMap { $0 as? HubNativeFileDropBridge.DestinationView }
-            precondition(files.count == 1 && root.frame.size == host.bounds.size)
+            let files = flatten(host).compactMap { $0 as? HubNativeFileDropBridge.DestinationView }.filter { $0.bounds.width > 500 }
+            precondition(files.count == 1 && root.frame.size == host.bounds.size,
+                         "Only the file receiver spans the panel; the color receiver stays bounded to the footer")
             precondition(panel.isMovable && !panel.isVisible)
             let tabIDs = Set(model.tabWorkspaces.map(\.id))
             let tabFrames = flatten(host).compactMap { $0 as? HubWorkspaceDragBridge.WorkspaceDragView }
@@ -63,6 +64,7 @@ import SwiftUI
             }
             func hit(_ point: CGPoint, type: NSEvent.EventType = .leftMouseDown, flags: NSEvent.ModifierFlags = []) -> NSView? {
                 app.injectedEvent = event(type, point: point, flags: flags)
+                HubLocalFilePressDispatch.begin(app.injectedEvent!)
                 return host.hitTest(host.convert(point, to: host.superview))
             }
             for point in [CGPoint(x: 180, y: 6), CGPoint(x: 500, y: 6)] {
@@ -85,7 +87,7 @@ import SwiftUI
             precondition(host.hitTest(host.convert(CGPoint(x: 180, y: 6), to: host.superview)) !== root, "Eventless file-destination lookup must pass through")
             let payload = HubFileDragPayload(id: UUID(), context: .init(workspaceID: model.selectedWorkspaceID, directory: folder), urls: [folder.appendingPathComponent("unused.txt")])
             HubFileDragState.begin(payload)
-            precondition(hit(CGPoint(x: 330, y: 150), type: .leftMouseDragged) === files[0])
+            precondition(files.contains { hit(CGPoint(x: 330, y: 150), type: .leftMouseDragged) === $0 })
             root.mouseDown(with: event(point: CGPoint(x: 180, y: 6)))
             precondition(panel.dragCalls == 2)
             HubFileDragState.end(payload.id)

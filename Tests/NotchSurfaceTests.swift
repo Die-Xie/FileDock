@@ -120,7 +120,9 @@ struct NotchSurfaceTests {
         testZeroFrameReversal()
         testWindowShadowLifecycle()
         testEmbeddedSurface()
+        testNotchExtensionSurface()
         testGlassMaterial()
+        testStalledTransitions()
 
         print("PASS: continuous connection curves, no inward/outward bulges, animation-speed limits, static content, zero-frame reversal, reduced motion, window-shadow lifecycle, passive adaptive glass")
         print("LIMIT: offscreen layers do not establish rendered spring smoothness, display timing, or physical-notch alignment")
@@ -128,6 +130,41 @@ struct NotchSurfaceTests {
 
     @MainActor private static func maskBounds(_ surface: HubNotchSurface) -> CGRect {
         (surface.layer?.mask as? CAShapeLayer)?.path?.boundingBoxOfPath ?? .null
+    }
+
+    @MainActor private static func testStalledTransitions() {
+        let content = NSView(frame: .zero)
+        let surface = HubNotchSurface(contentView: content)
+        surface.frame = NSRect(x: 0, y: 0, width: 820, height: 460)
+        surface.configure(attached: true, sourceWidth: 200, bodyColor: .black, reduceMotion: false, animationSpeed: 0.5)
+        surface.layoutSubtreeIfNeeded()
+        var superseded = 0, closed = 0
+        surface.setPresented(true, animated: true) { superseded += 1 }
+        let initialTime = ProcessInfo.processInfo.systemUptime
+        surface.recoverStalledTransition(now: initialTime + 0.5)
+        expect(surface.isAnimating && superseded == 0, "Watchdog must not cut short a normal slow animation")
+        surface.setPresented(false, animated: true) { closed += 1 }
+        surface.recoverStalledTransition(now: initialTime + 3)
+        expect(!surface.isAnimating && closed == 1 && superseded == 0 && surface.layer?.opacity == 0,
+               "A stalled close must settle and execute only its own completion")
+        surface.recoverStalledTransition(now: initialTime + 4)
+        drainMainRunLoop(for: 0.1)
+        expect(closed == 1 && superseded == 0, "Late animation callbacks cannot finish an old or recovered transition twice")
+
+        let bridge = HubNotchBridgeView(frame: NSRect(x: 0, y: 0, width: 820, height: 64))
+        bridge.configure(sourceWidth: 200, bodyColor: .black, reduceMotion: false, animationSpeed: 0.5)
+        bridge.layoutSubtreeIfNeeded()
+        var bridgeSuperseded = 0, bridgeClosed = 0
+        bridge.setPresented(true, animated: true) { bridgeSuperseded += 1 }
+        bridge.recoverStalledTransition(now: initialTime + 0.5)
+        expect(bridge.isAnimating && bridgeSuperseded == 0, "Bridge watchdog must respect a normal animation")
+        bridge.setPresented(false, animated: true) { bridgeClosed += 1 }
+        bridge.recoverStalledTransition(now: initialTime + 3)
+        expect(!bridge.isAnimating && bridgeClosed == 1 && bridgeSuperseded == 0 && bridge.layer?.opacity == 0,
+               "A stalled bridge close must complete only its current transition")
+        bridge.recoverStalledTransition(now: initialTime + 4)
+        drainMainRunLoop(for: 0.1)
+        expect(bridgeClosed == 1 && bridgeSuperseded == 0, "A recovered bridge completion must be delivered once")
     }
 
     @MainActor private static func testGlassMaterial() {
@@ -366,6 +403,102 @@ struct NotchSurfaceTests {
                "Detached floating panels must retain rounded top corners")
         expect(content.frame == fixedFrame, "Switching attachment style must not resize file content")
         surface.setPresented(false, animated: false) { }
+    }
+
+    @MainActor private static func testNotchExtensionSurface() {
+        let content = NSView(frame: .zero)
+        let surface = HubNotchSurface(contentView: content)
+        surface.frame = NSRect(x: 0, y: 0, width: 900, height: 480)
+        surface.configure(attached: true, sourceWidth: 212, bodyColor: .white, reduceMotion: false,
+                          embedded: true, liquidGlass: true, notchExtension: true)
+        surface.layoutSubtreeIfNeeded()
+        let glass = surface.subviews.first as! HubGlassMaterialView
+        glass.layoutSubtreeIfNeeded()
+        if glass.renderingMode != .solid {
+            expect(glass.subviews.first?.frame == CGRect(x: -64, y: -64, width: 1028, height: 608),
+                   "Notch glass must overscan all sides so its intrinsic rim cannot appear late or cross the top")
+        }
+        let fusionHeight = HubNotchFusionGeometry.height(topInset: 32, split: true, headerHeight: 56, fontSize: 13)
+        expect(fusionHeight == 144 && HubNotchFusionGeometry.height(topInset: 32, split: false, headerHeight: 56, fontSize: 13) == fusionHeight,
+               "Both header layouts must leave enough distance for a gradual material transition")
+        let opacityAtCutoutBottom = HubNotchFusionGeometry.verticalOpacity(at: 32 / fusionHeight, topInset: 32, height: fusionHeight)
+        let opacityAtMusicBottom = HubNotchFusionGeometry.verticalOpacity(at: 59 / fusionHeight, topInset: 32, height: fusionHeight)
+        let opacityDuringFade = HubNotchFusionGeometry.verticalOpacity(at: 100 / fusionHeight, topInset: 32, height: fusionHeight)
+        expect(opacityAtCutoutBottom == 1 && opacityAtMusicBottom == 1 && opacityDuringFade > 0 && opacityDuringFade < 1 &&
+               HubNotchFusionGeometry.verticalOpacity(at: 1, topInset: 32, height: fusionHeight) == 0,
+               "The black join must continue below the hardware cutout and music controls before fading gradually")
+        let narrowToolbarTop = 32 + HubNotchFusionGeometry.narrowToolbarClearance
+        expect(HubNotchFusionGeometry.verticalOpacity(at: narrowToolbarTop / fusionHeight, topInset: 32,
+                                                       height: fusionHeight, split: false) == 0,
+               "The narrow toolbar must start below the dark central join in a light appearance")
+        let width = HubNotchFusionGeometry.width(container: 900, cutout: 236)
+        let lightWidth = HubNotchFusionGeometry.width(container: 900, cutout: 236, protectSideControls: true)
+        let opaqueHalf = HubNotchFusionGeometry.opaqueFraction(width: width, cutout: 236) * width
+        expect(width > 236 && width < 900 && abs(opaqueHalf * 2 - 212) < 0.001,
+               "The black center must cover the full physical cutout before fading into the material")
+        expect(lightWidth / 2 < 236 / 2 + 12,
+               "The light appearance's black join must end before the side-control area")
+        let lightPillBackground = 1.0 - 0.72
+        let linearPill = pow((lightPillBackground + 0.055) / 1.055, 2.4)
+        expect(1.05 / (linearPill + 0.05) >= 4.5,
+               "White music controls on the independent dark pill must stay readable over light material")
+        expect(HubNotchFusionGeometry.width(container: 100, cutout: 236) == 100 &&
+               HubNotchFusionGeometry.opaqueFraction(width: 100, cutout: 236) == 0.5 &&
+               HubNotchFusionGeometry.width(container: .nan, cutout: 236) == 0 &&
+               HubNotchFusionGeometry.opaqueFraction(width: 0, cutout: 236) == 0,
+               "The join must be bounded on narrow panels and reject invalid geometry")
+        let contentFrame = content.frame
+        expect(contentFrame == surface.bounds.insetBy(dx: 16, dy: 0), "The browser must stay inside the extension's shoulders")
+        let mask = surface.layer?.mask as! CAShapeLayer
+        let collapsed = mask.path!
+        expect(mask.path?.boundingBoxOfPath.height == 0, "The extension must begin at a zero-height notch seed")
+        surface.setPresented(true, animated: false) { }
+        expect(pathCommands(collapsed) == pathCommands(mask.path!), "Both contours must have identical animation path commands")
+        expect(maskBounds(surface) == surface.bounds, "The open extension reaches the screen's top edge")
+        expect(surface.containsVisiblePoint(NSPoint(x: 450, y: 479)), "The center merges with the top edge")
+        expect(!surface.containsVisiblePoint(NSPoint(x: 2, y: 460)) && surface.containsVisiblePoint(NSPoint(x: 20, y: 460)),
+               "The upper shoulder must curve inward without exposing the side margin")
+        surface.setPresented(false, animated: false) { }
+        surface.setPresented(true, animated: true) { }
+        expect(surface.isAnimating && content.frame == contentFrame && !animations(mask).isEmpty,
+               "Opening must animate the contour while the browser remains fixed")
+        let opening = animations(mask).first as! CABasicAnimation
+        let openingFrom = opening.fromValue as! CGPath, openingTo = opening.toValue as! CGPath
+        expect(pathCommands(openingFrom) == pathCommands(openingTo) && openingFrom.boundingBoxOfPath.height == 0 &&
+               openingTo.boundingBoxOfPath == surface.bounds,
+               "One continuous contour must grow from the cutout to the complete bounded panel")
+        surface.setPresented(false, animated: true) { }
+        let reversing = mask.animation(forKey: "notchMorph") as! CABasicAnimation
+        expect((reversing.fromValue as! CGPath).boundingBoxOfPath.height == 0,
+               "An immediate reversal must start at the unrendered opening origin")
+        surface.cancelAnimationsAndShow()
+        surface.configure(attached: true, sourceWidth: 212, bodyColor: .white, reduceMotion: true,
+                          embedded: true, notchExtension: true)
+        surface.setPresented(false, animated: false) { }
+        surface.setPresented(true, animated: true) { }
+        expect(animations(mask).isEmpty && content.frame == contentFrame,
+               "Reduced motion preserves the extension while avoiding contour motion")
+        surface.cancelAnimationsAndShow()
+        surface.configure(attached: true, sourceWidth: 212, bodyColor: .white, reduceMotion: false,
+                          embedded: true, liquidGlass: false, notchExtension: true)
+        surface.layoutSubtreeIfNeeded()
+        expect(surface.subviews.last === content,
+               "Hosted controls must stay above the material in a light solid theme")
+        surface.configure(attached: true, sourceWidth: 212, bodyColor: .black, reduceMotion: false,
+                          embedded: true, liquidGlass: false, notchExtension: true)
+        expect(content.frame == contentFrame,
+               "Switching solid appearance must preserve the browser layout")
+        surface.configure(attached: true, sourceWidth: 212, bodyColor: .black, reduceMotion: false,
+                          embedded: true, notchExtension: false)
+        surface.layoutSubtreeIfNeeded()
+        expect(surface.subviews.last === content && content.frame == surface.bounds,
+               "A screen without a confirmed cutout keeps the pre-existing embedded layout")
+        surface.configure(attached: false, sourceWidth: 212, bodyColor: .white, reduceMotion: false,
+                          embedded: true, notchExtension: true)
+        surface.layoutSubtreeIfNeeded()
+        expect(content.frame == surface.bounds,
+               "Floating and corner panels must never inherit the notch silhouette or dark band")
+        expect(!surface.containsVisiblePoint(NSPoint(x: 2, y: 475)), "Detached panels retain their regular rounded corners")
     }
 
     @MainActor private static func testLiquidBridge() {
@@ -712,6 +845,16 @@ struct NotchSurfaceTests {
         surface.setPresented(false, animated: true) { }
         surface.setPresented(true, animated: false) { }
         expect(!window.hasShadow, "A window configured without shadows must remain without them")
+        window.hasShadow = true
+        surface.configure(attached: true, sourceWidth: 200, bodyColor: .black, reduceMotion: false,
+                          embedded: true, notchExtension: true)
+        expect(!window.hasShadow, "Notch extension must suppress the late window outline from its first frame")
+        surface.setPresented(false, animated: false) { }
+        surface.setPresented(true, animated: true) { }
+        drainMainRunLoop(for: 0.40)
+        expect(!window.hasShadow, "The extension must not flash a shadow on completion")
+        surface.configure(attached: false, sourceWidth: 200, bodyColor: .black, reduceMotion: false)
+        expect(window.hasShadow, "Detaching restores the original floating window shadow")
         window.contentView = nil
         window.close()
     }

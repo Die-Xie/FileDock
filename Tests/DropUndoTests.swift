@@ -41,8 +41,10 @@ import Darwin
         let changedTags = try HubDropUndo.capture(source: nil, destination: metadata, transfer: .metadataOnly,
                                                   originalLabel: 0, appliedLabel: 7, originalTags: tags, originalTagSnapshot: originalSnapshot)
         try setTags(["keep custom tag", "new user tag"], on: metadata)
+        let userChangedSnapshot = try HubDropUndo.captureTags(metadata)
         try require(!HubDropUndo.undo([changedTags], trash: trash).failures.isEmpty)
-        try require((try metadata.resourceValues(forKeys: [.tagNamesKey]).tagNames ?? []).contains("new user tag"))
+        try require(try HubDropUndo.captureTags(metadata) == userChangedSnapshot,
+                    "Rejected undo must preserve the user's changed tag metadata")
         let noTagsFile = try file("no-tags")
         let absentTags = try HubDropUndo.captureTags(noTagsFile)
         try label(4, noTagsFile)

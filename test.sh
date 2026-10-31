@@ -2,6 +2,9 @@
 set -eu
 cd "${0:A:h}"
 mkdir -p .build
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
+    Sources/ExternalDropFocus.swift Tests/ExternalDropFocusTests.swift -o .build/external-drop-focus-tests -framework AppKit
+.build/external-drop-focus-tests
 swiftc -swift-version 5 -O -parse-as-library -module-cache-path .build/module-cache \
     Sources/NotchDragGuard.swift Tests/NotchDragGuardTests.swift -o .build/notch-drag-guard-tests \
     -framework AppKit -framework ApplicationServices -framework Combine
@@ -241,6 +244,30 @@ swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache
     -framework QuickLookThumbnailing -framework ImageIO -framework ServiceManagement -framework UniformTypeIdentifiers -framework ApplicationServices \
     -F "$TASK_SPARKLE" -framework Sparkle -Xlinker -rpath -Xlinker "$TASK_SPARKLE"
 .build/color-label-drop-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache "${TASK_VIEW_TEST_SOURCES[@]}" \
+    Tests/ModelTestSupport.swift Tests/NativeColorDropRoutingTests.swift -o .build/native-color-drop-routing-tests \
+    -framework AppKit -framework SwiftUI -framework Combine -framework Carbon -framework Quartz \
+    -framework QuickLookThumbnailing -framework ImageIO -framework ServiceManagement -framework UniformTypeIdentifiers -framework ApplicationServices \
+    -F "$TASK_SPARKLE" -framework Sparkle -Xlinker -rpath -Xlinker "$TASK_SPARKLE"
+.build/native-color-drop-routing-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache "${TASK_VIEW_TEST_SOURCES[@]}" \
+    Tests/ModelTestSupport.swift Tests/BackgroundContextMenuTests.swift -o .build/background-context-menu-tests \
+    -framework AppKit -framework SwiftUI -framework Combine -framework Carbon -framework Quartz \
+    -framework QuickLookThumbnailing -framework ImageIO -framework ServiceManagement -framework UniformTypeIdentifiers -framework ApplicationServices \
+    -F "$TASK_SPARKLE" -framework Sparkle -Xlinker -rpath -Xlinker "$TASK_SPARKLE"
+.build/background-context-menu-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache "${TASK_VIEW_TEST_SOURCES[@]}" \
+    Tests/ModelTestSupport.swift Tests/NativeReorderRoutingTests.swift -o .build/native-reorder-routing-tests \
+    -framework AppKit -framework SwiftUI -framework Combine -framework Carbon -framework Quartz \
+    -framework QuickLookThumbnailing -framework ImageIO -framework ServiceManagement -framework UniformTypeIdentifiers -framework ApplicationServices \
+    -F "$TASK_SPARKLE" -framework Sparkle -Xlinker -rpath -Xlinker "$TASK_SPARKLE"
+.build/native-reorder-routing-tests
+swiftc -swift-version 5 -O -parse-as-library -module-cache-path .build/module-cache "${TASK_VIEW_TEST_SOURCES[@]}" \
+    Tests/ModelTestSupport.swift Tests/EntryGroupingTests.swift -o .build/entry-grouping-tests \
+    -framework AppKit -framework SwiftUI -framework Combine -framework Carbon -framework Quartz \
+    -framework QuickLookThumbnailing -framework ImageIO -framework ServiceManagement -framework UniformTypeIdentifiers -framework ApplicationServices \
+    -F "$TASK_SPARKLE" -framework Sparkle -Xlinker -rpath -Xlinker "$TASK_SPARKLE"
+.build/entry-grouping-tests
 swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache "${TASK_VIEW_TEST_SOURCES[@]}" \
     Tests/ModelTestSupport.swift Tests/InlineRenameTests.swift -o .build/inline-rename-tests \
     -framework AppKit -framework SwiftUI -framework Combine -framework Carbon -framework Quartz \

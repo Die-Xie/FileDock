@@ -28,16 +28,17 @@ import SwiftUI
         window.contentView = host
         defer { window.contentView = nil; window.close() }
         settle(host)
-        let destination = descendants(host).compactMap { $0 as? HubNativeFileDropBridge.DestinationView }.first!
-        let y = host.bounds.height - 21
-        let row = stride(from: CGFloat(0), to: host.bounds.width, by: 1).filter {
+        let receivers = descendants(host).compactMap { $0 as? HubNativeFileDropBridge.DestinationView }
+        precondition(receivers.count == 1, "All file URL targets must share one native destination")
+        let destination = receivers[0]
+        let y = destination.bounds.height - 21
+        let row = stride(from: CGFloat(0), to: destination.bounds.width, by: 1).filter {
             destination.contains(CGPoint(x: $0, y: y))
         }
-        precondition(row.count == 8 * 28, "All eight footer targets must publish their full rectangular bounds")
+        precondition(row.count == 8 * 28, "Each color's full padded bounds must route through the unified destination")
         let start = row.min()!
         func point(_ index: Int) -> CGPoint { CGPoint(x: start + CGFloat(index * 28) + 14, y: y) }
-        precondition(destination.contains(CGPoint(x: start + 2, y: y + 11)),
-                     "Drag hit testing must include target padding well outside the colored dot")
+        precondition(destination.contains(CGPoint(x: start + 2, y: y + 11)), "Color padding must accept a file drag")
         let order = model.fileOrderURLs
         precondition(destination.operation?(point(1), [file, child], nil, false) == .copy,
                      "Finder drops onto a label must never advertise a destructive move")
@@ -179,7 +180,7 @@ import SwiftUI
         model.settings.colorLabelFilterEnabled = false
         precondition(!model.applyDroppedColorLabel(6, urls: [file]), "Disabled settings reject a stale drop callback")
         settle(host)
-        precondition(!destination.contains(point(0)) && destination.receive?([file], nil, point(0), false) == false)
+        precondition(destination.receive?([file], nil, point(0), false) != true)
         precondition(FileEntry(url: file).labelNumber == 7)
         print("PASS: real HubView native footer geometry, padded targets, Finder/local drop routing, metadata-only color/removal, preserved contents/location/order/custom tags, disabled/stale/invalid rejection")
         print("LIMIT: Hidden native callbacks do not reproduce a physical WindowServer drag session")

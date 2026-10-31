@@ -110,6 +110,7 @@ struct HubSettingsView: View {
             .background(Color(nsColor: .windowBackgroundColor))
             .environment(\.hubInterfaceMotion, HubInterfaceMotion(enabled: !reduceMotion, speed: model.settings.resolvedAnimationSpeed))
             .onReceive(NotificationCenter.default.publisher(for: Notification.Name("HubSelectMusicSettings"))) { _ in selectedPage = .music }
+            .onReceive(NotificationCenter.default.publisher(for: Notification.Name("HubSelectAppearanceSettings"))) { _ in selectedPage = .appearance }
             .onChange(of: selectedPage) { _ in commitInteractionEdits() }
             .onDisappear { commitInteractionEdits() }
     }
@@ -377,10 +378,10 @@ struct HubSettingsView: View {
             section(L("面板布局")) {
                 settingsRow(L("顶部展开样式")) {
                     Picker(L("顶部展开样式"), selection: Binding(get: { model.settings.resolvedNotchIntegrationStyle }, set: { model.settings.notchIntegrationStyle = $0 })) {
-                        Text(L("曲线衔接")).tag("connected"); Text(L("刘海嵌入")).tag("embedded")
+                        Text(L("曲线衔接")).tag("connected"); Text(L("刘海嵌入")).tag("embedded"); Text(L("刘海延展")).tag("extension")
                     }.labelsHidden().frame(width: 200)
                 }
-                note(L("刘海嵌入会避开中央刘海；空间不足时顶栏移至下方。光标旁呼出保持悬浮样式。"))
+                note(L("刘海嵌入与刘海延展会避开中央刘海；空间不足时顶栏移至下方。无刘海屏幕与光标旁呼出沿用现有样式。"))
                 Divider()
                 settingsRow(L("宽度")) { Stepper("\(Int(model.settings.width)) pt", value: $model.settings.width, in: 600...1400, step: 40).frame(width: 160) }
                 settingsRow(L("高度")) { Stepper("\(Int(model.settings.height)) pt", value: $model.settings.height, in: 280...900, step: 20).frame(width: 160) }

@@ -26,6 +26,8 @@ enum HubFileDropRegion: Hashable {
         }
         return regions[.content]?.contains(point) == true ? .content : nil
     }
+
+
 }
 
 struct HubFileDropRegionKey: PreferenceKey {
@@ -36,7 +38,7 @@ struct HubFileDropRegionKey: PreferenceKey {
 }
 
 struct HubFileDropPlan {
-    enum Action { case move, copy, reference, reorder, airDrop, createWorkspace, colorLabel, colorLabelMove, colorLabelCopy }
+    enum Action { case move, copy, reference, reorder, groupedReorderBlocked, airDrop, createWorkspace, colorLabel, colorLabelMove, colorLabelCopy }
     var workspaceID: UUID?
     var directory: URL?
     var item: URL?
@@ -44,6 +46,7 @@ struct HubFileDropPlan {
     var action: Action
     var slot: HubFileInsertionSlot? = nil
     var workspaceInsertion: HubWorkspaceTabInsertion? = nil
+    var groupID: String? = nil
 }
 
 struct HubFileDropFeedback: Equatable {
@@ -59,6 +62,7 @@ struct HubFileDropFeedback: Equatable {
         case .copy: return L("复制")
         case .reference: return L("添加引用")
         case .reorder: return L("调整顺序")
+        case .groupedReorderBlocked: return L("调整顺序")
         case .airDrop: return L("通过 AirDrop 发送")
         case .createWorkspace: return L("创建标签")
         case .colorLabel, .colorLabelMove, .colorLabelCopy: return L("设置颜色标签")
@@ -70,12 +74,14 @@ struct HubFileDropFeedback: Equatable {
         case .copy: return "plus.square.on.square"
         case .reference: return "link"
         case .reorder: return "arrow.up.arrow.down"
+        case .groupedReorderBlocked: return "nosign"
         case .airDrop: return "airplayaudio"
         case .createWorkspace: return "folder.badge.plus"
         case .colorLabel, .colorLabelMove, .colorLabelCopy: return "tag"
         }
     }
     var prompt: String {
+        if action == .groupedReorderBlocked { return L("只能在同一群组内调整顺序") }
         if action == .createWorkspace { return L("松开以将文件夹添加为标签 · 数量：\(count)") }
         if action == .colorLabel { return L("松开以设置 \(count) 项的颜色标签：\(title)") }
         if action == .colorLabelMove { return L("松开以移入并设色 \(count) 项 · \(title)；当前文件夹内仅设色") }
@@ -96,7 +102,7 @@ struct HubFileDropFeedback: Equatable {
                         .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Color.accentColor.opacity(0.65)))
                         .position(x: min(max(14, rect.midX), max(14, size.width - 14)), y: rect.maxY)
                 }
-            } else {
+            } else if action != .groupedReorderBlocked {
                 RoundedRectangle(cornerRadius: 8)
                     .fill(Color.accentColor.opacity(0.07))
                     .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.accentColor, style: StrokeStyle(lineWidth: 2, dash: [6, 4])))
@@ -127,11 +133,7 @@ struct HubFileInsertionSlot {
     /// Excluding the dragged group keeps its old cells from becoming targets.
     static func resolve(at point: CGPoint, frames: [URL: CGRect], order: [URL],
                         content: CGRect, horizontal: Bool, excluding: Set<URL> = []) -> Self? {
-        let candidates = order.filter { url in
-            guard !excluding.contains(url), let frame = frames[url] else { return false }
-            return !frame.intersection(content).isEmpty
-        }
-        guard let url = candidates.min(by: { distance(point, to: frames[$0]!) < distance(point, to: frames[$1]!) }),
+        guard let url = nearestItem(at: point, frames: frames, content: content, candidates: order, excluding: excluding),
               let frame = frames[url], let index = order.firstIndex(of: url) else { return nil }
         let after = horizontal ? point.y >= frame.midY : point.x >= frame.midX
         let before = after ? order.dropFirst(index + 1).first(where: { !excluding.contains($0) }) : url
@@ -146,6 +148,14 @@ struct HubFileInsertionSlot {
                             height: max(2, min(frame.maxY, content.maxY) - max(frame.minY, content.minY) - 10))
         }
         return Self(before: before, rect: marker, horizontal: horizontal)
+    }
+
+    static func nearestItem(at point: CGPoint, frames: [URL: CGRect], content: CGRect,
+                            candidates: [URL], excluding: Set<URL> = []) -> URL? {
+        candidates.filter { url in
+            guard !excluding.contains(url), let frame = frames[url] else { return false }
+            return !frame.intersection(content).isEmpty
+        }.min { distance(point, to: frames[$0]!) < distance(point, to: frames[$1]!) }
     }
     private static func distance(_ point: CGPoint, to rect: CGRect) -> CGFloat {
         let dx = max(rect.minX - point.x, 0, point.x - rect.maxX)
