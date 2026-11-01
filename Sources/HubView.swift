@@ -172,7 +172,7 @@ struct HubView: View {
         .environment(\.locale, model.settings.resolvedLanguage.locale)
         .environment(\.hubInterfaceMotion, interfaceMotion)
         .background(alignment: .top) {
-            if notchExtensionActive {
+            if notchFusionActive {
                 HubNotchFusionGradient(cutoutWidth: presentation.header.exclusionWidth,
                                        topInset: presentation.header.topInset, split: presentation.header.split,
                                        height: notchFusionHeight)
@@ -355,8 +355,8 @@ struct HubView: View {
         HubQQMusicBar(controller: music, compact: true,
                       compactWidth: embeddedMusicLayout.displayWidth, isPresented: presentation.previewVisible,
                       onControlFocusChange: { musicControlsFocused = $0 })
-            .environment(\.colorScheme, notchExtensionActive ? .dark : colorScheme)
-            .background(Color.black.opacity(notchExtensionActive ? 0.72 : 0), in: RoundedRectangle(cornerRadius: 7))
+            .environment(\.colorScheme, notchFusionActive ? .dark : colorScheme)
+            .background(Color.black.opacity(notchFusionActive ? 0.72 : 0), in: RoundedRectangle(cornerRadius: 7))
             .anchorPreference(key: HubHeaderDragRegionKey.self, value: .bounds) { [.music: $0] }
             .transformAnchorPreference(key: HubFileDropRegionKey.self, value: .bounds) { $0[.headerMusic] = $1 }
     }
@@ -438,7 +438,7 @@ struct HubView: View {
                     .transformAnchorPreference(key: HubFileDropRegionKey.self, value: .bounds) { $0[.headerControls] = $1 }
             }.padding(.horizontal, 12).padding(.vertical, 10)
                 .padding(.top, presentation.header.embedded ? presentation.header.topInset +
-                         (notchExtensionActive ? HubNotchFusionGeometry.narrowToolbarClearance : 0) : 0)
+                         (notchFusionActive ? HubNotchFusionGeometry.narrowToolbarClearance : 0) : 0)
         }
     }
 
@@ -1751,6 +1751,7 @@ struct HubView: View {
         presentation.header.embedded && presentation.header.exclusionWidth > 0 &&
             model.settings.resolvedNotchIntegrationStyle == "extension"
     }
+    private var notchFusionActive: Bool { notchExtensionActive && colorScheme == .dark }
     private var notchFusionHeight: CGFloat {
         HubNotchFusionGeometry.height(topInset: presentation.header.topInset, split: presentation.header.split,
                                       headerHeight: embeddedMusicLayout.headerHeight, fontSize: model.settings.fontSize)
