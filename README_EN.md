@@ -52,7 +52,7 @@ Keep **QQ Music, Apple's Music app, and NetEase Cloud Music** close. Track infor
 | Open quickly, put away easily | Notch hover or click, four screen corners, or global shortcuts, with continuous delay controls |
 | Make room while organizing | Drag the panel out to pin it; optionally hide it during an outgoing file drag and reopen at the trigger |
 | Stay focused in games and video | Full-screen and app restrictions, with optional temporary click activation |
-| Find files your way | Reorder tabs and pinned entries, use icon-only tabs, sort by list headers, and choose whether folders come first |
+| Find files your way | Filter by color or file type, customize type shortcuts, reorder tabs, and sort by list headers |
 | Match your desktop | Choose light, dark, or system appearance independently for Liquid Glass and the solid theme |
 | Keep your own setup | Switch Chinese and English instantly; save preferences locally and import or export configuration |
 
@@ -81,6 +81,8 @@ The following technical documents and most earlier release notes are currently i
 - [Release workflow](docs/RELEASING.md)
 - [Code quality and performance review](docs/QUALITY_REVIEW.md)
 - [Release notes](docs/releases/)
+
+**1.36.0** adds customizable file-type filters. The footer “…” menu offers every type in the current panel, with the item count shown separately. [Release notes](docs/releases/v1.36.0.md).
 
 **1.35.2** removes black notch blending in light mode while preserving the dark appearance. [Release notes](docs/releases/v1.35.2.md).
 

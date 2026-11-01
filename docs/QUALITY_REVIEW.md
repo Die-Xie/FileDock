@@ -37,7 +37,7 @@
 
 ```sh
 mkdir -p .build
-swiftc -swift-version 5 -O -parse-as-library Sources/Localization.swift Sources/LocalizationCatalog.swift Sources/HubModel.swift Sources/FolderWorkspacePreparation.swift Sources/FinderFileActions.swift Sources/FolderArtwork.swift Sources/DirectoryLoader.swift Sources/FileAppearance.swift Sources/RecentFiles.swift Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift scripts/BenchmarkStaging.swift -o .build/benchmark-staging -framework AppKit -framework Combine -framework Carbon -framework UniformTypeIdentifiers
+swiftc -swift-version 5 -O -parse-as-library Sources/Localization.swift Sources/LocalizationCatalog.swift Sources/HubModel.swift Sources/FileType.swift Sources/FolderWorkspacePreparation.swift Sources/FinderFileActions.swift Sources/FolderArtwork.swift Sources/DirectoryLoader.swift Sources/FileAppearance.swift Sources/RecentFiles.swift Sources/GlobalShortcuts.swift Sources/WindowPresentation.swift scripts/BenchmarkStaging.swift -o .build/benchmark-staging -framework AppKit -framework Combine -framework Carbon -framework UniformTypeIdentifiers
 .build/benchmark-staging
 ```
 
@@ -376,3 +376,12 @@ TriggerSuppressionTests覆盖黑名单和全屏两类证据的禁用／回退、
 - NotchSurfaceTests 验证单峰过冲、终点收敛、最大 1600×1100 逻辑尺寸的全部控制点未越画布、真实下边界超过目标、内容固定、逐点中途续接及反向、取消与 completion 仅执行一次。NotchGeometryTests 与 WindowAttachmentTests 通过。隐藏窗口无法证明真实 WindowServer 的逐帧呈现和物理刘海观感，实机核对单独进行。
 - 沿用 1.35.0 的统一文件拖放接收器，本轮未新增接收视图或修改文件操作路由。
 - HeaderWindowDragTests 在具备 WindowServer 访问的测试环境通过，覆盖头部命中、单次原生移动请求、控件排除、文件与标签拖动透传以及脱离后的接收器存续。受限环境下隐藏窗口编号为 0，当前版与上一正式版均被既有事件窗口身份检查拒绝；未为测试移除该保护。用户实机确认 build96「过冲自然，拖出也正常」；现有速度 0.7 和全部配置保留。
+
+## 1.36.0：文件类型筛选与项目计数（2026-11-01）
+
+- 类型从现有 FileEntry 缓存推导，分批发布快照后使类型统计失效；不扫描子目录、不新增文件属性读取。类型清单来自完整已载入项目，搜索、颜色或类型筛选不会让其他菜单选项消失。可见列表的缓存键包含类型，分组缓存与选择随筛选正确更新，重排继续基于完整顺序保留隐藏项。
+- 扩展名使用独立键空间，真实 `.folder`、`.none` 与目录、无扩展名类别不混淆。应用程序包按 APP 等扩展名识别；目录沿用现有可导航元数据。快捷类型输入最多 4KiB、扫描 256 个非空候选、保留 12 个唯一结果；旧配置缺失字段沿用默认，临时筛选不持久化。
+- 常用类型与「…」入口收在同一淡底圆角分段条中，内部字号一致，项目数量独立显示；窄布局收拢快捷按钮。自定义编辑使用附着 sheet，复用现有键盘、自动收起与窗口层级保护。未添加新的原生文件接收器。
+- FileTypeFilterTests、ModelTests、ColorLabelFilterTests、NativeReorderRoutingTests、NativeColorDropRoutingTests 均通过，覆盖分批补全、交集筛选、配置往返、隐藏选择清理、筛选重排、三视图与引用集合、直接颜色拖放和撤销。中英／明暗／540、683、900pt 的实际 HubView 离屏渲染，以及长类型名与大计数布局完成核对；隐藏回调和渲染不等同真实鼠标拖动实测。
+- 本机 debug 单次扫描 20,000 个已缓存条目约 9.11ms，随后 1,000 次类型统计缓存读取约 0.077ms，确认只扫描一次。该数据不是磁盘性能或 GPU 帧率基准。
+- build100 安装后核对真实界面的快捷筛选、空结果清除、当前类型菜单、自定义输入预览及取消；取消后原有快捷类型保持不变。安装前正常退出与重新打开后的配置校验值一致，7 个工作区保留。

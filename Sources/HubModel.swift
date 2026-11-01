@@ -106,6 +106,8 @@ struct HubSettings: Codable, Equatable {
     var resolvedGroupsEnabled: Bool { groupsEnabled ?? false }
     var colorLabelFilterEnabled: Bool? = true
     var resolvedColorLabelFilterEnabled: Bool { colorLabelFilterEnabled ?? true }
+    var fileTypeShortcuts: [String]? = nil
+    var resolvedFileTypeShortcuts: [String] { HubFileType.normalizedShortcuts(fileTypeShortcuts ?? HubFileType.defaultShortcuts) }
     var switchDelay: Double = 0.1
     // Before this field existed, zero delay disabled ordinary hover selection.
     // normalize() captures that old intent once, independently of later edits.
@@ -186,6 +188,7 @@ struct HubSettings: Codable, Equatable {
         if musicPlayer != nil { musicPlayer = resolvedMusicPlayer }
         if blockedApplicationBundleIDs != nil { blockedApplicationBundleIDs = resolvedBlockedApplicationBundleIDs }
         if allowedApplicationBundleIDs != nil { allowedApplicationBundleIDs = resolvedAllowedApplicationBundleIDs }
+        if fileTypeShortcuts != nil { fileTypeShortcuts = resolvedFileTypeShortcuts }
     }
 }
 
@@ -519,14 +522,15 @@ private struct HubDropUndoGroup {
     @Published var shortcutRegistrationErrors: [String: String] = [:]
     @Published var workspaces: [Workspace] = [] { didSet { invalidateEntryOrder(); cachedStagedURLs = nil; persistIfReady() } }
     @Published var selectedWorkspaceID: UUID? { didSet {
-        if selectedWorkspaceID != oldValue { setColorLabelFilter(nil) }
+        if selectedWorkspaceID != oldValue { setColorLabelFilter(nil); setFileTypeFilter(nil) }
         persistIfReady()
     } }
-    @Published var entries: [FileEntry] = [] { didSet { invalidateEntryOrder(); cachedFolderDropKinds = nil } }
+    @Published var entries: [FileEntry] = [] { didSet { invalidateEntryOrder(); cachedFolderDropKinds = nil; cachedAvailableFileTypes = nil } }
     @Published var selectedIDs = Set<URL>()
     @Published var search = ""
     // A browsing filter, never a modification to Finder labels or saved order.
     @Published private(set) var colorLabelFilter: HubFinderLabel?
+    @Published private(set) var fileTypeFilter: String?
     @Published var sortKey: SortKey = .modified { didSet {
         invalidateEntryOrder()
         beginPersistenceTransaction(); defer { endPersistenceTransaction() }
@@ -553,7 +557,7 @@ private struct HubDropUndoGroup {
     @Published var errorMessage: String?
     @Published private(set) var currentURL: URL? { didSet {
         invalidateEntryOrder()
-        if currentURL != oldValue { setColorLabelFilter(nil) }
+        if currentURL != oldValue { setColorLabelFilter(nil); setFileTypeFilter(nil) }
     } }
     @Published private(set) var history: [URL] = []
     @Published private(set) var historyIndex = -1
@@ -612,7 +616,9 @@ private struct HubDropUndoGroup {
     private var canonicalDirectoryPath: String? { didSet { if oldValue != canonicalDirectoryPath { invalidateEntryOrder() } } }
     private var cachedStagedURLs: [URL]?
     private var cachedOrderedEntries: [FileEntry]?
-    private var cachedVisibleEntries: (search: String, label: HubFinderLabel?, entries: [FileEntry])?
+    private var cachedVisibleEntries: (search: String, label: HubFinderLabel?, type: String?, entries: [FileEntry])?
+    private var cachedAvailableFileTypes: [HubFileTypeOption]?
+    private(set) var fileTypeCalculationCount = 0
     private var cachedVisibleGroups: [HubEntryGroup]?
     private var cachedVisibleGroupIndices: [URL: Int] = [:]
     private(set) var entryGroupingCalculationCount = 0
@@ -824,10 +830,11 @@ private struct HubDropUndoGroup {
         return components
     }
     var visibleEntries: [FileEntry] {
-        if let cached = cachedVisibleEntries, cached.search == search, cached.label == colorLabelFilter { return cached.entries }
+        if let cached = cachedVisibleEntries, cached.search == search, cached.label == colorLabelFilter, cached.type == fileTypeFilter { return cached.entries }
         let ordered = orderedEntries
-        let filtered = search.isEmpty && colorLabelFilter == nil ? ordered : ordered.filter {
+        let filtered = search.isEmpty && colorLabelFilter == nil && fileTypeFilter == nil ? ordered : ordered.filter {
             (colorLabelFilter == nil || $0.labelNumber == colorLabelFilter?.rawValue) &&
+                (fileTypeFilter == nil || HubFileType.key(for: $0) == fileTypeFilter) &&
                 (search.isEmpty || $0.name.localizedStandardContains(search))
         }
         let result: [FileEntry]
@@ -842,7 +849,27 @@ private struct HubDropUndoGroup {
             }
             result = groups.flatMap(\.entries)
         } else { cachedVisibleGroups = nil; cachedVisibleGroupIndices = [:]; result = filtered }
-        cachedVisibleEntries = (search, colorLabelFilter, result)
+        cachedVisibleEntries = (search, colorLabelFilter, fileTypeFilter, result)
+        return result
+    }
+
+    /// Based only on the already loaded panel snapshot. Other filters never
+    /// remove menu options, and repeated view updates reuse these small counts.
+    var availableFileTypes: [HubFileTypeOption] {
+        if let cachedAvailableFileTypes { return cachedAvailableFileTypes }
+        fileTypeCalculationCount += 1
+        var counts: [String: Int] = [:]
+        for entry in entries { counts[HubFileType.key(for: entry), default: 0] += 1 }
+        let keys = counts.keys.sorted {
+            if $0 == $1 { return false }
+            if $0 == HubFileType.folder { return true }
+            if $1 == HubFileType.folder { return false }
+            if $0 == HubFileType.noExtension { return false }
+            if $1 == HubFileType.noExtension { return true }
+            return $0 < $1
+        }
+        let result = keys.map { HubFileTypeOption(id: $0, count: counts[$0]!) }
+        cachedAvailableFileTypes = result
         return result
     }
 
@@ -864,6 +891,14 @@ private struct HubDropUndoGroup {
         let next = settings.resolvedColorLabelFilterEnabled ? label : nil
         guard colorLabelFilter != next else { return }
         colorLabelFilter = next
+        cachedVisibleEntries = nil; cachedVisibleGroups = nil
+        selectedIDs = []
+    }
+
+    func setFileTypeFilter(_ identifier: String?) {
+        let next = identifier.flatMap(HubFileType.normalizedIdentifier)
+        guard fileTypeFilter != next else { return }
+        fileTypeFilter = next
         cachedVisibleEntries = nil; cachedVisibleGroups = nil
         selectedIDs = []
     }
@@ -1686,7 +1721,8 @@ private struct HubDropUndoGroup {
         if entries != next { entries = next }
         if complete && !selectedIDs.isEmpty {
             let remaining = selectedIDs.intersection(Set(next.lazy.filter {
-                self.colorLabelFilter == nil || $0.labelNumber == self.colorLabelFilter?.rawValue
+                (self.colorLabelFilter == nil || $0.labelNumber == self.colorLabelFilter?.rawValue) &&
+                    (self.fileTypeFilter == nil || HubFileType.key(for: $0) == self.fileTypeFilter)
             }.map(\.url)))
             if remaining != selectedIDs { selectedIDs = remaining }
         }

@@ -1166,10 +1166,15 @@ struct HubView: View {
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if model.visibleEntries.isEmpty {
             VStack(spacing: 12) {
-                Image(systemName: model.colorLabelFilter != nil ? "tag" : model.search.isEmpty ? model.isRecentsRoot ? "clock" : "tray" : "magnifyingglass").font(.system(size: 38, weight: .light)).foregroundStyle(.secondary)
+                Image(systemName: model.fileTypeFilter != nil ? "line.3.horizontal.decrease.circle" : model.colorLabelFilter != nil ? "tag" : model.search.isEmpty ? model.isRecentsRoot ? "clock" : "tray" : "magnifyingglass").font(.system(size: 38, weight: .light)).foregroundStyle(.secondary)
                 Text(emptyTitle).font(.system(size: 14, weight: .medium))
                 Text(emptyDetail).foregroundStyle(.secondary)
-                if model.colorLabelFilter != nil { Button(L("清除颜色筛选")) { model.setColorLabelFilter(nil) } }
+                if model.fileTypeFilter != nil || model.colorLabelFilter != nil {
+                    HStack {
+                        if model.fileTypeFilter != nil { Button(L("清除类型筛选")) { model.setFileTypeFilter(nil) } }
+                        if model.colorLabelFilter != nil { Button(L("清除颜色筛选")) { model.setColorLabelFilter(nil) } }
+                    }
+                }
                 else if model.search.isEmpty && model.selectedWorkspace?.mode == .references && model.currentURL == nil { Button(L("添加项目…")) { model.addReferences() } }
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
                 .opacity(model.directoryLoading && !activityVisibility.visible ? 0 : 1)
@@ -1190,7 +1195,7 @@ struct HubView: View {
     private var emptyTitle: String {
         if model.directoryLoading { return L("正在读取文件信息…") }
         if model.directoryLoadMessage != nil { return L("暂时无法读取内容") }
-        if model.colorLabelFilter != nil { return L("没有匹配的项目") }
+        if model.fileTypeFilter != nil || model.colorLabelFilter != nil { return L("没有匹配的项目") }
         if !model.search.isEmpty { return L("没有匹配的项目") }
         if model.isRecentsRoot { return model.recentFilesLoading ? L("正在读取最近使用…") : L("暂无最近使用的文件") }
         return L("这里还没有项目")
@@ -1199,6 +1204,7 @@ struct HubView: View {
     private var emptyDetail: String {
         if model.directoryLoading { return L("文件读取在后台进行，你可以随时切换工作区。") }
         if model.directoryLoadMessage != nil { return L("请稍后重试，或通过上方标签切换到其他工作区。") }
+        if model.fileTypeFilter != nil { return L("试试其他类型，或清除筛选。类型与颜色和名称搜索共同生效。") }
         if model.colorLabelFilter != nil { return L("试试其他颜色，或清除颜色筛选。") }
         if !model.search.isEmpty { return L("试试其他名称") }
         if model.isRecentsRoot { return model.recentFilesMessage ?? L("最近打开的文件会自动出现在这里。结果取决于系统索引。") }
@@ -1476,7 +1482,14 @@ struct HubView: View {
                         NSEvent.pressedMouseButtons == 0 && NSApp.modalWindow == nil })
                     .disabled(model.selectedWorkspace == nil)
             }
-            Spacer(minLength: 6)
+            HubFileTypeFilterBar(shortcuts: model.settings.resolvedFileTypeShortcuts,
+                                 selection: model.fileTypeFilter, available: model.availableFileTypes,
+                                 totalCount: model.entries.count,
+                                 onSelect: model.setFileTypeFilter,
+                                 onUpdateShortcuts: { model.settings.fileTypeShortcuts = $0 })
+                .frame(minWidth: 28, maxWidth: .infinity)
+                .layoutPriority(-1)
+                .disabled(model.selectedWorkspace == nil)
             Text(model.selectedIDs.isEmpty ? L("\(model.visibleEntries.count) 个项目") : L("已选 \(model.selectedIDs.count) / \(model.visibleEntries.count)")).font(.system(size: 10)).foregroundStyle(.secondary).fixedSize()
             iconButton("arrow.clockwise", L("刷新")) { model.refresh() }
             Button { model.pinned.toggle() } label: { Image(systemName: model.pinned ? "pin.fill" : "pin").foregroundStyle(model.pinned ? Color.accentColor : Color.secondary).frame(width: 24, height: 23) }.buttonStyle(.plain).help(model.pinned ? L("取消固定") : L("固定窗口"))
