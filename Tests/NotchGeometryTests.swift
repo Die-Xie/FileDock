@@ -125,17 +125,41 @@ struct NotchGeometryTests {
                                                 leftAuxiliary: left, rightAuxiliary: right,
                                                 requestedSize: CGSize(width: 600, height: 300))
         checkEmbedded(compact, screen: screen, visible: visible)
-        precondition(!compact.usesSplitHeader, "A narrow panel must move its complete toolbar below the cutout")
-        near(compact.topInset, 38, "Narrow fallback must still protect the cutout depth")
+        precondition(compact.usesSplitHeader, "The minimum panel width keeps one scrolling toolbar row beside a known cutout")
+        near(compact.topInset, 38, "Narrow split headers must still preserve the physical cutout depth")
 
-        for width in [CGFloat(659), 660, 661] {
+        for width in [CGFloat(600), 659, 660, 661, 900] {
             let threshold = HubEmbeddedPlacement.make(screenFrame: screen, visibleFrame: visible, safeTop: 38,
                                                        leftAuxiliary: left, rightAuxiliary: right,
                                                        requestedSize: CGSize(width: width, height: 300))
             checkEmbedded(threshold, screen: screen, visible: visible)
-            precondition(threshold.usesSplitHeader == (width >= 660),
-                         "Split headers require 200 points per shoulder for all six shortcuts")
+            precondition(threshold.usesSplitHeader,
+                         "The former shortcut-width threshold cannot introduce an empty first row while resizing")
             near(threshold.topInset, 38, "Changing header layout must preserve hardware protection")
+        }
+
+        for gap in [CGFloat(61), 100, 186, 212, 320, 460] {
+            let shoulder = (screen.width - gap) / 2
+            let leftArea = CGRect(x: screen.minX, y: visible.maxY, width: shoulder, height: 38)
+            let rightArea = CGRect(x: screen.midX + gap / 2, y: visible.maxY, width: shoulder, height: 38)
+            let narrow = HubEmbeddedPlacement.make(screenFrame: screen, visibleFrame: visible, safeTop: 38,
+                leftAuxiliary: leftArea, rightAuxiliary: rightArea, requestedSize: CGSize(width: 600, height: 300))
+            checkEmbedded(narrow, screen: screen, visible: visible)
+            precondition(narrow.usesSplitHeader, "A valid cutout with usable shoulders supports independent horizontal scrolling")
+            near(narrow.headerExclusionWidth, gap + 24, "Scrolling must not reduce the physical cutout reservation")
+            near(narrow.topInset, 38, "Changing cutout width cannot discard its vertical safe inset")
+        }
+
+        for gap in [CGFloat(460.1), 500] {
+            let shoulder = (screen.width - gap) / 2
+            let narrow = HubEmbeddedPlacement.make(screenFrame: screen, visibleFrame: visible, safeTop: 38,
+                leftAuxiliary: CGRect(x: screen.minX, y: visible.maxY, width: shoulder, height: 38),
+                rightAuxiliary: CGRect(x: screen.midX + gap / 2, y: visible.maxY, width: shoulder, height: 38),
+                requestedSize: CGSize(width: 600, height: 300))
+            checkEmbedded(narrow, screen: screen, visible: visible)
+            precondition(!narrow.usesSplitHeader, "Extreme cutouts retain the safe fallback if even one 30pt control cannot fit after the extension inset")
+            near(narrow.headerExclusionWidth, gap + 24, "The safe fallback still preserves the actual cutout reservation")
+            near(narrow.topInset, 38, "An inaccessible shoulder cannot remove vertical hardware protection")
         }
 
         let hiddenMenu = HubEmbeddedPlacement.make(screenFrame: screen, visibleFrame: screen, safeTop: 38,
@@ -163,12 +187,13 @@ struct NotchGeometryTests {
         for (safeTop, auxLeft, auxRight) in [(CGFloat(0), Optional(left), Optional(right)),
                                             (CGFloat(38), nil, nil),
                                             (CGFloat(38), Optional(left), Optional(CGRect(x: 660, y: 944, width: 852, height: 38)))] {
-            let fallback = HubEmbeddedPlacement.make(screenFrame: screen, visibleFrame: visible, safeTop: safeTop,
-                                                     leftAuxiliary: auxLeft, rightAuxiliary: auxRight,
-                                                     requestedSize: CGSize(width: 900, height: 480))
-            precondition(!fallback.usesSplitHeader && fallback.headerExclusionWidth == 0,
-                         "A safe top or auxiliary gap alone cannot establish a real cutout")
-            near(fallback.topInset, 38, "Unestablished cutouts use the visible menu inset")
+            for width in [CGFloat(600), 900] {
+                let fallback = HubEmbeddedPlacement.make(screenFrame: screen, visibleFrame: visible, safeTop: safeTop,
+                    leftAuxiliary: auxLeft, rightAuxiliary: auxRight, requestedSize: CGSize(width: width, height: 480))
+                precondition(!fallback.usesSplitHeader && fallback.headerExclusionWidth == 0,
+                             "A safe top or auxiliary gap alone cannot establish a real cutout")
+                near(fallback.topInset, 38, "Unestablished cutouts preserve the safe fallback at every panel width")
+            }
         }
 
         let hugeNotch = HubEmbeddedPlacement.make(screenFrame: screen, visibleFrame: visible, safeTop: 38,
@@ -188,6 +213,11 @@ struct NotchGeometryTests {
         near(plain.sourceWidth, 186, "Unnotched displays use a virtual source for reveal")
         near(plain.topInset, 24, "Unnotched displays reserve their menu inset")
         precondition(!plain.usesSplitHeader && plain.headerExclusionWidth == 0)
+        let narrowPlain = HubEmbeddedPlacement.make(screenFrame: secondary, visibleFrame: secondaryVisible, safeTop: 0,
+            leftAuxiliary: nil, rightAuxiliary: nil, requestedSize: CGSize(width: 600, height: 300))
+        checkEmbedded(narrowPlain, screen: secondary, visible: secondaryVisible)
+        precondition(!narrowPlain.usesSplitHeader && narrowPlain.headerExclusionWidth == 0)
+        near(narrowPlain.topInset, 24, "A narrow unnotched secondary display keeps its menu-safe fallback")
 
         let lower = CGRect(x: 2500, y: -1100, width: 1280, height: 800)
         let lowerVisible = CGRect(x: 2500, y: -1060, width: 1280, height: 738)
@@ -205,6 +235,12 @@ struct NotchGeometryTests {
                                                       requestedSize: CGSize(width: 20_000, height: 20_000))
             checkEmbedded(placement, screen: screen, visible: dockVisible)
             near(placement.bodyFrame.width, 1308, "A side Dock limits both shoulders by the smaller safe side")
+            precondition(placement.usesSplitHeader)
+            let narrowDock = HubEmbeddedPlacement.make(screenFrame: screen, visibleFrame: dockVisible, safeTop: 38,
+                leftAuxiliary: left, rightAuxiliary: right, requestedSize: CGSize(width: 600, height: 300))
+            checkEmbedded(narrowDock, screen: screen, visible: dockVisible)
+            precondition(narrowDock.usesSplitHeader, "A side Dock must not restore the obsolete two-row width policy")
+            near(narrowDock.bodyFrame.width, 600, "A side Dock preserves a usable minimum width without shifting the notch anchor")
         }
 
         let fullscreen = HubEmbeddedPlacement.make(screenFrame: screen, visibleFrame: screen, safeTop: 0,

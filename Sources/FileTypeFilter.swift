@@ -12,13 +12,17 @@ struct HubFileTypeFilterBar: View {
     @State private var showsEditor = false
 
     var body: some View {
-        ViewThatFits(in: .horizontal) {
+        let displayedShortcuts = HubFileType.displayedShortcuts(preferred: shortcuts, available: available)
+        return ViewThatFits(in: .horizontal) {
             HStack(spacing: 1) {
-                ForEach(shortcuts, id: \.self) { typeButton($0) }
-                moreMenu(markSelected: selection.map { !shortcuts.contains($0) } ?? false)
+                allButton
+                ForEach(displayedShortcuts, id: \.self) { typeButton($0) }
+                moreMenu(markSelected: selection.map { !displayedShortcuts.contains($0) } ?? false)
             }.modifier(HubFileTypeSegmentContainer()).fixedSize()
-            moreMenu(markSelected: selection != nil)
-                .modifier(HubFileTypeSegmentContainer()).fixedSize()
+            HStack(spacing: 1) {
+                if let selection { compactClearButton(selection) } else { allButton }
+                moreMenu(markSelected: false)
+            }.modifier(HubFileTypeSegmentContainer()).fixedSize()
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(L("文件类型筛选"))
@@ -27,10 +31,49 @@ struct HubFileTypeFilterBar: View {
         }
     }
 
+    private func select(_ type: String?) {
+        NotificationCenter.default.post(name: Notification.Name("HubPanelFilterInteraction"), object: nil)
+        onSelect(type)
+    }
+
+    private var allButton: some View {
+        Button { select(nil) } label: {
+            Text(L("全部")).font(.system(size: 10))
+                .foregroundStyle(selection == nil ? Color.primary : Color.secondary)
+                .padding(.horizontal, 7).frame(minWidth: 28, minHeight: 24)
+                .background(selection == nil ? Color.primary.opacity(0.10) : .clear,
+                            in: RoundedRectangle(cornerRadius: 5))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("filedock.type-filter.all")
+        .accessibilityAddTraits(selection == nil ? .isSelected : [])
+        .accessibilityLabel(L("全部类型"))
+        .help(L("清除类型筛选"))
+    }
+
+    private func compactClearButton(_ type: String) -> some View {
+        Button { select(nil) } label: {
+            HStack(spacing: 4) {
+                Text(HubFileType.title(for: type)).lineLimit(1).truncationMode(.middle)
+                    .frame(maxWidth: 60)
+                Image(systemName: "xmark").font(.system(size: 8, weight: .medium))
+            }
+            .font(.system(size: 10)).foregroundStyle(Color.primary)
+            .padding(.horizontal, 7).frame(minWidth: 28, minHeight: 24)
+            .background(Color.primary.opacity(0.10), in: RoundedRectangle(cornerRadius: 5))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("filedock.type-filter.clear")
+        .accessibilityLabel(L("清除类型筛选"))
+        .help(L("筛选：\(HubFileType.title(for: type))") + "\n" + L("清除类型筛选"))
+    }
+
     private func typeButton(_ type: String) -> some View {
         let selected = selection == type
         return Button {
-            onSelect(selected ? nil : type)
+            select(selected ? nil : type)
         } label: {
             Text(HubFileType.title(for: type)).lineLimit(1).truncationMode(.middle)
                 .font(.system(size: 10))
@@ -50,7 +93,7 @@ struct HubFileTypeFilterBar: View {
 
     private func moreMenu(markSelected: Bool) -> some View {
         return Menu {
-            Button { onSelect(nil) } label: {
+            Button { select(nil) } label: {
                 Label(L("全部类型（\(totalCount)）"), systemImage: selection == nil ? "checkmark" : "line.3.horizontal.decrease")
             }
             Divider()
@@ -58,7 +101,7 @@ struct HubFileTypeFilterBar: View {
                 Text(L("当前面板暂无可筛选类型"))
             }
             ForEach(available) { option in
-                Button { onSelect(selection == option.id ? nil : option.id) } label: {
+                Button { select(selection == option.id ? nil : option.id) } label: {
                     Label(L("\(option.title)（\(option.count)）"), systemImage: selection == option.id ? "checkmark" : "doc")
                         .lineLimit(1).truncationMode(.middle)
                 }
@@ -110,6 +153,8 @@ private struct HubFileTypeShortcutEditor: View {
             Text(L("用逗号、空格或换行分隔，例如 md, pdf, zip, folder。folder 表示文件夹，none 表示无扩展名。"))
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             Text(L("按最后一个扩展名匹配，例如 tar.gz 使用 gz。"))
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Text(L("当前面板不存在的快捷类型会由其他已有类型补位，不会更改你的设置。"))
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             TextEditor(text: Binding(get: { draft }, set: {
                 draft = String(decoding: $0.utf8.prefix(HubFileType.maximumEditorBytes), as: UTF8.self)

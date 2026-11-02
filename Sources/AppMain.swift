@@ -74,6 +74,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
     private var triggerClickMonitors: [Any] = []
     private var hoverActivation = HubHoverActivation()
     private var hoverDismissal = HubHoverDismissal()
+    private var panelInteractionGrace = HubPanelInteractionGrace()
     private var fileDragDismissal = HubFileDragDismissal()
     private var fileDragReentry = HubFileDragReentry()
     private let triggerSuppression = HubTriggerSuppressionMonitor()
@@ -198,6 +199,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         panel.contentView = surface
         surface.configure(attached: false, sourceWidth: 186, bodyColor: bodyColor, reduceMotion: reduceMotion)
         surface.setPresented(false, animated: false) {}
+        surface.resizeConfiguration = { [weak self] event in self?.panelResizeConfiguration(for: event) }
+        surface.resizeCursorAllowedEdges = { [weak self] in self?.panelResizeConfiguration()?.allowedEdges ?? [] }
+        surface.resizeDidBegin = { [weak self] in self?.beginPanelResize() }
+        surface.resizeFrameRequested = { [weak self] frame in
+            guard let self else { return }
+            self.setPanelLogicalFrame(frame, overscan: self.surface.overscanEnabled)
+        }
+        surface.resizeDidEnd = { [weak self] in self?.endPanelResize() }
         bridgePanel = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         bridgePanel.backgroundColor = .clear
         bridgePanel.isOpaque = false
@@ -382,6 +391,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
     }
 
     private func configureNotifications() {
+        for name in [NSMenu.didEndTrackingNotification, Notification.Name("HubPanelFilterInteraction")] {
+            notificationTokens.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self, self.desiredVisible, self.panel.isVisible else { return }
+                    self.panelInteractionGrace.begin(now: ProcessInfo.processInfo.systemUptime)
+                    self.hoverDismissal.reset()
+                }
+            })
+        }
         notificationTokens.append(NotificationCenter.default.addObserver(forName: hubExternalColorDropAccepted, object: nil, queue: .main) { [weak self] note in
             guard let expected = note.userInfo?["frontmostPID"] as? pid_t else { return }
             // Run after AppKit finishes the source application's drag callback.
@@ -488,6 +506,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
     }
 
     private func handleKeyboard(_ event: NSEvent) -> Bool {
+        if surface.isResizing {
+            if event.keyCode == UInt16(kVK_Escape) { surface.cancelResize() }
+            return true
+        }
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         if panel.isKeyWindow, HubMarqueeSelectionState.isSelecting {
             if event.keyCode == UInt16(kVK_Escape) { HubMarqueeSelectionState.cancel() }
@@ -568,6 +590,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         }
         NSApp.activate(ignoringOtherApps: true)
         hoverDismissal.beginPresentation()
+        panelInteractionGrace.reset()
         fileDragDismissal.reset()
     }
 
@@ -594,6 +617,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         surface.setPresented(false, animated: true, completion: finish)
         bridgeView.setPresented(false, animated: attachedToNotch && !embeddedAtNotch, completion: finish)
         shownFromHover = false
+        panelInteractionGrace.reset()
         hoverDismissal.reset()
         fileDragDismissal.reset()
         hoverActivation.dismiss(regionID: hoveredRegionID, now: ProcessInfo.processInfo.systemUptime)
@@ -645,6 +669,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
     private var requestedPanelSize: NSSize {
         NSSize(width: model.settings.width.isFinite ? min(1600, max(600, model.settings.width)) : 900,
                height: model.settings.height.isFinite ? min(1100, max(300, model.settings.height)) : 480)
+    }
+
+    private func panelResizeConfiguration(for event: NSEvent) -> HubPanelResizeConfiguration? {
+        guard HubLocalFilePressDispatch.contains(event) else { return nil }
+        return panelResizeConfiguration()
+    }
+
+    private func panelResizeConfiguration() -> HubPanelResizeConfiguration? {
+        guard desiredVisible, !hasActiveDialog, windowDragSession == nil,
+              !HubFileDragState.isDragging, !HubWorkspaceDragState.isDragging,
+              !HubMarqueeSelectionState.isSelecting, !HubInlineFileNameEditor.isEditing(in: panel) else { return nil }
+        let frame = logicalPanelFrame
+        var config = HubPanelResizeConfiguration(frame: frame)
+        if attachedToNotch {
+            config.anchor = .topCenter
+            config.allowedEdges = [.left, .right, .bottom]
+        } else if let corner = anchoredCorner {
+            switch corner {
+            case "topLeft": config.anchor = .topLeft; config.allowedEdges = [.right, .bottom]
+            case "topRight": config.anchor = .topRight; config.allowedEdges = [.left, .bottom]
+            case "bottomLeft": config.anchor = .bottomLeft; config.allowedEdges = [.right, .top]
+            case "bottomRight": config.anchor = .bottomRight; config.allowedEdges = [.left, .top]
+            default: break
+            }
+        }
+        if let screen = panel.screen ?? attachmentScreen {
+            let visible = screen.visibleFrame
+            let width = attachedToNotch ? 2 * min(frame.midX - visible.minX - 12, visible.maxX - frame.midX - 12) : visible.width - 24
+            let height = attachedToNotch ? frame.maxY - visible.minY - 12 : visible.height - 24
+            config.maximum = NSSize(width: min(1600, max(1, width)), height: min(1100, max(1, height)))
+            config.minimum = NSSize(width: min(600, config.maximum.width), height: min(300, config.maximum.height))
+        }
+        return config
     }
 
     private func setPanelLogicalFrame(_ frame: NSRect, overscan: Bool) {
@@ -765,7 +822,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
 
     func windowWillMove(_ notification: Notification) {
         guard !restoringSize, let window = notification.object as? NSWindow, window === panel,
-              desiredVisible, !panel.inLiveResize, attachedToNotch || anchoredCorner != nil else { return }
+              desiredVisible, !panel.inLiveResize, !surface.isResizing, attachedToNotch || anchoredCorner != nil else { return }
         attachedToNotch = false
         anchoredCorner = nil
         cornerKeepAliveFrame = nil
@@ -847,6 +904,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         HubFileDragState.reconcile(mousePressed: NSEvent.pressedMouseButtons & 1 != 0, now: ProcessInfo.processInfo.systemUptime)
         HubWorkspaceDragState.reconcile(mousePressed: NSEvent.pressedMouseButtons & 1 != 0, now: ProcessInfo.processInfo.systemUptime)
         guard let model, let panel else { return }
+        surface.reconcileResize(mousePressed: NSEvent.pressedMouseButtons & 1 != 0)
         let uptime = ProcessInfo.processInfo.systemUptime
         surface.recoverStalledTransition(now: uptime)
         bridgeView.recoverStalledTransition(now: uptime)
@@ -900,7 +958,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
             let bridgePoint = bridgeView.convert(bridgePanel.convertPoint(fromScreen: pointer), from: nil)
             let insideBridge = attachedToNotch && !embeddedAtNotch && bridgeView.containsVisiblePoint(bridgePoint)
             if insideSurface { hoverDismissal.notePointerEntered() }
-            if !surface.isAnimating, !HubFileDragState.isDragging, !HubWorkspaceDragState.isDragging, !HubMarqueeSelectionState.isSelecting, !panel.inLiveResize,
+            if !surface.isAnimating, !surface.isResizing, !HubFileDragState.isDragging, !HubWorkspaceDragState.isDragging, !HubMarqueeSelectionState.isSelecting, !panel.inLiveResize,
                windowDragSession == nil, now.timeIntervalSince(lastRefresh) > 2 {
                 model.refreshInBackground(ifDue: true); lastRefresh = now
             }
@@ -909,13 +967,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
             let previewVisible = QLPreviewPanel.sharedPreviewPanelExists() && QLPreviewPanel.shared()?.isVisible == true
             let insideCornerPath = cornerKeepAliveFrame.map { HubHoverGeometry.containsTriggerPoint(pointer, in: $0) } ?? false
             let outside = !insideSurface && !insideBridge && !insideCornerPath && !logicalPanelFrame.insetBy(dx: -12, dy: -12).contains(pointer) && !hovering
+            let returningFromMenu = panelInteractionGrace.blocksDismissal(now: uptime, pointerInside: !outside)
             // Source ownership, pasteboard and native drag session remain alive
             // while the panel animates out. Never end/cancel the drag to hide it.
             // This explicit preference also allows pinned panels to make room.
             let dragOutside = !insideSurface && !insideBridge && !logicalPanelFrame.insetBy(dx: -12, dy: -12).contains(pointer)
             let canDismissDrag = model.settings.resolvedHideOnFileDragExit && !sheetOpen && !previewVisible &&
                 settingsWindow?.isVisible != true && !HubWorkspaceDragState.isDragging && !HubMarqueeSelectionState.isSelecting &&
-                !panel.inLiveResize && windowDragSession == nil
+                !panel.inLiveResize && !surface.isResizing && windowDragSession == nil
             if fileDragDismissal.update(sessionID: fileSessionID, mousePressed: mousePressed, outside: dragOutside,
                                         now: ProcessInfo.processInfo.systemUptime, delay: model.settings.resolvedAutoHideDelay,
                                         enabled: canDismissDrag) {
@@ -925,8 +984,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
             }
             // Keyboard/menu entry stays until focus leaves or the pointer has entered.
             // A drag or resize starts a fresh delay after it ends, never during it.
-            let canDismiss = !model.pinned && !sheetOpen && !previewVisible && settingsWindow?.isVisible != true &&
-                !HubFileDragState.isDragging && !HubWorkspaceDragState.isDragging && !panel.inLiveResize && (NSEvent.pressedMouseButtons & 1) == 0 &&
+            let canDismiss = !returningFromMenu && !model.pinned && !sheetOpen && !previewVisible && settingsWindow?.isVisible != true &&
+                !HubFileDragState.isDragging && !HubWorkspaceDragState.isDragging && !panel.inLiveResize && !surface.isResizing && (NSEvent.pressedMouseButtons & 1) == 0 &&
                 hoverDismissal.mayDismissAfterOpening(shownFromHover: shownFromHover, panelIsKey: panel.isKeyWindow)
             if hoverDismissal.update(outside: outside, now: ProcessInfo.processInfo.systemUptime,
                                      delay: model.settings.resolvedAutoHideDelay, enabled: canDismiss) { hidePanel() }
@@ -1063,6 +1122,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         settingsWindow?.appearance = appearance
         statusItem?.isVisible = model.settings.showMenuBarIcon
         updateSurfaceStyle()
+        if surface.isResizing || panel.inLiveResize { return }
         if desiredVisible, panel.isVisible, let screen = panel.screen {
             if attachedToNotch || anchoredCorner != nil {
                 if model.settings.hotCorner == "notch" {
@@ -1094,6 +1154,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
 
     func windowWillStartLiveResize(_ notification: Notification) {
         guard let window = notification.object as? NSWindow, window === panel, desiredVisible else { return }
+        beginPanelResize()
+    }
+
+    private func beginPanelResize() {
         model.beginInteractiveResize()
         surface.cancelAnimationsAndShow()
         if attachedToNotch && !embeddedAtNotch { bridgeView.cancelAnimationsAndShow() }
@@ -1101,17 +1165,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
 
     func windowDidEndLiveResize(_ notification: Notification) {
         guard let window = notification.object as? NSWindow, window === panel else { return }
+        endPanelResize()
+    }
+
+    private func endPanelResize() {
+        recordPanelSize()
         model.endInteractiveResize()
+        guard desiredVisible else { return }
+        if attachedToNotch { layoutAttachedPanel(on: attachmentScreen) }
+        else if anchoredCorner != nil { layoutCornerPanel(on: attachmentScreen) }
     }
 
     func windowDidResize(_ notification: Notification) {
         guard desiredVisible, !restoringSize, let window = notification.object as? NSWindow, window === panel else { return }
+        guard !surface.isResizing, !panel.inLiveResize else { return }
+        recordPanelSize()
+        if attachedToNotch { layoutAttachedPanel(on: attachmentScreen) }
+        else if anchoredCorner != nil { layoutCornerPanel(on: attachmentScreen) }
+    }
+
+    private func recordPanelSize() {
         var settings = model.settings
         settings.width = logicalPanelFrame.width
         settings.height = logicalPanelFrame.height
-        model.settings = settings
-        if attachedToNotch { layoutAttachedPanel(on: attachmentScreen) }
-        else if anchoredCorner != nil { layoutCornerPanel(on: attachmentScreen) }
+        if settings != model.settings { model.settings = settings }
     }
 
     @objc private func checkForUpdates() {

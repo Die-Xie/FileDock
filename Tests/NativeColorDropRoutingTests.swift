@@ -78,6 +78,53 @@ import SwiftUI
             router.currentEventType = { .mouseMoved }
             precondition(!(host.hitTest(host.convert(hostPoint, to: host.superview)) is HubNativeFileDropBridge.DestinationView))
         }
+
+        // Keep the real view alive across the drop's filter changes. A delayed
+        // SwiftUI search observer used to erase the model's result selection
+        // after it had correctly cleared a query that hid the completed drop.
+        model.setColorLabelFilter(.orange)
+        model.setFileTypeFilter("ext:md")
+        model.search = "query-that-does-not-match-the-drop"
+        settle(host)
+        precondition(model.visibleEntries.isEmpty)
+        let highlightRouter = descendants(host).compactMap { $0 as? HubNativeFileDropBridge.DestinationView }.first!
+        let highlightY = highlightRouter.bounds.height - 21
+        let highlightXs = stride(from: CGFloat(0), to: highlightRouter.bounds.width, by: 1).filter {
+            highlightRouter.contains(CGPoint(x: $0, y: highlightY))
+        }
+        precondition(highlightXs.count == 8 * 28)
+        let highlightBlue = CGPoint(x: highlightXs.min()! + 4 * 28 + 14, y: highlightY)
+        let highlightInput = source.appendingPathComponent("highlight-after-query-clear.txt")
+        let highlightOutput = destination.appendingPathComponent(highlightInput.lastPathComponent)
+        try Data("drop feedback".utf8).write(to: highlightInput)
+        board.clearContents(); precondition(board.writeObjects([highlightInput as NSURL]))
+        let highlightInfo = ExternalDraggingInfo(board: board, window: window)
+        highlightInfo.draggingLocation = highlightRouter.convert(highlightBlue, to: nil)
+        highlightRouter.currentEventType = { .leftMouseDragged }; highlightRouter.primaryMousePressed = { true }
+        precondition(highlightRouter.draggingEntered(highlightInfo) == .move && highlightRouter.draggingUpdated(highlightInfo) == .move)
+        highlightRouter.currentEventType = { .leftMouseUp }; highlightRouter.primaryMousePressed = { false }
+        precondition(highlightRouter.prepareForDragOperation(highlightInfo) && highlightRouter.performDragOperation(highlightInfo))
+        try await wait(model)
+        for _ in 0..<1000 {
+            if !model.directoryLoading && model.entries.contains(where: { $0.url == highlightOutput }) { break }
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        precondition(!fm.fileExists(atPath: highlightInput.path) && FileEntry(url: highlightOutput).labelNumber == 4)
+        precondition(model.search.isEmpty && model.fileTypeFilter == nil && model.colorLabelFilter == .blue,
+                     "A completed color drop reveals its result across conflicting query, type and color filters")
+        // Flush several actual NSHostingView updates and yield the main actor;
+        // checking only the operation's synchronous completion misses this bug.
+        settle(host)
+        try await Task.sleep(nanoseconds: 30_000_000)
+        settle(host)
+        precondition(model.selectedIDs == [highlightOutput] && model.visibleEntries.contains(where: { $0.url == highlightOutput }),
+                     "The dropped file stays visible and selected after SwiftUI observes the cleared search")
+        model.search = "a-new-user-query"
+        precondition(model.selectedIDs.isEmpty, "A user query change still clears the old selection synchronously")
+        settle(host)
+        precondition(model.selectedIDs.isEmpty && model.visibleEntries.isEmpty)
+        model.search = ""
+        highlightRouter.currentEventType = { .mouseMoved }
         settle(host)
         let router = descendants(host).compactMap { $0 as? HubNativeFileDropBridge.DestinationView }.first!
         let y = router.bounds.height - 21
@@ -98,6 +145,7 @@ import SwiftUI
         precondition(!staleReceive([untouched], nil, blue, false)); HubImportActivity.end(ticket)
         precondition(fm.fileExists(atPath: untouched.path) && FileEntry(url: untouched).labelNumber == 0)
         print("PASS: one registered native file destination, direct Finder color drops, quick retained-event re-entry, ordinary clicks, padded colors, mask/undo, resize/rebuild and stale rejection")
+        print("PASS: drop results remain selected through actual SwiftUI query/filter updates, while a new user query clears selection")
         print("LIMIT: Hidden host callbacks do not reproduce WindowServer destination selection or actual cursor motion")
     }
     @MainActor static func wait(_ model: HubModel) async throws {

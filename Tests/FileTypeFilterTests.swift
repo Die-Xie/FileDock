@@ -18,6 +18,7 @@ import Foundation
     @MainActor static func main() throws {
         _ = NSApplication.shared
         normalization()
+        shortcutPresentation()
         let fm = FileManager.default
         let root = fm.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("FileDock-TypeFilter-\(UUID())")
         let folder = root.appendingPathComponent("files")
@@ -173,6 +174,43 @@ import Foundation
         precondition(legacy.resolvedFileTypeShortcuts == HubFileType.defaultShortcuts)
     }
 
+    static func shortcutPresentation() {
+        func options(_ identifiers: [String]) -> [HubFileTypeOption] {
+            identifiers.map { HubFileTypeOption(id: $0, count: 1) }
+        }
+        let defaults = HubFileType.defaultShortcuts
+        precondition(HubFileType.displayedShortcuts(preferred: defaults,
+            available: options(["folder", "ext:pdf", "ext:txt", "ext:zip", "ext:md"])) == defaults,
+            "Available favorites must keep the configured order rather than the menu's order")
+        precondition(HubFileType.displayedShortcuts(preferred: defaults,
+            available: options(["folder", "ext:txt", "ext:pdf", HubFileType.noExtension])) ==
+                ["ext:pdf", "folder", "ext:txt", HubFileType.noExtension],
+            "Missing defaults must disappear and remaining slots must use actual panel types")
+        precondition(HubFileType.displayedShortcuts(preferred: ["png", "folder", "pdf"],
+            available: options(["ext:txt", "ext:pdf", "ext:png", "folder"])) == ["ext:png", "folder", "ext:pdf"])
+        precondition(HubFileType.displayedShortcuts(preferred: [], available: options(defaults)).isEmpty &&
+                     HubFileType.displayedShortcuts(preferred: defaults, available: []).isEmpty,
+                     "An explicit empty customization or an empty snapshot must show no shortcut chips")
+        precondition(HubFileType.displayedShortcuts(preferred: defaults, available: [
+            HubFileTypeOption(id: "folder", count: 0), HubFileTypeOption(id: "ext:md", count: -1),
+            HubFileTypeOption(id: "ext:txt", count: 1), HubFileTypeOption(id: "ext:txt", count: 3),
+            HubFileTypeOption(id: "ext:folder", count: 1), HubFileTypeOption(id: "ext:none", count: 1)]) ==
+                ["ext:txt", "ext:folder", "ext:none"],
+            "Only positive actual categories fill slots, without duplicates or reserved-name collisions")
+        let early = options(["ext:pdf"])
+        let later = options(["ext:txt", "ext:pdf", "ext:md", "ext:csv", "ext:png"])
+        precondition(HubFileType.displayedShortcuts(preferred: defaults, available: early) == ["ext:pdf"] &&
+                     HubFileType.displayedShortcuts(preferred: defaults, available: later) == ["ext:md", "ext:pdf", "ext:txt", "ext:csv"],
+                     "Progressive snapshots must resolve available types anew without reserving empty default slots")
+        let many = options((0..<20_000).map { "ext:type\($0)" }) + options(["ext:pdf"])
+        precondition(HubFileType.displayedShortcuts(preferred: defaults, available: many) ==
+                     ["ext:pdf", "ext:type0", "ext:type1", "ext:type2"],
+                     "A favorite at the end of a large type list must displace a fallback without expanding the slot count")
+        let custom = (0..<30).map { "preferred\($0)" }
+        precondition(HubFileType.displayedShortcuts(preferred: custom, available: many).count == HubFileType.maximumShortcuts,
+                     "Large configurations cannot increase the number of rendered shortcuts past the existing limit")
+    }
+
     @MainActor static func batches(storage: URL, workspace: Workspace, entries: [FileEntry]) throws {
         let seed = makeTestModel(storageURL: storage)
         seed.selectWorkspace(workspace.id)
@@ -182,11 +220,17 @@ import Foundation
         let canonical = workspace.rootPath
         loader.progress?(HubDirectorySnapshot(entries: [entries[0]], canonicalDirectoryPath: canonical))
         precondition(model.availableFileTypes == [HubFileTypeOption(id: "ext:md", count: 1)])
+        precondition(HubFileType.displayedShortcuts(preferred: model.settings.resolvedFileTypeShortcuts,
+            available: model.availableFileTypes) == ["ext:md"], "A partial snapshot must not show absent default categories")
         model.setFileTypeFilter("pdf")
         precondition(model.visibleEntries.isEmpty && model.fileTypeFilter == "ext:pdf")
         loader.progress?(HubDirectorySnapshot(entries: entries, canonicalDirectoryPath: canonical))
         precondition(model.availableFileTypes.count == 2 && model.visibleEntries.map(\.url) == [entries[1].url],
                      "A filter absent from an early batch must remain active until later matching entries arrive")
+        let expandedShortcuts = HubFileType.displayedShortcuts(preferred: model.settings.resolvedFileTypeShortcuts,
+            available: model.availableFileTypes)
+        precondition(expandedShortcuts.contains("ext:md") && expandedShortcuts.contains("ext:pdf"),
+                     "The selected type must not hide other loaded types from automatic shortcut filling")
         model.setFileTypeFilter("md")
         model.selectedIDs = [entries[0].url]
         loader.completion?(.success(HubDirectorySnapshot(entries: [entries[1]], canonicalDirectoryPath: canonical)))

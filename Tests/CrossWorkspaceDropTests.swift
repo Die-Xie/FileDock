@@ -1,6 +1,22 @@
 import AppKit
 import Foundation
 
+@MainActor private final class SelectionDirectoryLoader: HubDirectoryLoading {
+    var hold = false
+    private var pending: (HubDirectoryRequest, (Result<HubDirectorySnapshot, Error>) -> Void)?
+    var pendingDirectory: URL? { pending?.0.directory }
+    func load(id: UUID, request: HubDirectoryRequest, completion: @escaping (Result<HubDirectorySnapshot, Error>) -> Void) {
+        if hold { pending = (request, completion) }
+        else { completion(Result { try HubDirectoryLoader.readSnapshot(request) }) }
+    }
+    func cancel(id: UUID) { pending = nil }
+    func finish() {
+        guard let (request, completion) = pending else { preconditionFailure("Expected a pending directory snapshot") }
+        pending = nil
+        completion(Result { try HubDirectoryLoader.readSnapshot(request) })
+    }
+}
+
 @main struct CrossWorkspaceDropTests {
     @MainActor static func main() async throws {
         let fm = FileManager.default
@@ -170,7 +186,132 @@ import Foundation
         precondition(!labelModel.undoLastFileDrop(), "A later ordinary file action invalidates the stale drop journal")
         model.removeWorkspace(favoriteID)
         precondition(!model.acceptFileDrop([svg], workspaceID: favoriteID, directory: nil, copy: false))
+        try await selectionFeedback(base: base.appendingPathComponent("selection-feedback"))
         print("PASS: real cross-tab copy/move after UI changes, Finder-equivalent favorite references, SVG/directory/child preservation, moved/renamed descendant bookmarks and removed targets")
+    }
+    @MainActor static func selectionFeedback(base: URL) async throws {
+        let fm = FileManager.default
+        let source = base.appendingPathComponent("source"), target = base.appendingPathComponent("target")
+        let child = target.appendingPathComponent("child")
+        for directory in [source, target, child] { try fm.createDirectory(at: directory, withIntermediateDirectories: true) }
+        func file(_ name: String, in directory: URL) throws -> URL {
+            let url = directory.appendingPathComponent(name)
+            try Data(name.utf8).write(to: url)
+            return url
+        }
+        let alpha = try file("alpha.md", in: source), beta = try file("beta.pdf", in: source)
+        let marker = try file("marker.md", in: target)
+        let model = makeTestModel(storageURL: base.appendingPathComponent("config.json"))
+        let sourceID = model.addWorkspace(name: "Source", mode: .folder, urls: [source])!.id
+        let targetID = model.addWorkspace(name: "Target", mode: .folder, urls: [target])!.id
+        precondition(model.acceptFileDrop([alpha, beta], workspaceID: targetID, directory: target, copy: true))
+        try await wait { model.fileOperationsInProgress == 0 }
+        let alphaCopy = target.appendingPathComponent("alpha.md"), betaCopy = target.appendingPathComponent("beta.pdf")
+        precondition(model.selectedIDs == Set([alphaCopy, betaCopy]), "A completed cross-tab batch highlights the actual destination files")
+        precondition(model.acceptFileDrop([alpha], workspaceID: targetID, directory: target, copy: true))
+        try await wait { model.fileOperationsInProgress == 0 }
+        precondition(model.selectedIDs == [target.appendingPathComponent("alpha copy.md")], "Collision-renamed results, rather than their original names, stay selected")
+
+        let missing = source.appendingPathComponent("missing.txt")
+        precondition(model.acceptFileDrop([beta, missing], workspaceID: targetID, directory: target, copy: true))
+        try await wait { model.fileOperationsInProgress == 0 }
+        precondition(model.selectedIDs == [target.appendingPathComponent("beta copy.pdf")], "Only completed transfer results are highlighted after partial failure")
+        precondition(model.errorMessage != nil)
+        model.errorMessage = nil
+        model.selectedIDs = [marker]
+        precondition(model.acceptFileDrop([missing], workspaceID: targetID, directory: target, copy: true))
+        try await wait { model.fileOperationsInProgress == 0 }
+        precondition(model.selectedIDs == [marker], "A failed drop does not invent a result selection")
+
+        precondition(model.acceptFileDrop([alpha], workspaceID: targetID, directory: child, copy: true))
+        try await wait { model.fileOperationsInProgress == 0 }
+        precondition(model.selectedIDs.map(\.path) == [child.path] && model.selectedURLs.map(\.path) == [child.path], "A child-folder drop highlights its visible destination folder, never invisible nested URLs")
+        model.selectedIDs = [marker]
+        model.reorderEntries([alphaCopy, betaCopy], before: marker)
+        precondition(model.selectedIDs == Set([alphaCopy, betaCopy]), "Presentation reorder retains the dragged batch highlight")
+        model.search = "marker"
+        precondition(model.selectedIDs.isEmpty, "Search clears selection synchronously, before a later drop may assign its result")
+        model.search = ""
+
+        let references = model.addWorkspace(name: "References", mode: .references, urls: [marker, alphaCopy, betaCopy])!.id
+        model.selectedIDs = [marker]
+        model.reorderEntries([alphaCopy, betaCopy], before: marker)
+        precondition(model.selectedIDs == Set([alphaCopy, betaCopy]), "Changing a reference order must reselect after refresh clears the replaced collection")
+        model.selectedIDs = [marker]
+        model.reorderReference(alphaCopy, before: marker)
+        precondition(model.selectedIDs == [marker], "A menu's indirect move retains the user's original selection")
+        precondition(model.acceptFileDrop([alpha, beta], workspaceID: references, directory: nil, copy: false))
+        precondition(model.selectedIDs == Set([alpha, beta]), "Favorite reference drops highlight accepted references")
+        model.selectedIDs = []
+        precondition(model.acceptFileDrop([alpha, beta], workspaceID: references, directory: nil, copy: false))
+        precondition(model.selectedIDs == Set([alpha, beta]), "A wholly duplicate reference drop still highlights its existing targets")
+        model.setStagingEnabled(true); model.openStagingWorkspace()
+        precondition(model.stageFiles([alpha, beta]) && model.selectedIDs == Set([alpha, beta]))
+        model.selectedIDs = []
+        precondition(model.acceptFileDrop([alpha], workspaceID: model.selectedWorkspaceID, directory: nil, copy: false,
+            insertionOrder: model.fileOrderURLs, before: beta))
+        precondition(model.selectedIDs == [alpha], "Staging insertion order and duplicate admission publish one final highlighted snapshot")
+        precondition(model.acceptFileDrop([alpha], workspaceID: model.selectedWorkspaceID, directory: nil, copy: false, labelOnDrop: .orange))
+        try await wait { model.fileOperationsInProgress == 0 }
+        model.selectedIDs = []
+        precondition(model.acceptFileDrop([alpha], workspaceID: model.selectedWorkspaceID, directory: nil, copy: false, labelOnDrop: .orange))
+        try await wait { model.fileOperationsInProgress == 0 }
+        precondition(model.selectedIDs == [alpha], "Already tagged, duplicate reference drops still provide successful selection feedback")
+
+        model.selectWorkspace(targetID)
+        model.setColorLabelFilter(.red)
+        model.setFileTypeFilter("ext:md")
+        model.search = "does not match"
+        precondition(model.acceptFileDrop([beta], workspaceID: targetID, directory: target, copy: false, labelOnDrop: .green))
+        try await wait { model.fileOperationsInProgress == 0 }
+        let colored = target.appendingPathComponent("beta copy 2.pdf")
+        precondition(model.selectedIDs == [colored] && model.visibleEntries.contains(where: { $0.url == colored }), "A completed color drop remains visible and selected through prior search, color and type filters")
+        precondition(model.colorLabelFilter == .green && model.fileTypeFilter == nil && model.search.isEmpty)
+        precondition(model.undoLastFileDrop())
+        try await wait { model.fileOperationsInProgress == 0 }
+        precondition(!model.selectedIDs.contains(colored) && !fm.fileExists(atPath: colored.path), "Undo removes stale result selection through the normal refresh path")
+
+        model.setColorLabelFilter(nil)
+        let link = target.appendingPathComponent("link.md")
+        try fm.createSymbolicLink(at: link, withDestinationURL: alpha)
+        model.refresh(); model.selectedIDs = [marker]
+        precondition(model.acceptFileDrop([link], workspaceID: targetID, directory: target, copy: false, labelOnDrop: .blue, preserveLocalInPlace: true))
+        try await wait { model.fileOperationsInProgress == 0 }
+        precondition(model.selectedIDs == [marker], "A rejected in-place symlink metadata edit is not highlighted as a completed transfer")
+        precondition(model.acceptFileDrop([alpha], workspaceID: targetID, directory: target, copy: true))
+        model.selectWorkspace(sourceID)
+        model.selectedIDs = [beta]
+        try await wait { model.fileOperationsInProgress == 0 }
+        precondition(model.selectedWorkspaceID == sourceID && model.selectedIDs == [beta], "An asynchronous drop must not change a later workspace or its selection")
+        model.selectWorkspace(targetID)
+        precondition(model.acceptFileDrop([alpha], workspaceID: targetID, directory: target, copy: true))
+        model.selectWorkspace(sourceID); model.selectWorkspace(targetID)
+        try await wait { model.fileOperationsInProgress == 0 }
+        precondition(model.selectedIDs.isEmpty, "Navigating away and back invalidates old drop feedback even if the final directory and selection match")
+
+        let loader = SelectionDirectoryLoader()
+        let delayed = HubModel(storageURL: base.appendingPathComponent("delayed.json"), monitor: false, directoryLoader: loader)
+        let delayedID = delayed.addWorkspace(name: "Delayed", mode: .folder, urls: [target])!.id
+        loader.hold = true
+        precondition(delayed.acceptFileDrop([alpha], workspaceID: delayedID, directory: target, copy: true))
+        try await wait { delayed.fileOperationsInProgress == 0 }
+        delayed.selectedIDs = [marker]
+        loader.finish()
+        precondition(delayed.selectedIDs == [marker], "User selection made while a successful result snapshot is loading takes precedence")
+        delayed.selectedIDs = []
+        precondition(delayed.acceptFileDrop([alpha], workspaceID: delayedID, directory: target, copy: true))
+        try await wait { delayed.fileOperationsInProgress == 0 }
+        delayed.selectedIDs = [marker]; delayed.selectedIDs = []
+        loader.finish()
+        precondition(delayed.selectedIDs.isEmpty, "Changing selection and clearing it again must also cancel stale drop feedback")
+        precondition(delayed.acceptFileDrop([alpha], workspaceID: delayedID, directory: target, copy: true))
+        delayed.navigate(to: child)
+        precondition(loader.pendingDirectory?.path == child.path)
+        try await wait { delayed.fileOperationsInProgress == 0 }
+        precondition(loader.pendingDirectory?.path == child.path, "An older drop completion must not cancel a newer, still-loading navigation")
+        loader.finish()
+        precondition(delayed.currentURL?.path == child.path && delayed.selectedIDs.isEmpty, "Pending navigation commits normally without old destination feedback")
+        print("PASS: successful, partial-failure, duplicate, child-folder, filtered and asynchronous drop highlights preserve user navigation/selection and undo")
     }
     @MainActor static func wait(_ predicate: () -> Bool) async throws {
         for _ in 0..<500 {

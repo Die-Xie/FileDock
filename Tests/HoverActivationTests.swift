@@ -12,6 +12,7 @@ struct HoverActivationTests {
         testCursorRasterization()
         testStrictDwell()
         testSamplingAndPolicyChanges()
+        testPanelInteractionGrace()
         let notch = "display-1:notch"
         var gate = HubHoverActivation()
         precondition(!gate.update(regionID: notch, now: 0, delay: 0.12))
@@ -160,6 +161,27 @@ struct HoverActivationTests {
         testFileDragReentry()
 
         print("PASS: visible cursor alpha, raster orientation and scale, inclusive screen edges, continuous 1–200% entry, visible area and additional depth, and invalid thresholds, strict dwell, sampling stalls, policy cancellation, dismiss lock and configurable mouse-exit dismissal")
+    }
+
+    private static func testPanelInteractionGrace() {
+        var grace = HubPanelInteractionGrace()
+        precondition(!grace.blocksDismissal(now: 0, pointerInside: false))
+        grace.begin(now: 1)
+        precondition(grace.blocksDismissal(now: 1, pointerInside: false), "A menu selection outside must not immediately hide a zero-delay panel")
+        precondition(grace.blocksDismissal(now: 2.49, pointerInside: false))
+        precondition(!grace.blocksDismissal(now: 2.5, pointerInside: false), "A menu cannot indefinitely prevent automatic dismissal")
+        grace.begin(now: 3)
+        precondition(!grace.blocksDismissal(now: 3.1, pointerInside: true))
+        precondition(!grace.blocksDismissal(now: 3.2, pointerInside: false), "After re-entry the user's ordinary exit delay must apply")
+        grace.begin(now: 4)
+        grace.begin(now: 5)
+        precondition(grace.blocksDismissal(now: 6, pointerInside: false), "Another deliberate menu interaction renews the bounded return period")
+        grace.reset()
+        precondition(!grace.blocksDismissal(now: 6.1, pointerInside: false))
+        grace.begin(now: 10)
+        precondition(!grace.blocksDismissal(now: 9, pointerInside: false))
+        grace.begin(now: .nan)
+        precondition(!grace.blocksDismissal(now: 11, pointerInside: false))
     }
 
     private static func testConfigurableCursorOverlap() {

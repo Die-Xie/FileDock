@@ -14,11 +14,6 @@ private struct HubMenuButton: View {
     var body: some View { Button(role: role, action: action) { Label(title, systemImage: systemImage) } }
 }
 
-private struct HubWorkspaceControlsWidthKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
-}
-
 /// A shallow full-width tint gives the notch join a shared surface; the
 /// cutout itself stays black until it clears the hardware safe area.
 private struct HubNotchFusionGradient: View {
@@ -75,6 +70,28 @@ private struct HubShortcutReorderRegionKey: PreferenceKey {
     }
 }
 
+/// Publish the clip once for both private-icon sorting and the shared file
+/// destination. Reuse tab viewport identifiers rather than adding a receiver.
+private struct HubShortcutViewport: ViewModifier {
+    let items: [HubShortcutItem]
+    let favoriteID: UUID?
+    let recentID: UUID?
+
+    func body(content: Content) -> some View {
+        content
+            .transformAnchorPreference(key: HubShortcutReorderRegionKey.self, value: .bounds) { regions, anchor in
+                regions.viewports.append(anchor)
+            }
+            .transformAnchorPreference(key: HubFileDropRegionKey.self, value: .bounds) { regions, anchor in
+                for item in items {
+                    regions[.tabViewport(item.dragID)] = anchor
+                    if item == .favorite, let favoriteID { regions[.tabViewport(favoriteID)] = anchor }
+                    if item == .recents, let recentID { regions[.tabViewport(recentID)] = anchor }
+                }
+            }
+    }
+}
+
 @MainActor
 struct HubView: View {
     @ObservedObject var model: HubModel
@@ -109,7 +126,6 @@ struct HubView: View {
     @StateObject private var workspaceSpringLoader = HubWorkspaceSpringLoader()
     @State private var workspaceRevealPointer: NSPoint?
     @State private var hoverSelection = HubWorkspaceHoverSelection()
-    @State private var workspaceControlsWidth: CGFloat = 0
     @State private var musicControlsFocused = false
     @StateObject private var activityVisibility = HubActivityVisibility()
     @State private var workspaceReordering = false
@@ -272,7 +288,7 @@ struct HubView: View {
             activityVisibility.update(active: activityActive, presented: presentation.previewVisible)
         }
         .onChange(of: activityActive) { activityVisibility.update(active: $0, presented: presentation.previewVisible) }
-        .onChange(of: model.search) { _ in renameEntry = nil; model.selectedIDs = [] }
+        .onChange(of: model.search) { _ in renameEntry = nil }
         .onChange(of: model.selectedIDs) { selection in
             if let entry = renameEntry, !selection.contains(entry.url) { renameEntry = nil }
         }
@@ -379,7 +395,7 @@ struct HubView: View {
                 let sideWidth = max(0, (geometry.size.width - presentation.header.exclusionWidth - 24) / 2)
                 let layout = HubWorkspaceHeaderLayout.make(tabWidths: model.tabWorkspaces.map(workspaceTabWidth),
                                                            sideWidth: sideWidth,
-                                                           measuredControlsWidth: workspaceControlsWidth)
+                                                           measuredControlsWidth: workspaceControlsNaturalWidth)
                 let leftWorkspaces = Array(model.tabWorkspaces.prefix(layout.splitIndex))
                 let rightWorkspaces = Array(model.tabWorkspaces.dropFirst(layout.splitIndex))
                 HStack(spacing: 0) {
@@ -401,39 +417,21 @@ struct HubView: View {
                                 .frame(width: layout.rightViewportWidth, alignment: .leading).clipped()
                         }
                         HubWindowDragHandle().frame(width: layout.dragWidth, height: 30).help(L("拖动窗口"))
-                        HStack(spacing: HubWorkspaceHeaderLayout.tabSpacing) { workspaceControls }
+                        workspaceHeaderControls(availableWidth: layout.controlsWidth)
                             .animation(interfaceMotion.selection, value: model.selectedWorkspaceID)
                             .animation(nil, value: interfaceMotion.enabled)
-                            .fixedSize()
-                            .background(GeometryReader { controlsGeometry in
-                                Color.clear.preference(key: HubWorkspaceControlsWidthKey.self,
-                                                       value: controlsGeometry.size.width)
-                            })
-                            .frame(width: layout.controlsWidth, alignment: .trailing)
-                            .contentShape(Rectangle()).clipped()
-                            .transformAnchorPreference(key: HubShortcutReorderRegionKey.self, value: .bounds) { regions, anchor in
-                                regions.viewports.append(anchor)
-                            }
                             .transformAnchorPreference(key: HubHeaderDragRegionKey.self, value: .bounds) { $0[.controls] = $1 }
                             .transformAnchorPreference(key: HubFileDropRegionKey.self, value: .bounds) { $0[.headerControls] = $1 }
                     }.frame(width: sideWidth).clipped()
                 }.padding(.horizontal, 12).frame(height: geometry.size.height)
-                    .onPreferenceChange(HubWorkspaceControlsWidthKey.self) { width in
-                        if width.isFinite && width > 0 && abs(width - workspaceControlsWidth) > 0.5 {
-                            workspaceControlsWidth = width
-                        }
-                    }
             }.frame(height: embeddedMusicLayout.headerHeight)
         } else {
             HStack(spacing: 8) {
                 workspaceLeading(model.tabWorkspaces, selectionNamespace: floatingTabSelection)
                 HubWindowDragHandle().frame(minWidth: 32, maxWidth: .infinity, minHeight: 30, maxHeight: 30).help(L("拖动窗口"))
-                HStack(spacing: HubWorkspaceHeaderLayout.tabSpacing) { workspaceControls }.fixedSize()
+                workspaceHeaderControls(availableWidth: workspaceControlsNaturalWidth).fixedSize()
                     .animation(interfaceMotion.selection, value: model.selectedWorkspaceID)
                     .animation(nil, value: interfaceMotion.enabled)
-                    .transformAnchorPreference(key: HubShortcutReorderRegionKey.self, value: .bounds) { regions, anchor in
-                        regions.viewports.append(anchor)
-                    }
                     .transformAnchorPreference(key: HubHeaderDragRegionKey.self, value: .bounds) { $0[.controls] = $1 }
                     .transformAnchorPreference(key: HubFileDropRegionKey.self, value: .bounds) { $0[.headerControls] = $1 }
             }.padding(.horizontal, 12).padding(.vertical, 10)
@@ -670,7 +668,49 @@ struct HubView: View {
         }
     }
 
-    @ViewBuilder private var workspaceControls: some View {
+    private var workspaceCloseVisible: Bool {
+        presentation.windowMoving ? presentation.movingPinned : model.pinned
+    }
+
+    private var workspaceControlsNaturalWidth: CGFloat {
+        HubWorkspaceControlsLayout.make(shortcutCount: model.visibleShortcutItems.count,
+            closeVisible: workspaceCloseVisible, availableWidth: .greatestFiniteMagnitude).naturalWidth
+    }
+
+    @ViewBuilder private func workspaceHeaderControls(availableWidth: CGFloat) -> some View {
+        let layout = HubWorkspaceControlsLayout.make(shortcutCount: model.visibleShortcutItems.count,
+            closeVisible: workspaceCloseVisible, availableWidth: availableWidth)
+        if layout.scrollsWholeStrip {
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: HubWorkspaceHeaderLayout.tabSpacing) {
+                        workspaceShortcutControls
+                        workspaceActionControls
+                    }.fixedSize()
+                }.frame(width: layout.width, height: HubWorkspaceShortcutLabel.height).clipped()
+                    .modifier(HubShortcutViewport(items: model.visibleShortcutItems,
+                        favoriteID: model.fixedFavoriteWorkspace?.id, recentID: model.fixedRecentWorkspace?.id))
+                    .task(id: [layout.width, layout.naturalWidth]) {
+                        await Task.yield()
+                        guard !Task.isCancelled, !HubWorkspaceDragState.isDragging, !HubFileDragState.isDragging else { return }
+                        proxy.scrollTo("filedock.header.add", anchor: .trailing)
+                    }
+            }
+        } else {
+            HStack(spacing: model.visibleShortcutItems.isEmpty ? 0 : HubWorkspaceHeaderLayout.tabSpacing) {
+                if !model.visibleShortcutItems.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: HubWorkspaceHeaderLayout.tabSpacing) { workspaceShortcutControls }.fixedSize()
+                    }.frame(width: layout.shortcutViewportWidth, height: HubWorkspaceShortcutLabel.height).clipped()
+                        .modifier(HubShortcutViewport(items: model.visibleShortcutItems,
+                            favoriteID: model.fixedFavoriteWorkspace?.id, recentID: model.fixedRecentWorkspace?.id))
+                }
+                HStack(spacing: HubWorkspaceHeaderLayout.tabSpacing) { workspaceActionControls }.fixedSize()
+            }.frame(width: layout.width, height: HubWorkspaceShortcutLabel.height)
+        }
+    }
+
+    @ViewBuilder private var workspaceShortcutControls: some View {
         ForEach(model.visibleShortcutItems) { item in
             fixedShortcut(item)
                 .overlay(HubWorkspaceDragBridge(
@@ -690,6 +730,9 @@ struct HubView: View {
                     HubShortcutReorderRegions(frames: [item.dragID: $0])
                 }
         }
+    }
+
+    @ViewBuilder private var workspaceActionControls: some View {
         Menu {
             Toggle(L("固定收藏到右上角"), isOn: Binding(
                 get: { model.fixedFavoriteWorkspace != nil },
@@ -709,8 +752,9 @@ struct HubView: View {
         } label: { Image(systemName: "plus").font(.system(size: 14, weight: .medium)).frame(width: HubWorkspaceShortcutLabel.width, height: HubWorkspaceShortcutLabel.height) }
             .menuStyle(.borderlessButton).menuIndicator(.hidden)
             .frame(width: HubWorkspaceShortcutLabel.width, height: HubWorkspaceShortcutLabel.height).clipped()
+            .id("filedock.header.add")
             .accessibilityLabel(L("添加工作区")).help(L("添加工作区"))
-        if presentation.windowMoving ? presentation.movingPinned : model.pinned {
+        if workspaceCloseVisible {
             Button { onClose() } label: { Image(systemName: "xmark").font(.system(size: 10, weight: .semibold)).frame(width: HubWorkspaceShortcutLabel.width, height: HubWorkspaceShortcutLabel.height) }.buttonStyle(.plain).foregroundStyle(.secondary).help(L("收起 (Esc)"))
         }
     }
@@ -861,6 +905,15 @@ struct HubView: View {
     /// A single native destination survives spring-loaded navigation. Header
     /// and file cells only publish geometry; neither owns the file session.
     private func nativeFileDrop(regions: [HubFileDropRegion: CGRect], frames: [URL: CGRect], size: CGSize) -> some View {
+        var regions = regions
+        // Scrolling fixed shortcuts shares the same visible-viewport contract
+        // as ordinary tabs. Offscreen AirDrop/staging icons cannot receive a
+        // file through the notch or through the always-visible add action.
+        for (region, item) in [(HubFileDropRegion.airDrop, HubShortcutItem.airDrop), (.staging, .staging)] {
+            if let viewport = regions[.tabViewport(item.dragID)], let frame = regions[region] {
+                regions[region] = frame.intersection(viewport)
+            }
+        }
         // Geometry and ordering belong to the same layout snapshot. Do not
         // locale-sort the directory again for every draggingUpdated event.
         let order = model.fileOrderURLs
@@ -1171,7 +1224,10 @@ struct HubView: View {
                 Text(emptyDetail).foregroundStyle(.secondary)
                 if model.fileTypeFilter != nil || model.colorLabelFilter != nil {
                     HStack {
-                        if model.fileTypeFilter != nil { Button(L("清除类型筛选")) { model.setFileTypeFilter(nil) } }
+                        if model.fileTypeFilter != nil { Button(L("清除类型筛选")) {
+                            NotificationCenter.default.post(name: Notification.Name("HubPanelFilterInteraction"), object: nil)
+                            model.setFileTypeFilter(nil)
+                        } }
                         if model.colorLabelFilter != nil { Button(L("清除颜色筛选")) { model.setColorLabelFilter(nil) } }
                     }
                 }
@@ -1831,6 +1887,7 @@ struct HubView: View {
     }
 
     private func handleKey(_ event: NSEvent) -> Bool {
+        if HubPanelResizeState.isResizing { return false }
         if HubMarqueeSelectionState.isSelecting {
             if event.keyCode == 53 { HubMarqueeSelectionState.cancel() }
             return true

@@ -241,6 +241,29 @@ struct HubHoverActivation {
     }
 }
 
+/// Let a pointer return from a popup rendered outside the panel. This expires
+/// even if no pointer re-entry arrives, so a dismissed menu cannot pin a panel.
+struct HubPanelInteractionGrace {
+    private var deadline: TimeInterval?
+    private var lastTime: TimeInterval?
+    static let returnInterval: TimeInterval = 1.5
+
+    mutating func begin(now: TimeInterval) {
+        guard now.isFinite else { reset(); return }
+        deadline = now + Self.returnInterval
+        lastTime = now
+    }
+
+    mutating func blocksDismissal(now: TimeInterval, pointerInside: Bool) -> Bool {
+        guard now.isFinite, lastTime == nil || now >= lastTime! else { reset(); return false }
+        lastTime = now
+        guard !pointerInside, let deadline, now < deadline else { reset(); return false }
+        return true
+    }
+
+    mutating func reset() { deadline = nil; lastTime = nil }
+}
+
 /// Counts only continuous time outside an eligible, visible panel. Returning to
 /// the panel or suspending auto-hide cancels the pending dismissal entirely.
 struct HubHoverDismissal {

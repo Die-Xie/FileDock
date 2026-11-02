@@ -522,12 +522,12 @@ private struct HubDropUndoGroup {
     @Published var shortcutRegistrationErrors: [String: String] = [:]
     @Published var workspaces: [Workspace] = [] { didSet { invalidateEntryOrder(); cachedStagedURLs = nil; persistIfReady() } }
     @Published var selectedWorkspaceID: UUID? { didSet {
-        if selectedWorkspaceID != oldValue { setColorLabelFilter(nil); setFileTypeFilter(nil) }
+        if selectedWorkspaceID != oldValue { navigationGeneration &+= 1; setColorLabelFilter(nil); setFileTypeFilter(nil) }
         persistIfReady()
     } }
     @Published var entries: [FileEntry] = [] { didSet { invalidateEntryOrder(); cachedFolderDropKinds = nil; cachedAvailableFileTypes = nil } }
-    @Published var selectedIDs = Set<URL>()
-    @Published var search = ""
+    @Published var selectedIDs = Set<URL>() { didSet { if selectedIDs != oldValue { selectionGeneration &+= 1 } } }
+    @Published var search = "" { didSet { if search != oldValue { selectedIDs = [] } } }
     // A browsing filter, never a modification to Finder labels or saved order.
     @Published private(set) var colorLabelFilter: HubFinderLabel?
     @Published private(set) var fileTypeFilter: String?
@@ -557,7 +557,7 @@ private struct HubDropUndoGroup {
     @Published var errorMessage: String?
     @Published private(set) var currentURL: URL? { didSet {
         invalidateEntryOrder()
-        if currentURL != oldValue { setColorLabelFilter(nil); setFileTypeFilter(nil) }
+        if currentURL != oldValue { navigationGeneration &+= 1; setColorLabelFilter(nil); setFileTypeFilter(nil) }
     } }
     @Published private(set) var history: [URL] = []
     @Published private(set) var historyIndex = -1
@@ -596,6 +596,8 @@ private struct HubDropUndoGroup {
     var externalFileWorkInProgress: () -> Bool = { false }
     private var refreshTimer: Timer?
     private var refreshGeneration = 0
+    private var navigationGeneration: UInt = 0
+    private var selectionGeneration: UInt = 0
     private let directoryLoader: HubDirectoryLoading
     private let folderWorkspacePreparer: HubFolderWorkspacePreparing
     private var pendingFolderWorkspaceDrops = Set<UUID>()
@@ -1182,6 +1184,10 @@ private struct HubDropUndoGroup {
     /// Staging only records paths/bookmarks. It never relocates or copies source data.
     @discardableResult
     func stageFiles(_ urls: [URL]) -> Bool {
+        stageFiles(urls, refreshing: true)
+    }
+
+    private func stageFiles(_ urls: [URL], refreshing: Bool) -> Bool {
         beginPersistenceTransaction()
         defer { endPersistenceTransaction() }
         guard settings.resolvedStagingEnabled, !stagingTransferInProgress, !dropUndoInProgress else { return false }
@@ -1190,10 +1196,11 @@ private struct HubDropUndoGroup {
         let paths = uniquePaths(stagedURLs.map(\.path) + files.map(\.path))
         guard canStoreReferences(paths), let workspace = ensureStagingWorkspace(),
               let index = workspaces.firstIndex(where: { $0.id == workspace.id }) else { return false }
+        let selection = dropSelection(workspaceID: workspace.id, directory: nil, urls: files)
         files.forEach(remember)
         if workspaces[index].referencePaths != paths { invalidateFileDropUndo() }
         workspaces[index].referencePaths = paths
-        if isStagingRoot { refresh() }
+        if isStagingRoot && refreshing { refresh(selectingDrop: selection) }
         return true
     }
 
@@ -1457,10 +1464,11 @@ private struct HubDropUndoGroup {
         let files = urls.filter(\.isFileURL).map(\.standardizedFileURL)
         let paths = uniquePaths(workspaces[index].referencePaths + files.map(\.path))
         guard canStoreReferences(paths) else { return }
+        let selection = dropSelection(workspaceID: selectedWorkspaceID, directory: nil, urls: files)
         files.forEach(remember)
         if workspaces[index].referencePaths != paths { invalidateFileDropUndo() }
         workspaces[index].referencePaths = paths
-        refresh()
+        refresh(selectingDrop: selection)
     }
 
     func removeReferences(_ urls: [URL]) {
@@ -1475,8 +1483,10 @@ private struct HubDropUndoGroup {
     }
 
     func reorderReference(_ url: URL, before target: URL) {
-        guard isReferenceRoot else { return }
-        reorderEntries([url], before: target)
+        guard isReferenceRoot, !groupingActive else { return }
+        // The menu's Move Backward command moves the next item before the
+        // selected one. Retain the user's selection, not that implementation detail.
+        performEntryReorder([url], before: target, selecting: Array(selectedIDs))
     }
 
     /// Changes presentation order only. No file-system move, rename or copy is performed.
@@ -1507,7 +1517,7 @@ private struct HubDropUndoGroup {
         return true
     }
 
-    private func performEntryReorder(_ urls: [URL], before target: URL?) {
+    private func performEntryReorder(_ urls: [URL], before target: URL?, selecting: [URL]? = nil) {
         beginPersistenceTransaction()
         defer { endPersistenceTransaction() }
         guard !dropUndoInProgress else { return }
@@ -1529,6 +1539,8 @@ private struct HubDropUndoGroup {
         }
         let moving = original.filter { requested.contains($0) }
         guard !moving.isEmpty else { return }
+        let selection = dropSelection(workspaceID: selectedWorkspaceID, directory: currentURL,
+            urls: selecting ?? moving.map { URL(fileURLWithPath: $0) })
         let targetPath = target?.standardizedFileURL.path
         if let targetPath, !original.contains(targetPath) || requested.contains(targetPath) { return }
         var result = original.filter { !requested.contains($0) }
@@ -1543,7 +1555,7 @@ private struct HubDropUndoGroup {
             orders[directoryOrderPath] = result.map { URL(fileURLWithPath: $0).lastPathComponent }
             workspaces[index].directoryOrders = orders
         }
-        refresh()
+        refresh(selectingDrop: selection)
     }
 
     func setManualEntryOrder(_ enabled: Bool) {
@@ -1575,6 +1587,9 @@ private struct HubDropUndoGroup {
     private func navigateDirectory(to url: URL, selecting: URL? = nil) {
         let target = url.standardizedFileURL
         guard target != currentURL else { return }
+        // Navigation is already the user's intent while its asynchronous read
+        // is pending; a prior drop must not cancel that read to select its result.
+        navigationGeneration &+= 1
         invalidateBackgroundRefresh()
         let context = refreshContext
         retryDirectoryNavigation = (target, selecting)
@@ -1624,6 +1639,58 @@ private struct HubDropUndoGroup {
         let recentRecords: [HubRecentFile]
     }
 
+    /// A drop may finish after spring navigation or another user selection.
+    /// Apply feedback once, to a successful loaded snapshot, only while the
+    /// browsing context and user's choice still match the moment of release.
+    private struct DropSelectionContext: Equatable {
+        let workspaceID: UUID?
+        let directory: URL?
+        let navigation: UInt
+        let selectionGeneration: UInt
+        let search: String
+        let color: HubFinderLabel?
+        let type: String?
+    }
+    private struct DropSelectionRequest {
+        var context: DropSelectionContext
+        let urls: [URL]
+        let destinationFolder: URL?
+        let appliedLabel: HubFinderLabel?
+    }
+    private var dropSelectionContext: DropSelectionContext {
+        DropSelectionContext(workspaceID: selectedWorkspaceID, directory: currentURL,
+            navigation: navigationGeneration, selectionGeneration: selectionGeneration, search: search,
+            color: colorLabelFilter, type: fileTypeFilter)
+    }
+    private func dropSelection(workspaceID: UUID?, directory: URL?, urls: [URL],
+                               appliedLabel: HubFinderLabel? = nil) -> DropSelectionRequest? {
+        guard selectedWorkspaceID == workspaceID else { return nil }
+        let targetPath = directory?.standardizedFileURL.path
+        let sameDirectory = currentURL?.standardizedFileURL.path == targetPath
+        let folder = sameDirectory ? nil : entries.first {
+            $0.canNavigate && $0.url.standardizedFileURL.path == targetPath
+        }?.url
+        guard sameDirectory || folder != nil else { return nil }
+        return DropSelectionRequest(context: dropSelectionContext, urls: urls,
+            destinationFolder: folder, appliedLabel: appliedLabel)
+    }
+    private func selectDroppedResults(_ request: DropSelectionRequest, in snapshot: [FileEntry]) {
+        let paths = Set((request.destinationFolder.map { [$0] } ?? request.urls).map { $0.standardizedFileURL.path })
+        let results = snapshot.filter { $0.exists && paths.contains($0.url.standardizedFileURL.path) }
+        guard !results.isEmpty else { return }
+        // Only remove filters that would hide the completed drop. A color
+        // target takes precedence over the previously active color filter.
+        if let colorLabelFilter, results.contains(where: { $0.labelNumber != colorLabelFilter.rawValue }) {
+            let label = request.appliedLabel.flatMap { label in
+                results.allSatisfy { $0.labelNumber == label.rawValue } ? label : nil
+            }
+            setColorLabelFilter(label)
+        }
+        if let fileTypeFilter, results.contains(where: { HubFileType.key(for: $0) != fileTypeFilter }) { setFileTypeFilter(nil) }
+        if !search.isEmpty && results.contains(where: { !$0.name.localizedStandardContains(search) }) { search = "" }
+        selectedIDs = Set(results.map(\.url))
+    }
+
     private var refreshContext: RefreshContext {
         RefreshContext(workspaceID: selectedWorkspaceID, directory: currentURL,
                        references: isReferenceRoot ? selectedWorkspace?.referencePaths ?? [] : [],
@@ -1663,7 +1730,8 @@ private struct HubDropUndoGroup {
     }
 
     private func beginDirectoryLoad(_ request: HubDirectoryRequest, context: RefreshContext,
-                                    reportErrors: Bool, commitNavigation: (() -> Void)? = nil) {
+                                    reportErrors: Bool, selectingDrop: DropSelectionRequest? = nil,
+                                    commitNavigation: (() -> Void)? = nil) {
         let id = UUID(), generation = refreshGeneration
         let started = ProcessInfo.processInfo.systemUptime
         var orderedRequest = request
@@ -1704,7 +1772,9 @@ private struct HubDropUndoGroup {
             self.nextPeriodicRefresh = ProcessInfo.processInfo.systemUptime + min(30, max(2, elapsed * 3))
             switch result {
             case .success(let snapshot):
+                let selectDrop = selectingDrop.map { $0.context == self.dropSelectionContext } ?? false
                 apply(self, snapshot: snapshot, complete: true)
+                if selectDrop, let selectingDrop { self.selectDroppedResults(selectingDrop, in: snapshot.entries) }
                 if let key = self.snapshotKey(self.refreshContext) { self.directorySnapshots.insert(snapshot, for: key) }
             case .failure(let error):
                 self.directoryLoadMessage = error.localizedDescription
@@ -1724,7 +1794,14 @@ private struct HubDropUndoGroup {
                 (self.colorLabelFilter == nil || $0.labelNumber == self.colorLabelFilter?.rawValue) &&
                     (self.fileTypeFilter == nil || HubFileType.key(for: $0) == self.fileTypeFilter)
             }.map(\.url)))
-            if remaining != selectedIDs { selectedIDs = remaining }
+            if remaining != selectedIDs {
+                // A worker snapshot may observe moved sources before the drop
+                // completion arrives. Pruning those stale IDs is not a new
+                // user choice and must not cancel the pending destination feedback.
+                let generation = selectionGeneration
+                selectedIDs = remaining
+                selectionGeneration = generation
+            }
         }
     }
 
@@ -1734,7 +1811,12 @@ private struct HubDropUndoGroup {
     }
 
     func refresh(reportErrors: Bool = true) {
+        refresh(reportErrors: reportErrors, selectingDrop: nil)
+    }
+
+    private func refresh(reportErrors: Bool = false, selectingDrop: DropSelectionRequest?) {
         guard selectedWorkspace != nil else { clearWorkspaceSelection(); return }
+        var selection = selectingDrop.flatMap { $0.context == dropSelectionContext ? $0 : nil }
         invalidateBackgroundRefresh()
         retryDirectoryNavigation = nil
         if isRecentsRoot {
@@ -1755,7 +1837,15 @@ private struct HubDropUndoGroup {
                 entries = []; canonicalDirectoryPath = nil; displayedDirectoryContext = nil
             }
         }
-        beginDirectoryLoad(currentDirectoryRequest, context: context, reportErrors: reportErrors)
+        // Replacing a virtual collection can clear its old selection above.
+        // Capture that internal reset without mistaking it for new user input.
+        if selection != nil { selection?.context = dropSelectionContext }
+        beginDirectoryLoad(currentDirectoryRequest, context: context, reportErrors: reportErrors, selectingDrop: selection)
+    }
+
+    private func refreshAfterDrop(_ request: DropSelectionRequest?) {
+        if let request, request.context == dropSelectionContext { refresh(selectingDrop: request) }
+        else { refreshInBackground() }
     }
 
     private func startRecentFiles() {
@@ -1925,10 +2015,12 @@ private struct HubDropUndoGroup {
     @discardableResult func applyDroppedColorLabel(_ value: Int, urls: [URL]) -> Bool {
         guard settings.resolvedColorLabelFilterEnabled, let label = HubFinderLabel(rawValue: value),
               !stagingTransferInProgress, !sharingInProgress, !dropUndoInProgress, fileOperationsInProgress == 0 else { return false }
-        return assignDroppedColorLabel(label, urls: urls, references: nil)
+        return assignDroppedColorLabel(label, urls: urls, references: nil,
+            selectingDrop: dropSelection(workspaceID: selectedWorkspaceID, directory: currentURL, urls: urls, appliedLabel: label))
     }
 
-    private func assignDroppedColorLabel(_ label: HubFinderLabel, urls: [URL], references: HubDropReferenceUndo?) -> Bool {
+    private func assignDroppedColorLabel(_ label: HubFinderLabel, urls: [URL], references: HubDropReferenceUndo?,
+                                         selectingDrop: DropSelectionRequest? = nil) -> Bool {
         guard !dropUndoInProgress, !stagingTransferInProgress, !sharingInProgress, fileOperationsInProgress == 0 else { return false }
         let files: [URL]
         do { files = try HubDropLabelWork.validated(urls) }
@@ -1962,8 +2054,13 @@ private struct HubDropUndoGroup {
                 if !changed.isEmpty {
                     self.directorySnapshots.removeAll()
                     HubFileIconCache.invalidate(files.filter { changed.contains($0.path) })
-                    self.refreshInBackground()
                 }
+                let selection = selectingDrop.map { request in
+                    DropSelectionRequest(context: request.context,
+                        urls: request.urls.filter { changed.contains($0.standardizedFileURL.path) },
+                        destinationFolder: request.destinationFolder, appliedLabel: request.appliedLabel)
+                }
+                self.refreshAfterDrop(selection)
                 if !failures.isEmpty { self.errorMessage = failures.joined(separator: "\n") }
                 if unavailable > 0 { self.dropUndoNotice = L("操作已完成，\(unavailable) 项无法安全撤销。") }
             case .failure(let error): self.errorMessage = error.localizedDescription
@@ -2144,19 +2241,24 @@ private struct HubDropUndoGroup {
         do { files = try HubDropLabelWork.validated(urls) }
         catch { errorMessage = error.localizedDescription; return false }
         if labelOnDrop != nil && (fileOperationsInProgress > 0 || sharingInProgress || stagingTransferInProgress) { return false }
+        let selection = dropSelection(workspaceID: workspaceID, directory: directory, urls: files, appliedLabel: labelOnDrop)
         // Remembering every source must not write the entire configuration once
         // per item when a real folder receives a batch.
         beginPersistenceTransaction(); defer { endPersistenceTransaction() }
         if directory == nil && workspaceID == settings.stagingWorkspaceID {
             let previous = workspaces[index].referencePaths
-            let accepted = stageFiles(files)
+            let accepted = stageFiles(files, refreshing: false)
             if accepted, let insertionOrder {
                 recordDropInsertion(files, workspaceID: workspaceID, directoryPath: nil, priorOrder: insertionOrder, before: before)
-                if isStagingRoot { refresh() }
             }
             if accepted, let labelOnDrop, let id = workspaceID, let fresh = workspaces.first(where: { $0.id == id }) {
                 let references = previous == fresh.referencePaths ? nil : HubDropReferenceUndo(workspaceID: id, prior: previous, expected: fresh.referencePaths)
-                if !assignDroppedColorLabel(labelOnDrop, urls: files, references: references) { errorMessage = L("设置颜色标签失败：请稍后重试。") }
+                if !assignDroppedColorLabel(labelOnDrop, urls: files, references: references, selectingDrop: selection) {
+                    errorMessage = L("设置颜色标签失败：请稍后重试。")
+                    refreshAfterDrop(selection)
+                }
+            } else if accepted {
+                refreshAfterDrop(selection)
             }
             return accepted
         }
@@ -2169,11 +2271,15 @@ private struct HubDropUndoGroup {
             workspaces[index].referencePaths = paths
             if let insertionOrder { recordDropInsertion(files, workspaceID: workspaceID, directoryPath: nil, priorOrder: insertionOrder, before: before) }
             if labelOnDrop == nil, previous != workspaces[index].referencePaths { invalidateFileDropUndo() }
-            if selectedWorkspaceID == workspaceID { refresh() }
             if let labelOnDrop, let id = workspaceID {
                 let expected = workspaces[index].referencePaths
                 let references = previous == expected ? nil : HubDropReferenceUndo(workspaceID: id, prior: previous, expected: expected)
-                if !assignDroppedColorLabel(labelOnDrop, urls: files, references: references) { errorMessage = L("设置颜色标签失败：请稍后重试。") }
+                if !assignDroppedColorLabel(labelOnDrop, urls: files, references: references, selectingDrop: selection) {
+                    errorMessage = L("设置颜色标签失败：请稍后重试。")
+                    refreshAfterDrop(selection)
+                }
+            } else {
+                refreshAfterDrop(selection)
             }
             return true
         }
@@ -2223,7 +2329,13 @@ private struct HubDropUndoGroup {
                             originalTagSnapshot: changed ? previous?.tagSnapshot : nil))
                     } catch { unavailable += 1 }
                 }
-                return (completed, failures, undo, unavailable)
+                let highlighted = completed.filter { source, target, _, itemCopy, _ in
+                    // A local in-place drop only succeeds if its metadata did.
+                    // A real transfer still arrived even if assigning a tag failed.
+                    labelOnDrop == nil || itemCopy || source.standardizedFileURL != target.standardizedFileURL ||
+                        labeling?.changed.contains(target.standardizedFileURL.path) == true
+                }.map { $0.1 }
+                return (completed, failures, undo, unavailable, highlighted)
             }.value
             beginPersistenceTransaction(); defer { endPersistenceTransaction() }
             for (source, target, children, itemCopy, _) in result.0 where !itemCopy && source != target {
@@ -2245,7 +2357,11 @@ private struct HubDropUndoGroup {
             } else if !result.2.isEmpty || undoOrder != nil {
                 dropUndoNotice = L("操作已完成，\(result.0.count) 项无法安全撤销。")
             }
-            refreshInBackground()
+            let completedSelection = selection.map {
+                DropSelectionRequest(context: $0.context, urls: result.4,
+                    destinationFolder: result.4.isEmpty ? nil : $0.destinationFolder, appliedLabel: $0.appliedLabel)
+            }
+            refreshAfterDrop(completedSelection)
             if !result.1.isEmpty { errorMessage = result.1.joined(separator: "\n") }
             if result.3 > 0 { dropUndoNotice = L("操作已完成，\(result.3) 项无法安全撤销。") }
         }

@@ -57,6 +57,32 @@ enum HubFileType {
         return normalizedShortcuts(bounded.components(separatedBy: separators).filter { !$0.isEmpty })
     }
 
+    /// Keep available favorites in the user's order, then fill unused slots
+    /// from the loaded panel's existing type order. This does not inspect the
+    /// active browsing filter, mutate preferences, or create absent categories.
+    static func displayedShortcuts(preferred: [String], available: [HubFileTypeOption]) -> [String] {
+        let favorites = normalizedShortcuts(preferred)
+        guard !favorites.isEmpty else { return [] }
+        let favoriteSet = Set(favorites)
+        var presentFavorites = Set<String>()
+        var fallback: [String] = [], fallbackSet = Set<String>()
+        for option in available where option.count > 0 {
+            if favoriteSet.contains(option.id) {
+                presentFavorites.insert(option.id)
+            } else if fallback.count < favorites.count, !fallbackSet.contains(option.id),
+                      normalizedIdentifier(option.id) == option.id {
+                fallback.append(option.id)
+                fallbackSet.insert(option.id)
+            }
+            // Later types cannot change the result once all preferred slots
+            // are present. Otherwise retain at most favorites.count fallback
+            // IDs while scanning for a preferred type near the end.
+            if presentFavorites.count == favorites.count { break }
+        }
+        let retained = favorites.filter(presentFavorites.contains)
+        return retained + fallback.prefix(favorites.count - retained.count)
+    }
+
     static func editingText(for shortcuts: [String]) -> String {
         normalizedShortcuts(shortcuts).map { key in
             if key == folder { return folder }

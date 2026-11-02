@@ -78,6 +78,27 @@ struct WorkspaceHeaderLayoutTests {
         let invalid = HubWorkspaceHeaderLayout.make(tabWidths: [.nan, -.infinity, -10], sideWidth: .nan)
         near(invalid.leftViewportWidth + invalid.rightViewportWidth + invalid.controlsWidth + invalid.dragWidth, 0,
              "Transient invalid geometry cannot propagate non-finite view sizes")
+        let controls = HubWorkspaceControlsLayout.make(shortcutCount: 4, closeVisible: true, availableWidth: 154)
+        near(controls.naturalWidth, 200, "All four shortcuts, add and close keep their intrinsic width")
+        near(controls.width, 154, "A narrow extension shoulder remains one row wide")
+        near(controls.actionWidth, 64, "Add and close stay outside the shortcut scroll viewport")
+        near(controls.shortcutViewportWidth, 86, "Only fixed shortcuts yield space to the persistent actions")
+        precondition(!controls.scrollsWholeStrip)
+        let oneShortcut = HubWorkspaceControlsLayout.make(shortcutCount: 4, closeVisible: true, availableWidth: 98)
+        near(oneShortcut.shortcutViewportWidth, 30, "The pinned-actions mode still exposes one full shortcut")
+        precondition(!oneShortcut.scrollsWholeStrip)
+        for width in [CGFloat(97), 30, 0, -.infinity, .nan] {
+            let tiny = HubWorkspaceControlsLayout.make(shortcutCount: 4, closeVisible: true, availableWidth: width)
+            precondition(tiny.scrollsWholeStrip && tiny.width.isFinite && tiny.width >= 0,
+                         "An exceptionally small shoulder scrolls the complete control strip without nonfinite sizes")
+        }
+        for width in stride(from: CGFloat(600), through: 1600, by: 1) {
+            let side = (width - 32 - 244 - 24) / 2
+            let header = check(Array(repeating: 150, count: 20), side: side, controls: 200)
+            let actions = HubWorkspaceControlsLayout.make(shortcutCount: 4, closeVisible: true, availableWidth: header.controlsWidth)
+            precondition(actions.width <= side && actions.shortcutViewportWidth >= 30 && !actions.scrollsWholeStrip,
+                         "Every supported physical-notch width keeps tabs scrollable and add/close accessible in one row")
+        }
         print("PASS: Workspace header flows ordered tabs around the notch and reserves controls and window dragging")
     }
 }

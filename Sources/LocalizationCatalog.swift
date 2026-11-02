@@ -17,6 +17,7 @@ enum HubLocalizationCatalog {
         "{0}（{1}）": "{0} ({1})",
         "用逗号、空格或换行分隔，例如 md, pdf, zip, folder。folder 表示文件夹，none 表示无扩展名。": "Separate extensions with commas, spaces or new lines, for example md, pdf, zip, folder. Use folder for folders and none for files without an extension.",
         "按最后一个扩展名匹配，例如 tar.gz 使用 gz。": "Matches the final extension: use gz for tar.gz files.",
+        "当前面板不存在的快捷类型会由其他已有类型补位，不会更改你的设置。": "Other types in this panel fill any unavailable shortcut slots without changing your settings.",
         "请输入扩展名，如 md、pdf；无效内容不会保存。": "Enter extensions such as md or pdf. Invalid input will not be saved.",
         "快捷类型，按显示顺序排列": "Type shortcuts, in display order",
         "仍可通过“…”选择当前面板中的所有类型。": "You can still choose any type in this panel from “…”.",

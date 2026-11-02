@@ -107,6 +107,30 @@ final class HubNotchSurface: NSView {
     private var sourceWidth: CGFloat = 200
     private var reduceMotion = false
     private var animationSpeed = 1.0
+    private let resizeHandle = HubPanelResizeHandle(frame: .zero)
+    var isResizing: Bool { resizeHandle.isResizing }
+    var resizeConfiguration: ((NSEvent) -> HubPanelResizeConfiguration?)? {
+        get { resizeHandle.configuration }
+        set { resizeHandle.configuration = newValue }
+    }
+    var resizeCursorAllowedEdges: (() -> HubPanelResizeEdges)? {
+        get { resizeHandle.cursorAllowedEdges }
+        set { resizeHandle.cursorAllowedEdges = newValue }
+    }
+    var resizeDidBegin: (() -> Void)? {
+        get { resizeHandle.didBegin }
+        set { resizeHandle.didBegin = newValue }
+    }
+    var resizeFrameRequested: ((CGRect) -> Void)? {
+        get { resizeHandle.resizeFrame }
+        set { resizeHandle.resizeFrame = newValue }
+    }
+    var resizeDidEnd: (() -> Void)? {
+        get { resizeHandle.didEnd }
+        set { resizeHandle.didEnd = newValue }
+    }
+    func cancelResize() { resizeHandle.cancelResize() }
+    func reconcileResize(mousePressed: Bool) { resizeHandle.reconcile(mousePressed: mousePressed) }
     private(set) var overscanEnabled = false
     var restingBounds: CGRect { HubNotchMotion.extensionRestingBounds(in: bounds, enabled: overscanEnabled) }
     private var presented = false
@@ -135,6 +159,7 @@ final class HubNotchSurface: NSView {
         addSubview(glassMaterial)
         hostedContent.wantsLayer = true
         addSubview(hostedContent)
+        addSubview(resizeHandle)
         hostedContent.autoresizingMask = [.width, .height]
     }
 
@@ -199,6 +224,9 @@ final class HubNotchSurface: NSView {
         CATransaction.setDisableActions(true)
         glassMaterial.frame = bounds
         let resting = restingBounds
+        resizeHandle.frame = bounds
+        resizeHandle.logicalBounds = notchExtension ? resting.insetBy(dx: min(shoulderInset, resting.width / 2), dy: 0) : resting
+        resizeHandle.cornerRadius = notchExtension ? 26 : 21
         hostedContent.frame = notchExtension ? resting.insetBy(dx: min(shoulderInset, resting.width / 2), dy: 0) : resting
         revealMask.frame = bounds
         outline.frame = bounds
@@ -213,6 +241,7 @@ final class HubNotchSurface: NSView {
     }
 
     func setPresented(_ value: Bool, animated: Bool, completion: @escaping () -> Void) {
+        if !value { resizeHandle.clearCursor() }
         layoutSubtreeIfNeeded()
         generation &+= 1
         let token = generation

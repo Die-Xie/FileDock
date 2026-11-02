@@ -128,6 +128,7 @@ struct NotchSurfaceTests {
         testExtensionTailInterruption()
         testGlassMaterial()
         testStalledTransitions()
+        testResizeHitRouting()
 
         print("PASS: continuous connection curves, no inward/outward bulges, animation-speed limits, static content, zero-frame reversal, reduced motion, window-shadow lifecycle, passive adaptive glass")
         print("LIMIT: offscreen layers do not establish rendered spring smoothness, display timing, or physical-notch alignment")
@@ -135,6 +136,54 @@ struct NotchSurfaceTests {
 
     @MainActor private static func maskBounds(_ surface: HubNotchSurface) -> CGRect {
         (surface.layer?.mask as? CAShapeLayer)?.path?.boundingBoxOfPath ?? .null
+    }
+
+    @MainActor private static func testResizeHitRouting() {
+        let outer = HubNotchMotion.extensionWindowFrame(for: CGRect(x: 100, y: 200, width: 900, height: 500), enabled: true)
+        let window = NSWindow(contentRect: outer, styleMask: [.borderless, .resizable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        let content = NSView(frame: .zero)
+        let surface = HubNotchSurface(contentView: content)
+        window.contentView = surface
+        defer { window.contentView = nil; window.close() }
+        surface.setOverscanEnabled(true)
+        surface.configure(attached: true, sourceWidth: 200, bodyColor: .black, reduceMotion: true, embedded: true, notchExtension: true)
+        surface.setPresented(true, animated: false) { }
+        surface.layoutSubtreeIfNeeded()
+        let handle = surface.subviews.compactMap { $0 as? HubPanelResizeHandle }.first!
+        let body = content.frame
+        expect(body == surface.restingBounds.insetBy(dx: 16, dy: 0), "The visible extension body must keep its shoulder inset")
+        expect(handle.logicalBounds == body, "Resize edges must match the visible body, not the padded native window")
+        surface.resizeConfiguration = { _ in HubPanelResizeConfiguration(frame: surface.restingBounds, anchor: .topCenter, allowedEdges: [.left, .right, .bottom]) }
+        var injected: NSEvent?
+        handle.currentEvent = { injected }
+        func event(_ type: NSEvent.EventType, _ point: CGPoint) -> NSEvent {
+            NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber,
+                context: nil, eventNumber: 1, clickCount: 1, pressure: 1)!
+        }
+        let center = CGPoint(x: body.midX, y: body.midY), color = CGPoint(x: body.minX + 160, y: body.minY + 21)
+        for point in [center, color, CGPoint(x: body.maxX - 24, y: body.minY + 21)] {
+            injected = event(.leftMouseDown, point)
+            expect(surface.hitTest(point) === content, "File content, color footer and footer actions must pass through the topmost resize handle")
+            injected = event(.leftMouseDragged, point)
+            expect(surface.hitTest(point) === content, "File drag probes must continue to reach the hosted drop surface")
+        }
+        let edge = CGPoint(x: body.maxX - 1, y: body.midY)
+        injected = nil
+        expect(surface.hitTest(edge) === content, "Unrelated hit-test probes must not become resize input")
+        injected = event(.leftMouseDown, edge)
+        expect(surface.hitTest(edge) === handle, "A genuine local press at the visible body edge must resize")
+        injected = event(.leftMouseDragged, edge)
+        expect(surface.hitTest(edge) === content, "Finder drag hit testing must not be intercepted even at a resize edge")
+        injected = event(.leftMouseDown, CGPoint(x: body.minX, y: body.minY))
+        expect(handle.hitTest(CGPoint(x: body.minX, y: body.minY)) == nil, "Transparent rounded-corner space cannot start resizing")
+        let bottomCurve = CGPoint(x: body.maxX - 8, y: body.minY + 8)
+        injected = event(.leftMouseDown, bottomCurve)
+        expect(surface.hitTest(bottomCurve) === handle, "The visible bottom corner arc must remain resizable")
+        let top = CGPoint(x: body.midX, y: body.maxY - 1)
+        injected = event(.leftMouseDown, top)
+        expect(handle.hitTest(top) == nil, "An attached top edge must keep its hardware anchor")
+        expect(handle.registeredDraggedTypes.isEmpty, "Resizing cannot add a competing native file receiver")
     }
 
     @MainActor private static func testStalledTransitions() {
@@ -247,7 +296,7 @@ struct NotchSurfaceTests {
         surface.setPresented(true, animated: false) { }
         let contentFrame = content.frame
         let glass = surface.subviews[0] as! HubGlassMaterialView
-        expect(surface.subviews.last === content && surface.layer?.backgroundColor?.alpha == 0 && !glass.isHidden,
+        expect(surface.subviews.filter { !($0 is HubPanelResizeHandle) }.last === content && surface.layer?.backgroundColor?.alpha == 0 && !glass.isHidden,
                "The unchanged browser must stay above a clear native material background")
         surface.setPresented(false, animated: true) { }
         let mask = surface.layer?.mask
@@ -487,7 +536,7 @@ struct NotchSurfaceTests {
         surface.configure(attached: true, sourceWidth: 212, bodyColor: .white, reduceMotion: false,
                           embedded: true, liquidGlass: false, notchExtension: true)
         surface.layoutSubtreeIfNeeded()
-        expect(surface.subviews.last === content,
+        expect(surface.subviews.filter { !($0 is HubPanelResizeHandle) }.last === content,
                "Hosted controls must stay above the material in a light solid theme")
         surface.configure(attached: true, sourceWidth: 212, bodyColor: .black, reduceMotion: false,
                           embedded: true, liquidGlass: false, notchExtension: true)
@@ -496,7 +545,7 @@ struct NotchSurfaceTests {
         surface.configure(attached: true, sourceWidth: 212, bodyColor: .black, reduceMotion: false,
                           embedded: true, notchExtension: false)
         surface.layoutSubtreeIfNeeded()
-        expect(surface.subviews.last === content && content.frame == surface.bounds,
+        expect(surface.subviews.filter { !($0 is HubPanelResizeHandle) }.last === content && content.frame == surface.bounds,
                "A screen without a confirmed cutout keeps the pre-existing embedded layout")
         surface.configure(attached: false, sourceWidth: 212, bodyColor: .white, reduceMotion: false,
                           embedded: true, notchExtension: true)

@@ -36,9 +36,13 @@ struct HubNotchPlacement {
 }
 
 /// A second attachment style places the panel around the hardware cutout,
-/// rather than below it. Header controls can occupy the two safe side regions;
-/// narrow panels instead put their complete toolbar below `topInset`.
+/// rather than below it. Known cutouts keep one toolbar row in their safe side
+/// regions; each side can scroll when narrow. Only unavailable cutout geometry
+/// or a cutout leaving no accessible shoulders needs the `topInset` fallback.
 struct HubEmbeddedPlacement {
+    // One complete 30pt control must remain reachable after the extension
+    // surface's 16pt content inset. Overflow beyond that viewport can scroll.
+    private static let minimumHeaderShoulderWidth: CGFloat = 30 + 16
     let bodyFrame: CGRect
     let sourceWidth: CGFloat
     let topInset: CGFloat
@@ -72,9 +76,10 @@ struct HubEmbeddedPlacement {
         let exclusion = hasHardwareCutout ? min(auxiliaryGap + 24, max(0, width - 24)) : 0
         let leftUsableWidth = (width - exclusion) / 2 - 12
         let rightUsableWidth = (width - exclusion) / 2 - 12
-        // Reserve the natural width of all six possible header shortcuts.
-        // Narrower shoulders use the complete toolbar below the safe inset.
-        let splitHeader = hasHardwareCutout && leftUsableWidth >= 200 && rightUsableWidth >= 200
+        // Scrolling is a view concern. Do not move the complete toolbar down
+        // merely because the current shortcuts exceed a shoulder's width.
+        let splitHeader = hasHardwareCutout && leftUsableWidth >= minimumHeaderShoulderWidth &&
+            rightUsableWidth >= minimumHeaderShoulderWidth
         return HubEmbeddedPlacement(bodyFrame: body, sourceWidth: sourceWidth, topInset: topInset,
                                     headerExclusionWidth: exclusion, usesSplitHeader: splitHeader)
     }

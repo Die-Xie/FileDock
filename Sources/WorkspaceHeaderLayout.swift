@@ -54,3 +54,33 @@ struct HubWorkspaceHeaderLayout {
                                         dragWidth: max(0, side - controls - rightWidth))
     }
 }
+
+/// Keep the add/close actions reachable without consuming the tabs' viewport.
+/// Only the shortcut strip scrolls at ordinary narrow widths. A shoulder that
+/// exposes just one control scrolls the complete strip instead of clipping it.
+struct HubWorkspaceControlsLayout {
+    let width: CGFloat
+    let naturalWidth: CGFloat
+    let shortcutViewportWidth: CGFloat
+    let actionWidth: CGFloat
+    let scrollsWholeStrip: Bool
+
+    static func make(shortcutCount: Int, closeVisible: Bool,
+                     availableWidth: CGFloat) -> HubWorkspaceControlsLayout {
+        let count = max(0, shortcutCount)
+        let spacing = HubWorkspaceHeaderLayout.tabSpacing
+        let control = HubWorkspaceHeaderLayout.iconTabWidth
+        let shortcutWidth = CGFloat(count) * control + CGFloat(max(0, count - 1)) * spacing
+        let actionWidth = closeVisible ? control * 2 + spacing : control
+        let gap: CGFloat = count > 0 ? spacing : 0
+        let naturalWidth = shortcutWidth + gap + actionWidth
+        let available = availableWidth.isFinite ? max(0, availableWidth) : 0
+        let width = min(naturalWidth, available)
+        let minimumPinnedWidth = actionWidth + gap + (count > 0 ? control : 0)
+        let wholeStrip = width < minimumPinnedWidth
+        let shortcutViewport = wholeStrip ? 0 : min(shortcutWidth, max(0, width - actionWidth - gap))
+        return HubWorkspaceControlsLayout(width: width, naturalWidth: naturalWidth,
+            shortcutViewportWidth: shortcutViewport, actionWidth: actionWidth,
+            scrollsWholeStrip: wholeStrip)
+    }
+}

@@ -88,9 +88,12 @@ swiftc -swift-version 5 Sources/Localization.swift Sources/LocalizationCatalog.s
     -framework CoreGraphics
 .build/notch-geometry-tests
 swiftc -swift-version 5 Sources/Localization.swift Sources/LocalizationCatalog.swift -parse-as-library -module-cache-path .build/module-cache \
-    Sources/NotchMotion.swift Sources/HubGlassMaterial.swift Sources/NotchSurface.swift Tests/NotchSurfaceTests.swift -o .build/notch-surface-tests \
+    Sources/NotchMotion.swift Sources/PanelResize.swift Sources/HubGlassMaterial.swift Sources/NotchSurface.swift Tests/NotchSurfaceTests.swift -o .build/notch-surface-tests \
     -framework AppKit -framework QuartzCore
 .build/notch-surface-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
+    Sources/NotchMotion.swift Sources/PanelResize.swift Tests/PanelResizeTests.swift -o .build/panel-resize-tests -framework AppKit
+.build/panel-resize-tests
 swiftc -swift-version 5 Sources/Localization.swift Sources/LocalizationCatalog.swift -parse-as-library -module-cache-path .build/module-cache \
     Sources/HoverActivation.swift Sources/HoverCursor.swift Tests/HoverActivationTests.swift -o .build/hover-tests -framework AppKit
 .build/hover-tests
@@ -284,6 +287,12 @@ swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache
     -framework QuickLookThumbnailing -framework ImageIO -framework ServiceManagement -framework UniformTypeIdentifiers -framework ApplicationServices \
     -F "$TASK_SPARKLE" -framework Sparkle -Xlinker -rpath -Xlinker "$TASK_SPARKLE"
 .build/header-window-drag-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache "${TASK_VIEW_TEST_SOURCES[@]}" \
+    Tests/ModelTestSupport.swift Tests/WorkspaceHeaderRenderingTests.swift -o .build/workspace-header-rendering-tests \
+    -framework AppKit -framework SwiftUI -framework Combine -framework Carbon -framework Quartz \
+    -framework QuickLookThumbnailing -framework ImageIO -framework ServiceManagement -framework UniformTypeIdentifiers -framework ApplicationServices \
+    -F "$TASK_SPARKLE" -framework Sparkle -Xlinker -rpath -Xlinker "$TASK_SPARKLE"
+.build/workspace-header-rendering-tests
 swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache "${TASK_VIEW_TEST_SOURCES[@]}" \
     Tests/SettingsLayoutTests.swift -o .build/settings-layout-tests \
     -framework AppKit -framework SwiftUI -framework Combine -framework Carbon -framework Quartz \
