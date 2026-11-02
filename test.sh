@@ -260,6 +260,12 @@ swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache
     -F "$TASK_SPARKLE" -framework Sparkle -Xlinker -rpath -Xlinker "$TASK_SPARKLE"
 .build/footer-filter-motion-tests
 swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache "${TASK_VIEW_TEST_SOURCES[@]}" \
+    Tests/ModelTestSupport.swift Tests/FooterAlignmentTests.swift -o .build/footer-alignment-tests \
+    -framework AppKit -framework SwiftUI -framework Combine -framework Carbon -framework Quartz \
+    -framework QuickLookThumbnailing -framework ImageIO -framework ServiceManagement -framework UniformTypeIdentifiers -framework ApplicationServices \
+    -F "$TASK_SPARKLE" -framework Sparkle -Xlinker -rpath -Xlinker "$TASK_SPARKLE"
+.build/footer-alignment-tests
+swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache "${TASK_VIEW_TEST_SOURCES[@]}" \
     Tests/ModelTestSupport.swift Tests/ColorLabelDropTests.swift -o .build/color-label-drop-tests \
     -framework AppKit -framework SwiftUI -framework Combine -framework Carbon -framework Quartz \
     -framework QuickLookThumbnailing -framework ImageIO -framework ServiceManagement -framework UniformTypeIdentifiers -framework ApplicationServices \

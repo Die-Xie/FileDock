@@ -1576,14 +1576,25 @@ struct HubView: View {
                                  totalCount: model.entries.count,
                                  onSelect: model.setFileTypeFilter,
                                  onUpdateShortcuts: { model.settings.fileTypeShortcuts = $0 })
-                .frame(minWidth: 28, maxWidth: .infinity)
+                .frame(minWidth: 28, maxWidth: .infinity, alignment: .trailing)
                 .layoutPriority(-1)
                 .disabled(model.selectedWorkspace == nil)
-            Text(model.selectedIDs.isEmpty ? L("\(model.visibleEntries.count) 个项目") : L("已选 \(model.selectedIDs.count) / \(model.visibleEntries.count)")).font(.system(size: 10)).foregroundStyle(.secondary).fixedSize()
+            footerItemCount
             iconButton("arrow.clockwise", L("刷新")) { model.refresh() }
             Button { model.pinned.toggle() } label: { Image(systemName: model.pinned ? "pin.fill" : "pin").foregroundStyle(model.pinned ? Color.accentColor : Color.secondary).frame(width: 24, height: 23) }.buttonStyle(.plain).help(model.pinned ? L("取消固定") : L("固定窗口"))
             iconButton("gearshape", L("设置")) { onSettings() }
         }.padding(.horizontal, 13).padding(.vertical, 7)
+    }
+
+    /// Reserve the largest count for this loaded panel, rather than its filtered
+    /// subset. Count digits and selection text must not move the type-menu anchor.
+    private var footerItemCount: some View {
+        let total = model.entries.count
+        return ZStack(alignment: .trailing) {
+            Text(L("\(total) 个项目")).hidden().accessibilityHidden(true)
+            Text(L("已选 \(total) / \(total)")).hidden().accessibilityHidden(true)
+            Text(model.selectedIDs.isEmpty ? L("\(model.visibleEntries.count) 个项目") : L("已选 \(model.selectedIDs.count) / \(model.visibleEntries.count)"))
+        }.font(.system(size: 10)).monospacedDigit().foregroundStyle(.secondary).fixedSize()
     }
 
     private var canReceiveColorLabelDrop: Bool {

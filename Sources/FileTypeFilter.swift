@@ -1,9 +1,9 @@
 import SwiftUI
 
-private enum HubFileTypePlateTarget: Hashable {
+enum HubFileTypePlateTarget: Hashable {
     case all, type(String), clear, more
 }
-private struct HubFileTypePlateKey: PreferenceKey {
+struct HubFileTypePlateKey: PreferenceKey {
     static var defaultValue: [HubFileTypePlateTarget: Anchor<CGRect>] = [:]
     static func reduce(value: inout [HubFileTypePlateTarget: Anchor<CGRect>], nextValue: () -> [HubFileTypePlateTarget: Anchor<CGRect>]) {
         value.merge(nextValue(), uniquingKeysWith: { _, new in new })
