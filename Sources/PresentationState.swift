@@ -14,12 +14,18 @@ final class HubPresentationState: ObservableObject {
     @Published var previewVisible = false { didSet { if oldValue != previewVisible { updateRenderingPolicy() } } }
     @Published private(set) var fileDragActive = false
     @Published private(set) var windowMoving = false
+    @Published private(set) var windowResizing = false
     private(set) var movingPinned = false
     @Published private(set) var layoutChanging = false
     private var layoutTask: Task<Void, Never>?
     @Published private(set) var surfaceAnimating = false
     var defersFileRendering: Bool { !previewVisible || fileDragActive || windowMoving || surfaceAnimating || layoutChanging }
     init() { updateRenderingPolicy() }
+    // This only settles local presentation effects. Resizing must not pause
+    // file loading or change the shared rendering/hover admission policy.
+    func setWindowResizing(_ active: Bool) {
+        if windowResizing != active { windowResizing = active }
+    }
     func setSurfaceAnimating(_ active: Bool) {
         guard surfaceAnimating != active else { return }
         surfaceAnimating = active

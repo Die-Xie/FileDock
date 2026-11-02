@@ -1158,6 +1158,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
     }
 
     private func beginPanelResize() {
+        presentation.setWindowResizing(true)
         model.beginInteractiveResize()
         surface.cancelAnimationsAndShow()
         if attachedToNotch && !embeddedAtNotch { bridgeView.cancelAnimationsAndShow() }
@@ -1169,6 +1170,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
     }
 
     private func endPanelResize() {
+        presentation.setWindowResizing(false)
         recordPanelSize()
         model.endInteractiveResize()
         guard desiredVisible else { return }

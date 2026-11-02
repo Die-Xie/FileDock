@@ -399,3 +399,16 @@ TriggerSuppressionTests覆盖黑名单和全屏两类证据的禁用／回退、
 - CrossWorkspaceDropTests、ModelTests、PartialReferenceReorderTests、DropUndoTests、ColorLabelFilterTests、DirectoryLoadingTests 通过；新增用例覆盖碰撞改名、部分／全部失败、重复引用、同色标签、撤销、选择后再次清空和尚未提交的目录导航。NativeColorDropRoutingTests 使用真实 NSHostingView，确认拖放清除搜索及筛选后经过多轮 SwiftUI 更新仍保持结果高亮，主动新搜索仍同步清选；原生唯一接收器、直接颜色拖放和撤销回归也通过。
 - 用户实机确认 build102 的可见边缘内侧光标与松手后高亮正常；随后反馈最窄窗口顶栏下移。定位为旧几何的双侧 200pt 固定阈值触发整栏下移，改为保留已知物理刘海避让、两侧单行滚动；无辅助区域但有安全边距的屏幕继续保留原安全退让。
 - 窄栏保留「＋」和关闭按钮，功能图标在独立 viewport 内横滚；极端肩宽不足时整组可滚动并定位到「＋」。尺寸由固定控件数量推导，移除测量偏好回写造成的额外布局轮次。原生文件与图标排序共享可见 viewport，隐藏的 AirDrop／暂存不再越过裁剪区域接收。WorkspaceHeaderLayoutTests 验证 600–1600pt 每个整点尺寸，WorkspaceHeaderRenderingTests 验证真实扩展表面四种宽度、物理刘海避让、滚动后命中、普通标签真实复制和文件夹创建标签指引；HeaderWindowDragTests、ShortcutReorderDropTests 通过。几何仅在肩宽不足一个 30pt 控件及扩展内缩时保留安全下移，不再使用旧的 200pt 阈值。
+
+## 1.36.2：标签切换与内容呈现（2026-11-02–03）
+
+- 标签栏使用一块持续存在的原生装饰底板，从当前呈现位置平滑滑向新目标；点击揭示标签使用相同的 280ms 曲线。刘海两侧与快捷区各有独立底板和裁剪，标签控件、文件项目布局及原生拖放目标不参与位移动画。
+- 新浏览位置只在首批非空结果或最终空结果及已排序缓存安装完成后，同一主线程调用栈内发出一次 `contentRevision`。工作区和目录变化重新计次；后续批次、排序、筛选、引用变化及后台刷新不重播，过期目录回调仍由原有代际检查拒绝。
+- 内容使用稳定单树的 0.74→1 透明度呈现，图标与文字在项目内轻微上移（网格 6pt，列表／分栏 3pt）；项目背景、点击／拖放区域和插入锚点保持固定。SwiftUI 接收初始值后再启动曲线，连续快速切换共享正在进行的过渡；没有逐帧模型通知、视图截图或双内容树。隐藏、文件拖动、标签重排、窗口移动／缩放及减少动态效果直接强制不透明，不占用自动呼出或文件渲染暂停状态。
+- 仅标签选中状态延迟 300ms 合并保存；其他配置变化仍立即保存最新选中值，正常退出显式 flush。隔离 `-O` 基准中，2 万条引用配置的切换路径中位耗时从 125.213ms 降至 0.026ms，10 次连续切换的即时写盘从 10 次降至 0 次。完整保存本身仍有开销，这不是文件读取时间或实际帧率指标。
+- warm 快照仅在排序条件完全匹配时复用 worker 已排序数组。缓存最多 4 个快照、合计 30000 个条目、16MiB 估算值，包含有序数组、图标元数据、手动顺序及引用路径成本；15 秒过期并按 LRU 驱逐，命中后仍后台读取。基准中 800 项重访的额外主线程排序从 1 次降至 0 次，1200 项重访可即时保留内容。
+- ContentTransitionTests 验证真实 hosting 接收到 seed 后才开始曲线、快速目标不重播、直接中断与生命周期；WorkspaceContentTests 覆盖保存合并／flush、缓存预算／LRU、首批／空目录／最近使用／过期回调。原生隐藏窗口测试用于身份、布局与回调正确性，不替代实际 WindowServer 帧率和主观手感核对。
+- InterfaceMotionTests、DirectoryLoadingTests、ModelTests、ConfigurationAdmissionTests、FileTypeFilterTests、CrossWorkspaceDropTests、LargeDirectoryTests 重新编译运行通过。NativeReorderRoutingTests 覆盖普通目录／引用集合 × 网格／列表／分栏 × 首次 UI 更新／40ms，WorkspaceTransitionRoutingTests 使用不同目录快速 A→B→C 切换并立即进行真实原生拖放回调，确认点击可达、唯一接收器和目标路径正确。窄标签滚动仅允许一个物理像素的横向对齐误差，尺寸、纵向位置及对象身份保持严格检查。
+- 早期候选将 MGE 事务分散到条件底板，用户反馈缺少微动画，未发布该候选。最终改为每条文档一块原生底板，并实际采样 presentation layer：起点 50、终点 226，30／60／90ms 时约为 86／139／178，中途重定向从当前呈现位置继续。ContentTransitionTests 也采样真实视觉子树，确认在文件动画屏障下仍经过上移中间位置，防止只验证最终状态而漏掉动画未播放。
+- 底部颜色及类型选中效果沿用持久底板。独立 `filterRevision` 在新筛选值和可见缓存提交后通知内容微动效；同值、搜索键入、排序及切换目录时的筛选重置不触发。筛选与浏览计数独立观察，避免相同数值造成漏播；加载首批前的筛选变化交给首次内容呈现，不增加目录读取或保存。
+- FooterFilterMotionTests 实测底部两种底板的中间位置，验证原颜色锚点、拖入提示、紧凑／菜单模式及停动策略；ColorLabelFilterLayoutTests 与 NativeColorDropRoutingTests 重新编译运行通过，覆盖直接 Finder 颜色投放、落点赋色、移动／复制、撤销及选中反馈。真实候选已核对普通目录 193 项的切换显示，原配置工作区和设置保留。

@@ -13,6 +13,7 @@ import Combine
         deadlines()
         try await lifecycle()
         try await stableHosting()
+        try await nativePlatePresentation()
         print("PASS: bounded/scaled interface motion, quiet short jobs, minimum indicator dwell, progress coalescing, hidden/cancelled tasks, selection-only animation and stable native file/tab destinations under rapid switching")
         print("LIMIT: Hidden hosting and callback tests do not measure WindowServer frame rate or subjective motion quality")
     }
@@ -122,7 +123,7 @@ import Combine
     private static func policy() {
         let standard = HubInterfaceMotion(enabled: true)
         precondition(standard.selection != nil && standard.feedback != nil)
-        precondition(standard.selectionDuration == 0.22 && standard.feedbackDuration == 0.12)
+        precondition(standard.selectionDuration == 0.28 && standard.feedbackDuration == 0.12)
         for speed in [Double.nan, .infinity, -.infinity, -1, 0, 0.5, 1, 2, 100] {
             let motion = HubInterfaceMotion(enabled: true, speed: speed)
             precondition((0.12...0.30).contains(motion.selectionDuration))
@@ -226,11 +227,61 @@ import Combine
             checkSources()
             await Task.yield()
         }
+        // Interrupt the shared backdrop spring. Both matched endpoints use
+        // the strip transaction while native sources retain their real frame.
+        state.motionEnabled = true
+        for selected in [0, 2, 1, 2, 0, 1] {
+            state.selected = selected
+            try await Task.sleep(nanoseconds: 25_000_000)
+            host.layoutSubtreeIfNeeded()
+            checkSources()
+            precondition(flatten(host).compactMap { $0 as? HubNativeFileDropBridge.DestinationView }.first === file)
+        }
         try await Task.sleep(nanoseconds: 350_000_000)
         host.layoutSubtreeIfNeeded()
         precondition(flatten(host).compactMap { $0 as? HubNativeFileDropBridge.DestinationView }.first === file)
         checkSources()
         precondition(!window.isVisible && !HubWorkspaceDragState.isDragging)
+    }
+
+    @MainActor private static func nativePlatePresentation() async throws {
+        let view = HubSelectionPlate.PlateView(frame: CGRect(x: 0, y: 0, width: 300, height: 52))
+        let window = NSPanel(contentRect: CGRect(x: -2000, y: -2000, width: 300, height: 52),
+                             styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.ignoresMouseEvents = true; window.contentView = view
+        defer { window.orderOut(nil); window.contentView = nil; window.close() }
+        window.orderFrontRegardless()
+        let motion = HubInterfaceMotion(enabled: true)
+        let first = CGRect(x: 10, y: 10, width: 80, height: 32)
+        let last = CGRect(x: 186, y: 10, width: 80, height: 32)
+        view.update(frame: first, cornerRadius: 8, color: .white, motion: motion)
+        CATransaction.flush()
+        try await Task.sleep(nanoseconds: 80_000_000)
+        view.update(frame: last, cornerRadius: 8, color: .white, motion: motion)
+        CATransaction.flush()
+        var positions: [CGFloat] = []
+        for _ in 0..<3 {
+            try await Task.sleep(nanoseconds: 30_000_000)
+            positions.append(view.presentationFrame!.midX)
+        }
+        precondition(positions.contains { $0 > first.midX + 5 && $0 < last.midX - 5 },
+                     "The actual presentation layer must render intermediate positions, not snap to the target")
+        let before = view.presentationFrame!
+        let middle = CGRect(x: 98, y: 10, width: 100, height: 32)
+        view.update(frame: middle, cornerRadius: 8, color: .white, motion: motion)
+        CATransaction.flush()
+        precondition(abs(view.presentationFrame!.midX - before.midX) < 3,
+                     "An interrupted plate continues from the presentation position, not the previous model endpoint")
+        view.update(frame: middle, cornerRadius: 8, color: .white, motion: HubInterfaceMotion(enabled: false))
+        CATransaction.flush()
+        precondition(view.selectionLayer.frame == middle && view.selectionLayer.animation(forKey: "selection") == nil,
+                     "Drag, resize and reduced-motion cancellation immediately settle the layer's model and remove its animation")
+        precondition(view.hitTest(CGPoint(x: 150, y: 26)) == nil && view.registeredDraggedTypes.isEmpty,
+                     "A decorative selection layer must never own clicks or drag destinations")
+        view.update(frame: nil, cornerRadius: 8, color: .white, motion: motion)
+        precondition(view.presentationFrame == nil && view.selectionLayer.opacity == 0,
+                     "Leaving a strip hides its plate instead of moving it across the physical notch")
+        print("PASS: native selection plate intermediate positions \(positions), presentation-based interruption and immediate cancellation")
     }
 }
 
@@ -242,20 +293,21 @@ import Combine
 
 @MainActor private struct MotionFixture: View {
     @ObservedObject var state: MotionFixtureState
-    @Namespace private var selection
     private var motion: HubInterfaceMotion { .init(enabled: state.motionEnabled) }
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 5) {
-                ForEach(0..<3) { index in
-                    Text("Tab \(index)").frame(width: 80, height: 32)
-                        .background(HubSelectionBackdrop(selected: state.selected == index, namespace: selection))
-                        .overlay(HubWorkspaceDragBridge(workspaceID: state.ids[index], title: "Tab", acceptsReorderDrops: false,
-                            onSelect: {}, onReorder: { _, _, _ in }, onDragStateChanged: { _ in }))
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 5) {
+                    ForEach(0..<3) { index in
+                        Text("Tab \(index)").frame(width: 80, height: 32)
+                            .overlay(HubWorkspaceDragBridge(workspaceID: state.ids[index], title: "Tab", acceptsReorderDrops: false,
+                                onSelect: {}, onReorder: { _, _, _ in }, onDragStateChanged: { _ in }))
+                    }
                 }
-            }
-            .animation(motion.selection, value: state.selected)
-            .animation(nil, value: motion.enabled)
+                .animation(motion.selection, value: state.selected)
+                .animation(nil, value: motion.enabled)
+                .background(HubSelectionPlate(selectionFrame: CGRect(x: CGFloat(state.selected) * 85, y: 0, width: 80, height: 32), motion: motion))
+            }.frame(height: 32)
             Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity)
         }.frame(width: 320, height: 180)
             .overlay(HubNativeFileDropBridge(contains: { _ in true }, operation: { _, _, _, _ in .copy }, receive: { _, _, _, _ in true }))

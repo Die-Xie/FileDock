@@ -17,8 +17,18 @@ import SwiftUI
   for f in files { try Data("fixture".utf8).write(to: f) }
   for reference in [false, true] {
    for mode in [HubViewMode.grid, .list, .columns] {
-    let model = makeTestModel(storageURL: root.appendingPathComponent("config-\(reference)-\(mode).json"))
-    model.addWorkspace(name: "Probe", mode: reference ? .references : .folder, urls: reference ? files : [root])
+    for delayMS in [0, 40] {
+    let model = makeTestModel(storageURL: root.appendingPathComponent("config-\(reference)-\(mode)-\(delayMS).json"))
+    let contexts = ["Probe A", "Probe B", "Probe C"].map { name in
+      Workspace(name: name, mode: reference ? .references : .folder, rootPath: reference ? nil : root.path,
+          referencePaths: reference ? files.map(\.path) : [])
+    }
+    model.workspaces = contexts
+    model.settings.qqMusicEnabled = false
+    model.settings.favoriteShortcutEnabled = false; model.settings.recentShortcutEnabled = false
+    model.settings.stagingEnabled = false; model.settings.airDropEnabled = false
+    for context in contexts { model.selectWorkspace(context.id) }
+    model.selectWorkspace(contexts[0].id)
     for _ in 0..<500 where model.directoryLoading { try await Task.sleep(nanoseconds: 5_000_000) }
     model.viewMode = mode
     model.settings.groupsEnabled = false
@@ -38,6 +48,30 @@ import SwiftUI
     guard let targetCell = views.first(where: { $0.entryURL == before }),
           let source = views.first(where: { $0.entryURL == moving }) else { fatalError("Missing source or target cell") }
     let destinationViews = descendants(host).compactMap { $0 as? HubNativeFileDropBridge.DestinationView }
+    precondition(destinationViews.count == 1 && descendants(host).filter { $0.registeredDraggedTypes.contains(.fileURL) }.count == 1,
+                 "The real HubView must keep exactly one file URL receiver")
+    let tabs = descendants(host).compactMap { $0 as? HubWorkspaceDragBridge.WorkspaceDragView }
+        .filter { contexts.map(\.id).contains($0.workspaceID) }
+    precondition(tabs.count == 3)
+    let tabFrames = Dictionary(uniqueKeysWithValues: tabs.map { ($0.workspaceID, $0.convert($0.bounds, to: host)) })
+    let tabObjects = Dictionary(uniqueKeysWithValues: tabs.map { ($0.workspaceID, ObjectIdentifier($0)) })
+    let routerFrame = destinationViews[0].convert(destinationViews[0].bounds, to: host)
+    func checkStableHierarchy() {
+      let current = descendants(host)
+      let receivers = current.compactMap { $0 as? HubNativeFileDropBridge.DestinationView }
+      precondition(receivers.count == 1 && receivers[0] === destinationViews[0])
+      precondition(current.filter { $0.registeredDraggedTypes.contains(.fileURL) }.count == 1)
+      precondition(receivers[0].convert(receivers[0].bounds, to: host) == routerFrame, "Content motion cannot move its file receiver")
+      let currentTabs = current.compactMap { $0 as? HubWorkspaceDragBridge.WorkspaceDragView }
+          .filter { tabObjects[$0.workspaceID] != nil }
+      precondition(currentTabs.count == tabs.count)
+      for tab in currentTabs {
+        precondition(tabObjects[tab.workspaceID] == ObjectIdentifier(tab) && tabFrames[tab.workspaceID] == tab.convert(tab.bounds, to: host),
+                     "Only the selection plate may animate; native tab sources retain identity and hit frames")
+      }
+      precondition(current.contains { $0 === source } && current.contains { $0 === targetCell },
+                   "Switching warm contexts with the same files cannot rebuild their native drag cells")
+    }
     for destination in destinationViews {
       destination.currentEventType = { .leftMouseDown }
       destination.primaryMousePressed = { true }
@@ -56,12 +90,19 @@ import SwiftUI
     try await Task.sleep(nanoseconds: 10_000_000)
     precondition(!HubLocalFilePressDispatch.contains(dispatchedPress), "The dispatch mark must expire so a retained event cannot block Finder")
     for destination in destinationViews { destination.currentEventType = { .leftMouseDragged } }
+    for context in [contexts[1], contexts[2], contexts[0]] {
+      model.selectWorkspace(context.id)
+      host.layoutSubtreeIfNeeded(); await Task.yield(); host.layoutSubtreeIfNeeded()
+      checkStableHierarchy()
+    }
+    if delayMS > 0 { try await Task.sleep(nanoseconds: UInt64(delayMS) * 1_000_000) }
+    host.layoutSubtreeIfNeeded(); checkStableHierarchy()
     let board = NSPasteboard.withUniqueName(), id = UUID()
     let payload = HubFileDragPayload(id: id, context: .init(workspaceID: model.selectedWorkspaceID, directory: model.currentURL), urls: [moving])
     HubFileDragState.begin(payload, source: source)
     board.writeObjects([HubFileDragData.pasteboardItem(for: moving, sessionID: id)])
     defer { HubFileDragState.end(id); board.releaseGlobally() }
-    settle(host)
+    host.layoutSubtreeIfNeeded()
     let targetRect = targetCell.convert(targetCell.bounds, to: host)
     let point = mode == .grid ? CGPoint(x: targetRect.minX + 2, y: targetRect.midY) : CGPoint(x: targetRect.midX, y: targetRect.minY + 2)
     let hitPoint = host.superview?.convert(point, from: host) ?? point
@@ -71,7 +112,15 @@ import SwiftUI
     precondition(hit.draggingEntered(info).isEmpty, "Unbound local source must not be treated as an external drag")
     HubFileDragState.bind(pasteboard: board, for: id)
     precondition(hit.draggingUpdated(info) == .move, "The same drag must recover once its pasteboard is bound, reference=\(reference) mode=\(mode)")
-    settle(host)
+    guard let firstFeedback = feedbackHistory.last ?? nil else { preconditionFailure("An immediate native update must supply its insertion geometry") }
+    if mode == .grid {
+      precondition(abs(firstFeedback.rect.minY - (targetRect.minY + 5)) < 0.51,
+                   "Grid insertion guidance must follow the currently drawn/native target, including a reveal translation")
+    } else {
+      precondition(abs(firstFeedback.rect.midY - targetRect.minY) < 0.51,
+                   "List/column insertion guidance must follow the currently drawn/native target, including a reveal translation")
+    }
+    host.layoutSubtreeIfNeeded(); await Task.yield(); host.layoutSubtreeIfNeeded()
     guard let feedback = feedbackHistory.last ?? nil else { preconditionFailure("SwiftUI must retain insertion feedback after binding and redraw") }
     precondition(feedback.action == .reorder && feedback.insertion && feedback.rect.width > 0 && feedback.rect.height > 0,
                  "A successful reorder hover must show a nonempty insertion line")
@@ -98,9 +147,11 @@ import SwiftUI
                    "Color-only fallback must preserve file order")
     }
     HubFileDragState.end(id)
+    }
    }
   }
-  print("PASS: actual host routes local file reorders in folder/reference grid, list and columns")
+  print("PASS: actual HubView keeps one stable file receiver and fixed native header/cell hit frames through warm A/B/C switches, then routes local reorders at 0/40ms in folder/reference grid, list and columns")
+  print("LIMIT: 0ms is the first reconciled UI turn with no deliberate delay; hidden callback tests do not measure rendered animation timing")
  }
  @MainActor static func settle(_ view: NSView) { for _ in 0..<5 { view.layoutSubtreeIfNeeded(); RunLoop.main.run(until: Date().addingTimeInterval(0.04)) } }
  @MainActor static func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }

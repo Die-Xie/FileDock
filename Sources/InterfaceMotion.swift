@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import QuartzCore
 
 /// Motion is local to small feedback surfaces. Never attach these animations
 /// to the browser's data, file geometry, or native drag destinations.
@@ -7,10 +8,10 @@ struct HubInterfaceMotion: Equatable {
     var enabled: Bool
     var speed: Double = 1
     private var normalizedSpeed: Double { speed.isFinite ? min(2, max(0.5, speed)) : 1 }
-    var selectionDuration: TimeInterval { min(0.30, max(0.12, 0.22 / normalizedSpeed)) }
+    var selectionDuration: TimeInterval { min(0.30, max(0.12, 0.28 / normalizedSpeed)) }
     var feedbackDuration: TimeInterval { min(0.18, max(0.06, 0.12 / normalizedSpeed)) }
     var selection: Animation? {
-        enabled ? .interactiveSpring(response: selectionDuration, dampingFraction: 0.92, blendDuration: 0.08) : nil
+        enabled ? .timingCurve(0.25, 0.35, 0.30, 1, duration: selectionDuration) : nil
     }
     var feedback: Animation? { enabled ? .easeOut(duration: feedbackDuration) : nil }
 }
@@ -131,6 +132,81 @@ struct HubSelectionBackdrop: View {
                 .transition(.opacity)
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
+        }
+    }
+}
+
+/// One persistent decorative layer inside a scroll document. Its model and
+/// presentation frames are independent of the native controls above it.
+struct HubSelectionPlate: NSViewRepresentable {
+    var selectionFrame: CGRect?
+    var cornerRadius: CGFloat = 8
+    var motion: HubInterfaceMotion
+    @Environment(\.colorScheme) private var colorScheme
+
+    func makeNSView(context: Context) -> PlateView { PlateView() }
+    func updateNSView(_ view: PlateView, context: Context) {
+        view.update(frame: selectionFrame, cornerRadius: cornerRadius,
+                    color: (colorScheme == .dark ? NSColor.white : .black).withAlphaComponent(0.12), motion: motion)
+    }
+
+    final class PlateView: NSView {
+        private(set) var selectionLayer = CALayer()
+        private(set) var targetFrame: CGRect?
+        private var motionEnabled = false
+        var presentationFrame: CGRect? {
+            guard targetFrame != nil else { return nil }
+            return selectionLayer.presentation()?.frame ?? selectionLayer.frame
+        }
+        override init(frame: NSRect) {
+            super.init(frame: frame)
+            wantsLayer = true
+            selectionLayer.opacity = 0
+            selectionLayer.masksToBounds = true
+            layer?.addSublayer(selectionLayer)
+            setAccessibilityElement(false)
+        }
+        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+        override var isFlipped: Bool { true }
+        override var isOpaque: Bool { false }
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if window == nil { selectionLayer.removeAllAnimations() }
+        }
+
+        func update(frame: CGRect?, cornerRadius: CGFloat, color: NSColor, motion: HubInterfaceMotion) {
+            let next = frame.flatMap { frame -> CGRect? in
+                frame.minX.isFinite && frame.minY.isFinite && frame.width.isFinite && frame.height.isFinite &&
+                    frame.width > 0 && frame.height > 0 ? frame : nil
+            }
+            let previous = targetFrame
+            let current = presentationFrame
+            let changed = next != previous || motion.enabled != motionEnabled
+            targetFrame = next; motionEnabled = motion.enabled
+            CATransaction.begin(); CATransaction.setDisableActions(true)
+            selectionLayer.backgroundColor = color.cgColor
+            selectionLayer.cornerRadius = cornerRadius
+            if changed { selectionLayer.removeAllAnimations() }
+            if let next {
+                selectionLayer.frame = next
+                selectionLayer.opacity = 1
+            } else { selectionLayer.opacity = 0 }
+            CATransaction.commit()
+            guard changed, motion.enabled, previous != nil, let current, let next, current != next else { return }
+            let position = CABasicAnimation(keyPath: "position")
+            position.fromValue = NSValue(point: CGPoint(x: current.midX, y: current.midY))
+            position.toValue = NSValue(point: CGPoint(x: next.midX, y: next.midY))
+            let bounds = CABasicAnimation(keyPath: "bounds")
+            bounds.fromValue = NSValue(rect: CGRect(origin: .zero, size: current.size))
+            bounds.toValue = NSValue(rect: CGRect(origin: .zero, size: next.size))
+            let duration = motion.selectionDuration
+            position.duration = duration; bounds.duration = duration
+            let animation = CAAnimationGroup()
+            animation.animations = [position, bounds]; animation.duration = duration
+            // Match the strip's scroll/reveal curve without a harsh first jump.
+            animation.timingFunction = CAMediaTimingFunction(controlPoints: 0.25, 0.35, 0.30, 1)
+            selectionLayer.add(animation, forKey: "selection")
         }
     }
 }

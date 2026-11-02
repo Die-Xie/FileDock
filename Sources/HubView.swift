@@ -100,10 +100,6 @@ struct HubView: View {
     private var locale: Locale { model.settings.resolvedLanguage.locale }
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Namespace private var leftTabSelection
-    @Namespace private var rightTabSelection
-    @Namespace private var floatingTabSelection
-    @Namespace private var shortcutSelection
     @Namespace private var viewModeSelection
     var onSettings: () -> Void
     var onClose: () -> Void
@@ -166,6 +162,10 @@ struct HubView: View {
                 // transition, without interpolating the file rows themselves.
                 .transaction { $0.animation = nil; $0.disablesAnimations = true }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .modifier(HubContentRevealModifier(revisions: model.$contentRevision.eraseToAnyPublisher(),
+                    filterRevisions: model.$filterRevision.eraseToAnyPublisher(),
+                    enabled: interfaceMotion.enabled && !presentation.windowResizing && renameEntry == nil,
+                    speed: model.settings.resolvedAnimationSpeed))
                 .overlay(alignment: .topTrailing) {
                     activityIndicator
                 }
@@ -334,7 +334,7 @@ struct HubView: View {
     }
 
     private var interfaceMotion: HubInterfaceMotion {
-        HubInterfaceMotion(enabled: !reduceMotion && !presentation.defersFileRendering && !workspaceReordering,
+        HubInterfaceMotion(enabled: !reduceMotion && !presentation.defersFileRendering && !presentation.windowResizing && !workspaceReordering,
                            speed: model.settings.resolvedAnimationSpeed)
     }
 
@@ -399,7 +399,7 @@ struct HubView: View {
                 let leftWorkspaces = Array(model.tabWorkspaces.prefix(layout.splitIndex))
                 let rightWorkspaces = Array(model.tabWorkspaces.dropFirst(layout.splitIndex))
                 HStack(spacing: 0) {
-                    workspaceLeading(leftWorkspaces, selectionNamespace: leftTabSelection, availableWidth: sideWidth)
+                    workspaceLeading(leftWorkspaces, availableWidth: sideWidth)
                         .frame(width: sideWidth, alignment: .leading).clipped()
                     VStack(spacing: 0) {
                         if embeddedMusicLayout.placement == .notch {
@@ -413,13 +413,11 @@ struct HubView: View {
                     }.frame(width: presentation.header.exclusionWidth, height: geometry.size.height)
                     HStack(spacing: 0) {
                         if !rightWorkspaces.isEmpty {
-                            workspaceLeading(rightWorkspaces, selectionNamespace: rightTabSelection, availableWidth: layout.rightViewportWidth)
+                            workspaceLeading(rightWorkspaces, availableWidth: layout.rightViewportWidth)
                                 .frame(width: layout.rightViewportWidth, alignment: .leading).clipped()
                         }
                         HubWindowDragHandle().frame(width: layout.dragWidth, height: 30).help(L("拖动窗口"))
                         workspaceHeaderControls(availableWidth: layout.controlsWidth)
-                            .animation(interfaceMotion.selection, value: model.selectedWorkspaceID)
-                            .animation(nil, value: interfaceMotion.enabled)
                             .transformAnchorPreference(key: HubHeaderDragRegionKey.self, value: .bounds) { $0[.controls] = $1 }
                             .transformAnchorPreference(key: HubFileDropRegionKey.self, value: .bounds) { $0[.headerControls] = $1 }
                     }.frame(width: sideWidth).clipped()
@@ -427,11 +425,9 @@ struct HubView: View {
             }.frame(height: embeddedMusicLayout.headerHeight)
         } else {
             HStack(spacing: 8) {
-                workspaceLeading(model.tabWorkspaces, selectionNamespace: floatingTabSelection)
+                workspaceLeading(model.tabWorkspaces)
                 HubWindowDragHandle().frame(minWidth: 32, maxWidth: .infinity, minHeight: 30, maxHeight: 30).help(L("拖动窗口"))
                 workspaceHeaderControls(availableWidth: workspaceControlsNaturalWidth).fixedSize()
-                    .animation(interfaceMotion.selection, value: model.selectedWorkspaceID)
-                    .animation(nil, value: interfaceMotion.enabled)
                     .transformAnchorPreference(key: HubHeaderDragRegionKey.self, value: .bounds) { $0[.controls] = $1 }
                     .transformAnchorPreference(key: HubFileDropRegionKey.self, value: .bounds) { $0[.headerControls] = $1 }
             }.padding(.horizontal, 12).padding(.vertical, 10)
@@ -440,17 +436,24 @@ struct HubView: View {
         }
     }
 
-    private func workspaceLeading(_ workspaces: [Workspace], selectionNamespace: Namespace.ID, availableWidth: CGFloat? = nil) -> some View {
+    private func workspaceLeading(_ workspaces: [Workspace], availableWidth: CGFloat? = nil) -> some View {
         let tabWidthLimit = availableWidth.map { max(48, $0) }
         return ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: HubWorkspaceHeaderLayout.tabSpacing) {
                     ForEach(workspaces) { workspace in
-                        workspaceTab(workspace, selectionNamespace: selectionNamespace, maximumWidth: tabWidthLimit).id(workspace.id)
+                        workspaceTab(workspace, maximumWidth: tabWidthLimit).id(workspace.id)
                     }
                 }.padding(.vertical, 3)
                     .animation(interfaceMotion.selection, value: model.selectedWorkspaceID)
                     .animation(nil, value: interfaceMotion.enabled)
+                    .backgroundPreferenceValue(HubHeaderDragRegionKey.self) { anchors in
+                        GeometryReader { geometry in
+                            let frame = model.selectedWorkspaceID.flatMap { anchors[.tab($0)] }.map { geometry[$0] }
+                            headerSelectionPlate(frame: frame,
+                                cornerRadius: model.selectedWorkspace?.iconOnly == true || model.selectedWorkspace?.name.isEmpty == true ? 6 : 8)
+                        }
+                    }
             }
             .contentShape(Rectangle()).clipped()
             .transformAnchorPreference(key: HubFileDropRegionKey.self, value: .bounds) { regions, anchor in
@@ -484,7 +487,7 @@ struct HubView: View {
             guard !Task.isCancelled, presentation.previewVisible, model.selectedWorkspaceID == id,
                   !HubWorkspaceDragState.isDragging, !HubFileDragState.isDragging else { return }
             workspaceRevealPointer = NSEvent.mouseLocation
-            withAnimation(interfaceMotion.feedback) { proxy.scrollTo(id) }
+            withAnimation(interfaceMotion.selection) { proxy.scrollTo(id) }
         }
     }
 
@@ -539,8 +542,7 @@ struct HubView: View {
                 Button { activateShortcut(.favorite) } label: {
                     HubWorkspaceShortcutLabel(symbol: model.selectedWorkspaceID == favorite.id ? "star.fill" : "star",
                                               selected: model.selectedWorkspaceID == favorite.id,
-                                              targeted: workspaceSpringLoader.target == favorite.id,
-                                              selectionNamespace: shortcutSelection)
+                                              targeted: workspaceSpringLoader.target == favorite.id)
                 }.buttonStyle(.plain)
                     .accessibilityLabel(L("收藏：\(model.displayName(for: favorite))"))
                     .help(L("\(model.displayName(for: favorite)) · 右键可隐藏快捷入口"))
@@ -582,8 +584,7 @@ struct HubView: View {
                 Button { activateShortcut(.recents) } label: {
                     HubWorkspaceShortcutLabel(symbol: "clock",
                                               selected: model.selectedWorkspaceID == recent.id,
-                                              targeted: workspaceSpringLoader.target == recent.id,
-                                              selectionNamespace: shortcutSelection)
+                                              targeted: workspaceSpringLoader.target == recent.id)
                 }.buttonStyle(.plain)
                     .accessibilityLabel(L("最近使用：\(model.displayName(for: recent))"))
                     .help(L("\(model.displayName(for: recent)) · 右键可隐藏快捷入口"))
@@ -599,7 +600,7 @@ struct HubView: View {
                 Button { activateShortcut(.staging) } label: {
                     HubWorkspaceShortcutLabel(symbol: model.stagedURLs.isEmpty ? "tray" : "tray.full.fill",
                                               count: model.stagedURLs.count, selected: model.isStagingWorkspace,
-                                              targeted: stagingDropTargeted, selectionNamespace: shortcutSelection)
+                                              targeted: stagingDropTargeted)
                 }.buttonStyle(.plain)
                     .accessibilityLabel(L("暂存区，\(model.stagedURLs.count) 个项目"))
                     .help(L("暂存区 · 拖入文件暂存引用，点击查看，右键快速转移"))
@@ -684,7 +685,7 @@ struct HubView: View {
             ScrollViewReader { proxy in
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: HubWorkspaceHeaderLayout.tabSpacing) {
-                        workspaceShortcutControls
+                        if !model.visibleShortcutItems.isEmpty { workspaceShortcutStrip }
                         workspaceActionControls
                     }.fixedSize()
                 }.frame(width: layout.width, height: HubWorkspaceShortcutLabel.height).clipped()
@@ -700,7 +701,7 @@ struct HubView: View {
             HStack(spacing: model.visibleShortcutItems.isEmpty ? 0 : HubWorkspaceHeaderLayout.tabSpacing) {
                 if !model.visibleShortcutItems.isEmpty {
                     ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: HubWorkspaceHeaderLayout.tabSpacing) { workspaceShortcutControls }.fixedSize()
+                        workspaceShortcutStrip
                     }.frame(width: layout.shortcutViewportWidth, height: HubWorkspaceShortcutLabel.height).clipped()
                         .modifier(HubShortcutViewport(items: model.visibleShortcutItems,
                             favoriteID: model.fixedFavoriteWorkspace?.id, recentID: model.fixedRecentWorkspace?.id))
@@ -708,6 +709,34 @@ struct HubView: View {
                 HStack(spacing: HubWorkspaceHeaderLayout.tabSpacing) { workspaceActionControls }.fixedSize()
             }.frame(width: layout.width, height: HubWorkspaceShortcutLabel.height)
         }
+    }
+
+    private var workspaceShortcutStrip: some View {
+        HStack(spacing: HubWorkspaceHeaderLayout.tabSpacing) { workspaceShortcutControls }
+            .animation(interfaceMotion.selection, value: model.selectedWorkspaceID)
+            .animation(nil, value: interfaceMotion.enabled)
+            .backgroundPreferenceValue(HubShortcutReorderRegionKey.self) { regions in
+                GeometryReader { geometry in
+                    let frame = selectedShortcutID.flatMap { regions.frames[$0] }.map { geometry[$0] }
+                    headerSelectionPlate(frame: frame, cornerRadius: 6)
+                }
+            }
+            .fixedSize()
+    }
+
+    private var selectedShortcutID: UUID? {
+        guard let selected = model.selectedWorkspaceID else { return nil }
+        if model.fixedFavoriteWorkspace?.id == selected { return HubShortcutItem.favorite.dragID }
+        if model.fixedRecentWorkspace?.id == selected { return HubShortcutItem.recents.dragID }
+        if model.isStagingWorkspace { return HubShortcutItem.staging.dragID }
+        return nil
+    }
+
+    private func headerSelectionPlate(frame: CGRect?, cornerRadius: CGFloat) -> some View {
+        HubSelectionPlate(selectionFrame: frame, cornerRadius: cornerRadius,
+            motion: HubInterfaceMotion(enabled: interfaceMotion.enabled && !presentation.windowResizing,
+                                       speed: model.settings.resolvedAnimationSpeed))
+            .allowsHitTesting(false).accessibilityHidden(true)
     }
 
     @ViewBuilder private var workspaceShortcutControls: some View {
@@ -793,16 +822,17 @@ struct HubView: View {
         HubFileDragContext(workspaceID: model.selectedWorkspaceID, directory: model.currentURL)
     }
 
-    private func workspaceTab(_ workspace: Workspace, selectionNamespace: Namespace.ID, maximumWidth: CGFloat? = nil) -> some View {
+    private func workspaceTab(_ workspace: Workspace, maximumWidth: CGFloat? = nil) -> some View {
         let iconOnly = workspace.iconOnly == true || workspace.name.isEmpty
         return Button { selectWorkspaceFromClick(workspace.id) } label: {
             HStack(spacing: 6) {
                 workspaceIcon(workspace).frame(width: 16, height: 16)
+                    .animation(interfaceMotion.feedback, value: model.selectedWorkspaceID)
+                    .animation(nil, value: interfaceMotion.enabled)
                 if workspace.iconOnly != true && !workspace.name.isEmpty { Text(model.displayName(for: workspace)).lineLimit(1).truncationMode(.tail) }
             }
             .frame(maxWidth: iconOnly ? nil : maximumWidth.map { max(24, $0 - 24) }, alignment: .leading)
             .padding(.horizontal, iconOnly ? (HubWorkspaceShortcutLabel.width - 16) / 2 : 12).padding(.vertical, 8)
-            .background(HubSelectionBackdrop(selected: model.selectedWorkspaceID == workspace.id, namespace: selectionNamespace, cornerRadius: iconOnly ? 6 : 8))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -1321,6 +1351,7 @@ struct HubView: View {
                         lightweight: presentation.defersFileRendering).opacity(entry.exists ? 1 : 0.4)
             fileName(entry, grid: true)
         }
+        .modifier(HubFileContentLift(distance: 6))
         .padding(.horizontal, 5).padding(.vertical, 9)
         .background(model.selectedIDs.contains(entry.url) ? Color.accentColor.opacity(0.20) : .clear, in: RoundedRectangle(cornerRadius: 8))
         .contentShape(Rectangle())
@@ -1366,6 +1397,7 @@ struct HubView: View {
             Text(model.isCloudPlaceholder(entry) ? L("仅在云端") : entry.kind).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1).frame(width: 80, alignment: .leading)
             Text(entry.isDirectory || model.isCloudPlaceholder(entry) ? "—" : ByteCountFormatter.string(fromByteCount: entry.size, countStyle: .file)).font(.system(size: 10)).foregroundStyle(.secondary).frame(width: 66, alignment: .trailing)
         }
+        .modifier(HubFileContentLift(distance: 3))
         .padding(.horizontal, 12).padding(.vertical, 5)
         .background(model.selectedIDs.contains(entry.url) ? Color.accentColor.opacity(0.20) : Color.primary.opacity(index.isMultiple(of: 2) ? 0 : 0.025), in: RoundedRectangle(cornerRadius: 5))
         .contentShape(Rectangle())
@@ -1461,7 +1493,8 @@ struct HubView: View {
             fileName(entry)
             Spacer()
             if entry.isDirectory && !entry.isPackage { Image(systemName: "chevron.right").font(.system(size: 8)).foregroundStyle(.secondary) }
-        }.padding(.horizontal, 9).padding(.vertical, 6)
+        }.modifier(HubFileContentLift(distance: 3))
+            .padding(.horizontal, 9).padding(.vertical, 6)
             .background(model.selectedIDs.contains(entry.url) ? Color.accentColor.opacity(0.20) : .clear, in: RoundedRectangle(cornerRadius: 5)).contentShape(Rectangle())
             .fileNameHoverArea(entry.url.lastPathComponent, enabled: renameEntry?.url != entry.url)
             .contextMenu { fileMenu(entry) }

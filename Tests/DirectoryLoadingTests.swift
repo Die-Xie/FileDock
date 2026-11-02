@@ -29,6 +29,7 @@ private final class BlockedRead: @unchecked Sendable {
         let slowWorkspace = fixture.addWorkspace(name: "Slow", mode: .folder, urls: [slow])!
         let healthyWorkspace = fixture.addWorkspace(name: "Healthy", mode: .folder, urls: [healthy])!
         fixture.selectWorkspace(slowWorkspace.id)
+        fixture.save() // Model restart must flush the debounced selected tab.
         let blocked = BlockedRead()
         let loader = HubDirectoryLoader(timeout: 0.12, maximumReads: 2) { request in
             precondition(!Thread.isMainThread, "Filesystem work must never run on the UI thread")

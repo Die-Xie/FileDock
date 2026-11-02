@@ -2,6 +2,13 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 
+private struct HubColorFilterPlateKey: PreferenceKey {
+    static var defaultValue: [Int: Anchor<CGRect>] = [:]
+    static func reduce(value: inout [Int: Anchor<CGRect>], nextValue: () -> [Int: Anchor<CGRect>]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+    }
+}
+
 /// A click following hover confirms the color. A deliberate second click can
 /// clear it without stationary hover immediately selecting it again.
 struct HubColorLabelFilterInput {
@@ -32,6 +39,8 @@ struct HubColorLabelFilterBar: View {
     var hoverEnabled = true
     var canHover: () -> Bool = { true }
     @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.hubInterfaceMotion) private var motion
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var hover = HubWorkspaceHoverController()
     @State private var input = HubColorLabelFilterInput()
     private static let hoverIDs = (0..<9).map { _ in UUID() }
@@ -42,16 +51,22 @@ struct HubColorLabelFilterBar: View {
                 Button { click(nil) } label: {
                     Text(L("全部")).font(.system(size: 10))
                         .frame(minWidth: 34, minHeight: 28)
-                        .background(selection == nil ? Color.primary.opacity(0.10) : .clear,
-                                    in: RoundedRectangle(cornerRadius: 5))
                         .contentShape(Rectangle())
                 }.buttonStyle(.plain).help(L("显示全部颜色标签"))
                     .accessibilityIdentifier("filedock.color-filter.all")
                     .onContinuousHover(coordinateSpace: CoordinateSpace.local) { updateHover($0, label: nil) }
+                    .anchorPreference(key: HubColorFilterPlateKey.self, value: .bounds) { [-1: $0] }
                 ForEach(HubFinderLabel.colors + [.none]) { label in
                     colorButton(label)
                 }
             }.fixedSize()
+                .backgroundPreferenceValue(HubColorFilterPlateKey.self) { anchors in
+                    GeometryReader { geometry in
+                        HubSelectionPlate(selectionFrame: anchors[selection?.rawValue ?? -1].map { geometry[$0] },
+                            cornerRadius: 5, motion: filterMotion)
+                            .allowsHitTesting(false).accessibilityHidden(true)
+                    }
+                }
             Menu {
                 Button(L("全部")) { onSelect(nil) }
                 ForEach(HubFinderLabel.colors + [.none]) { label in
@@ -75,12 +90,16 @@ struct HubColorLabelFilterBar: View {
             .onDisappear { hover.cancel() }
     }
 
+    private var filterMotion: HubInterfaceMotion {
+        HubInterfaceMotion(enabled: motion.enabled && !reduceMotion && isEnabled, speed: motion.speed)
+    }
+
     private func colorButton(_ label: HubFinderLabel) -> some View {
         let hint = nativeDropHint(label)
         return Button { click(label) } label: {
             colorDot(label)
                 .frame(width: 13, height: 13).frame(width: 28, height: 28)
-                .background(selection == label || hint != nil ? Color.primary.opacity(0.12) : .clear,
+                .background(hint != nil && selection != label ? Color.primary.opacity(0.12) : .clear,
                             in: RoundedRectangle(cornerRadius: 5))
                 .overlay(RoundedRectangle(cornerRadius: 5).stroke(hint == nil ? Color.clear : Color.accentColor, lineWidth: 1.5))
                 .contentShape(Rectangle())
@@ -93,6 +112,7 @@ struct HubColorLabelFilterBar: View {
                   : L("\(label.name)：悬停筛选，拖入文件设置标签"))
             .onContinuousHover(coordinateSpace: CoordinateSpace.local) { updateHover($0, label: label) }
             .anchorPreference(key: HubFileDropRegionKey.self, value: .bounds) { [.colorLabel(label.rawValue): $0] }
+            .anchorPreference(key: HubColorFilterPlateKey.self, value: .bounds) { [label.rawValue: $0] }
     }
 
     private func colorDot(_ label: HubFinderLabel) -> some View {
@@ -108,8 +128,10 @@ struct HubColorLabelFilterBar: View {
                 Image(systemName: "checkmark").font(.system(size: 8, weight: .bold))
                     .foregroundStyle(label == .none ? Color.primary :
                         [.yellow, .orange, .green].contains(label) ? Color.black.opacity(0.85) : .white)
+                    .transition(.opacity)
             }
-        }
+        }.animation(filterMotion.feedback, value: selection)
+            .animation(nil, value: filterMotion.enabled)
     }
 
     private func click(_ label: HubFinderLabel?) {

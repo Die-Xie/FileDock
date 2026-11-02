@@ -214,6 +214,7 @@ import Foundation
     @MainActor static func batches(storage: URL, workspace: Workspace, entries: [FileEntry]) throws {
         let seed = makeTestModel(storageURL: storage)
         seed.selectWorkspace(workspace.id)
+        seed.save()
         let loader = FileTypeBatchLoader()
         let model = HubModel(storageURL: storage, directoryLoader: loader)
         precondition(model.directoryLoading && model.entries.isEmpty)

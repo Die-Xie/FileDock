@@ -82,6 +82,8 @@ The following technical documents and most earlier release notes are currently i
 - [Code quality and performance review](docs/QUALITY_REVIEW.md)
 - [Release notes](docs/releases/)
 
+**1.36.2** refines continuous tab and file transitions, coalesces selection saves and reuses directory snapshots to reduce switching stalls. [Release notes](docs/releases/v1.36.2.md).
+
 **1.36.1** restores edge resizing and one-row tabs on narrow panels, fills type shortcuts from available types and improves menu return and post-drop selection. [Release notes](docs/releases/v1.36.1.md).
 
 **1.36.0** adds customizable file-type filters. The footer “…” menu offers every type in the current panel, with the item count shown separately. [Release notes](docs/releases/v1.36.0.md).

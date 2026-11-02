@@ -522,9 +522,14 @@ private struct HubDropUndoGroup {
     @Published var shortcutRegistrationErrors: [String: String] = [:]
     @Published var workspaces: [Workspace] = [] { didSet { invalidateEntryOrder(); cachedStagedURLs = nil; persistIfReady() } }
     @Published var selectedWorkspaceID: UUID? { didSet {
-        if selectedWorkspaceID != oldValue { navigationGeneration &+= 1; setColorLabelFilter(nil); setFileTypeFilter(nil) }
-        persistIfReady()
+        guard selectedWorkspaceID != oldValue else { return }
+        navigationGeneration &+= 1; contentNeedsCommit = true
+        setColorLabelFilter(nil); setFileTypeFilter(nil)
+        if deferringWorkspaceSelectionSave { scheduleWorkspaceSelectionSave() }
+        else { persistIfReady() }
     } }
+    @Published private(set) var contentRevision: UInt64 = 0
+    @Published private(set) var filterRevision: UInt64 = 0
     @Published var entries: [FileEntry] = [] { didSet { invalidateEntryOrder(); cachedFolderDropKinds = nil; cachedAvailableFileTypes = nil } }
     @Published var selectedIDs = Set<URL>() { didSet { if selectedIDs != oldValue { selectionGeneration &+= 1 } } }
     @Published var search = "" { didSet { if search != oldValue { selectedIDs = [] } } }
@@ -557,6 +562,7 @@ private struct HubDropUndoGroup {
     @Published var errorMessage: String?
     @Published private(set) var currentURL: URL? { didSet {
         invalidateEntryOrder()
+        if currentURL?.standardizedFileURL.path != oldValue?.standardizedFileURL.path { contentNeedsCommit = true }
         if currentURL != oldValue { navigationGeneration &+= 1; setColorLabelFilter(nil); setFileTypeFilter(nil) }
     } }
     @Published private(set) var history: [URL] = []
@@ -577,6 +583,9 @@ private struct HubDropUndoGroup {
     private var readyToSave = false
     private var persistenceDepth = 0
     private var persistencePending = false
+    private var deferringWorkspaceSelectionSave = false
+    private var pendingWorkspaceSelectionSave: DispatchWorkItem?
+    private var workspaceSelectionSaveGeneration: UInt = 0
     private var deferringInteractiveResize = false
     private var transferScopeURLs: [URL] = []
     private var dropScopeURLs: [UUID: [URL]] = [:]
@@ -598,13 +607,20 @@ private struct HubDropUndoGroup {
     private var refreshGeneration = 0
     private var navigationGeneration: UInt = 0
     private var selectionGeneration: UInt = 0
+    private var contentNeedsCommit = true
     private let directoryLoader: HubDirectoryLoading
     private let folderWorkspacePreparer: HubFolderWorkspacePreparing
     private var pendingFolderWorkspaceDrops = Set<UUID>()
     private var cachedFolderDropKinds: [URL: Bool]?
     private var activeDirectoryLoad: UUID?
     private var displayedDirectoryContext: RefreshContext?
-    private let directorySnapshots = HubDirectorySnapshotCache<DirectorySnapshotKey>()
+    private let directorySnapshots = HubDirectorySnapshotCache<DirectorySnapshotKey>(keyByteCost: { key in
+        // Virtual workspace keys retain their reference membership as well as
+        // the snapshot. Include those paths in the same finite memory budget.
+        key.references.reduce(MemoryLayout<DirectorySnapshotKey>.stride + (key.directory?.absoluteString.utf8.count ?? 0)) {
+            $0 + MemoryLayout<String>.stride + $1.utf8.count
+        }
+    })
     private struct DirectorySnapshotKey: Hashable {
         var workspaceID: UUID?
         var directory: URL?
@@ -707,6 +723,7 @@ private struct HubDropUndoGroup {
 
     deinit {
         refreshTimer?.invalidate()
+        pendingWorkspaceSelectionSave?.cancel()
 
         for url in activeScopes { url.stopAccessingSecurityScopedResource() }
     }
@@ -895,6 +912,7 @@ private struct HubDropUndoGroup {
         colorLabelFilter = next
         cachedVisibleEntries = nil; cachedVisibleGroups = nil
         selectedIDs = []
+        announceFilterChange()
     }
 
     func setFileTypeFilter(_ identifier: String?) {
@@ -903,6 +921,14 @@ private struct HubDropUndoGroup {
         fileTypeFilter = next
         cachedVisibleEntries = nil; cachedVisibleGroups = nil
         selectedIDs = []
+        announceFilterChange()
+    }
+
+    private func announceFilterChange() {
+        // Browsing resets filters before the new location is ready. Only a
+        // committed current location can animate a subsequent filtering change.
+        guard !contentNeedsCommit, selectedWorkspace != nil else { return }
+        filterRevision &+= 1
     }
 
     func sortByColumn(_ key: SortKey) {
@@ -948,7 +974,9 @@ private struct HubDropUndoGroup {
 
     func selectWorkspace(_ id: UUID) {
         beginPersistenceTransaction()
-        defer { endPersistenceTransaction() }
+        let wasDeferringSelection = deferringWorkspaceSelectionSave
+        deferringWorkspaceSelectionSave = true
+        defer { deferringWorkspaceSelectionSave = wasDeferringSelection; endPersistenceTransaction() }
         guard let workspace = availableWorkspaces.first(where: { $0.id == id }) else { return }
         stopRecentFiles()
         selectedWorkspaceID = id
@@ -1756,10 +1784,8 @@ private struct HubDropUndoGroup {
             model.canonicalDirectoryPath = snapshot.canonicalDirectoryPath
             model.displayedDirectoryContext = model.refreshContext
             model.publishEntries(snapshot.entries, complete: complete)
-            if let order = snapshot.order, order == model.entryOrder(directory: model.currentURL), let ordered = snapshot.orderedEntries {
-                model.cachedOrderedEntries = ordered
-                model.cachedVisibleEntries = nil
-            }
+            model.reusePreparedOrder(snapshot)
+            model.announceFirstContent(snapshot.entries, complete: complete)
         }
         directoryLoader.load(id: id, request: orderedRequest, progress: { [weak self] snapshot in
             guard let self, acceptsResult(self), showPartial else { return }
@@ -1782,6 +1808,17 @@ private struct HubDropUndoGroup {
             let repeatRefresh = self.backgroundRefreshRequested
             self.backgroundRefreshRequested = false
             if repeatRefresh && self.directoryLoadMessage == nil { self.refreshInBackground() }
+        }
+    }
+
+    private func announceFirstContent(_ next: [FileEntry], complete: Bool) {
+        if selectedWorkspaceID != nil, contentNeedsCommit,
+           !next.isEmpty || (complete && (!isRecentsRoot || !recentFilesLoading)) {
+            contentNeedsCommit = false
+            // A synchronous UI subscriber must see the complete new snapshot,
+            // including its prepared ordering. No run-loop yield separates
+            // this signal from the data commit, so it still seeds the next render.
+            contentRevision &+= 1
         }
     }
 
@@ -1833,6 +1870,8 @@ private struct HubDropUndoGroup {
                 canonicalDirectoryPath = cached.canonicalDirectoryPath
                 displayedDirectoryContext = context
                 publishEntries(cached.entries)
+                reusePreparedOrder(cached)
+                announceFirstContent(cached.entries, complete: true)
             } else {
                 entries = []; canonicalDirectoryPath = nil; displayedDirectoryContext = nil
             }
@@ -1846,6 +1885,13 @@ private struct HubDropUndoGroup {
     private func refreshAfterDrop(_ request: DropSelectionRequest?) {
         if let request, request.context == dropSelectionContext { refresh(selectingDrop: request) }
         else { refreshInBackground() }
+    }
+
+    private func reusePreparedOrder(_ snapshot: HubDirectorySnapshot) {
+        guard let order = snapshot.order, order == entryOrder(directory: currentURL),
+              let ordered = snapshot.orderedEntries else { return }
+        cachedOrderedEntries = ordered
+        cachedVisibleEntries = nil
     }
 
     private func startRecentFiles() {
@@ -2551,9 +2597,30 @@ private struct HubDropUndoGroup {
 
     // Explicit save (including application termination) flushes a live resize.
     func save() { persistIfReady(force: true) }
+
+    private func scheduleWorkspaceSelectionSave() {
+        guard readyToSave else { return }
+        cancelWorkspaceSelectionSave()
+        let generation = workspaceSelectionSaveGeneration
+        let task = DispatchWorkItem { [weak self] in
+            guard let self, self.workspaceSelectionSaveGeneration == generation else { return }
+            self.pendingWorkspaceSelectionSave = nil
+            self.persistIfReady()
+        }
+        pendingWorkspaceSelectionSave = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: task)
+    }
+
+    private func cancelWorkspaceSelectionSave() {
+        pendingWorkspaceSelectionSave?.cancel()
+        pendingWorkspaceSelectionSave = nil
+        workspaceSelectionSaveGeneration &+= 1
+    }
+
     private func persistIfReady(force: Bool = false) {
         guard readyToSave else { return }
         guard force || persistenceDepth == 0 else { persistencePending = true; return }
+        cancelWorkspaceSelectionSave()
         persistencePending = false
         pruneUnusedBookmarks()
         do {

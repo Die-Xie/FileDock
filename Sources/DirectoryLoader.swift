@@ -284,27 +284,87 @@ extension HubDirectoryLoading {
 /// Small, short-lived workspace cache for immediate tab revisits. Fresh reads
 /// still run in the background; recent-file queries are never cached here.
 @MainActor final class HubDirectorySnapshotCache<Key: Hashable> {
-    private struct Value { var snapshot: HubDirectorySnapshot; var date: TimeInterval }
+    private struct Value { var snapshot: HubDirectorySnapshot; var date: TimeInterval; var bytes: Int }
     private var values: [Key: Value] = [:]
     private var order: [Key] = []
     private let capacity: Int
     private let maximumEntries: Int
+    private let maximumTotalEntries: Int
+    private let maximumEstimatedBytes: Int
+    private let keyByteCost: (Key) -> Int
     private let lifetime: TimeInterval
-    init(capacity: Int = 4, maximumEntries: Int = 1000, lifetime: TimeInterval = 15) {
+    private(set) var retainedEntryCount = 0
+    private(set) var estimatedByteCount = 0
+    var snapshotCount: Int { values.count }
+    init(capacity: Int = 4, maximumEntries: Int = 30000, maximumTotalEntries: Int = 30000,
+         maximumEstimatedBytes: Int = 16 * 1024 * 1024, lifetime: TimeInterval = 15,
+         keyByteCost: @escaping (Key) -> Int = { _ in MemoryLayout<Key>.stride }) {
         self.capacity = max(1, capacity); self.maximumEntries = max(1, maximumEntries)
-        self.lifetime = max(0, lifetime)
+        self.maximumTotalEntries = max(0, maximumTotalEntries)
+        self.maximumEstimatedBytes = max(0, maximumEstimatedBytes)
+        self.lifetime = lifetime.isFinite ? max(0, lifetime) : 15
+        self.keyByteCost = keyByteCost
     }
     func insert(_ snapshot: HubDirectorySnapshot, for key: Key, now: TimeInterval = ProcessInfo.processInfo.systemUptime) {
-        guard snapshot.entries.count <= maximumEntries else { values.removeValue(forKey: key); order.removeAll { $0 == key }; return }
-        values[key] = Value(snapshot: snapshot, date: now)
-        order.removeAll { $0 == key }; order.append(key)
-        while order.count > capacity { values.removeValue(forKey: order.removeFirst()) }
+        remove(key)
+        guard now.isFinite, now >= 0, snapshot.entries.count <= maximumEntries,
+              snapshot.entries.count <= maximumTotalEntries else { return }
+        let bytes = Self.add(Self.estimatedBytes(snapshot), max(0, keyByteCost(key)))
+        guard bytes <= maximumEstimatedBytes else { return }
+        for expired in order.filter({ key in
+            guard let value = values[key] else { return true }
+            return now < value.date || now - value.date > lifetime
+        }) { remove(expired) }
+        while !order.isEmpty && (order.count >= capacity ||
+            retainedEntryCount > maximumTotalEntries - snapshot.entries.count ||
+            estimatedByteCount > maximumEstimatedBytes - bytes) {
+            remove(order[0])
+        }
+        values[key] = Value(snapshot: snapshot, date: now, bytes: bytes)
+        order.append(key)
+        retainedEntryCount += snapshot.entries.count; estimatedByteCount += bytes
     }
     func snapshot(for key: Key, now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> HubDirectorySnapshot? {
         guard let value = values[key] else { return nil }
-        guard now - value.date <= lifetime else { values.removeValue(forKey: key); order.removeAll { $0 == key }; return nil }
+        guard now.isFinite, now >= value.date, now - value.date <= lifetime else { remove(key); return nil }
         order.removeAll { $0 == key }; order.append(key)
         return value.snapshot
     }
-    func removeAll() { values.removeAll(); order.removeAll() }
+    private func remove(_ key: Key) {
+        if let value = values.removeValue(forKey: key) {
+            retainedEntryCount -= value.snapshot.entries.count; estimatedByteCount -= value.bytes
+        }
+        order.removeAll { $0 == key }
+    }
+    func removeAll() {
+        values.removeAll(); order.removeAll(); retainedEntryCount = 0; estimatedByteCount = 0
+    }
+
+    private static func add(_ lhs: Int, _ rhs: Int) -> Int {
+        let (sum, overflow) = lhs.addingReportingOverflow(rhs)
+        return overflow ? .max : sum
+    }
+    private static func estimatedBytes(_ snapshot: HubDirectorySnapshot) -> Int {
+        // Both arrays retain FileEntry value storage; strings, URLs and Data
+        // are shared by the prepared ordering. Account for their payload once.
+        var bytes = 256
+        for count in [snapshot.entries.count, snapshot.orderedEntries?.count ?? 0] {
+            let (storage, overflow) = count.multipliedReportingOverflow(by: MemoryLayout<FileEntry>.stride)
+            bytes = add(bytes, overflow ? .max : storage)
+        }
+        bytes = add(bytes, snapshot.canonicalDirectoryPath?.utf8.count ?? 0)
+        for entry in snapshot.entries {
+            bytes = add(bytes, 128) // URL/object/collection overhead estimate.
+            bytes = add(bytes, entry.url.absoluteString.utf8.count)
+            bytes = add(bytes, entry.name.utf8.count)
+            bytes = add(bytes, entry.kind.utf8.count)
+            bytes = add(bytes, entry.folderAppearance.customization.count)
+            for tag in entry.tagNames { bytes = add(bytes, add(24, tag.utf8.count)) }
+        }
+        for (path, names) in snapshot.order?.directoryOrders ?? [:] {
+            bytes = add(bytes, add(64, path.utf8.count))
+            for name in names { bytes = add(bytes, add(24, name.utf8.count)) }
+        }
+        return bytes
+    }
 }

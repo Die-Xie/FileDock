@@ -1,5 +1,15 @@
 import SwiftUI
 
+private enum HubFileTypePlateTarget: Hashable {
+    case all, type(String), clear, more
+}
+private struct HubFileTypePlateKey: PreferenceKey {
+    static var defaultValue: [HubFileTypePlateTarget: Anchor<CGRect>] = [:]
+    static func reduce(value: inout [HubFileTypePlateTarget: Anchor<CGRect>], nextValue: () -> [HubFileTypePlateTarget: Anchor<CGRect>]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+    }
+}
+
 /// Presentation-only controls. Type options come from the loaded snapshot and
 /// never inspect files or participate in native drop routing.
 struct HubFileTypeFilterBar: View {
@@ -10,6 +20,9 @@ struct HubFileTypeFilterBar: View {
     let onSelect: (String?) -> Void
     let onUpdateShortcuts: ([String]) -> Void
     @State private var showsEditor = false
+    @Environment(\.hubInterfaceMotion) private var motion
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.isEnabled) private var isEnabled
 
     var body: some View {
         let displayedShortcuts = HubFileType.displayedShortcuts(preferred: shortcuts, available: available)
@@ -18,16 +31,30 @@ struct HubFileTypeFilterBar: View {
                 allButton
                 ForEach(displayedShortcuts, id: \.self) { typeButton($0) }
                 moreMenu(markSelected: selection.map { !displayedShortcuts.contains($0) } ?? false)
+            }.backgroundPreferenceValue(HubFileTypePlateKey.self) { anchors in
+                selectionPlate(anchors: anchors, target: selection.map {
+                    displayedShortcuts.contains($0) ? .type($0) : .more
+                } ?? .all)
             }.modifier(HubFileTypeSegmentContainer()).fixedSize()
             HStack(spacing: 1) {
                 if let selection { compactClearButton(selection) } else { allButton }
                 moreMenu(markSelected: false)
+            }.backgroundPreferenceValue(HubFileTypePlateKey.self) { anchors in
+                selectionPlate(anchors: anchors, target: selection == nil ? .all : .clear)
             }.modifier(HubFileTypeSegmentContainer()).fixedSize()
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(L("文件类型筛选"))
         .sheet(isPresented: $showsEditor) {
             HubFileTypeShortcutEditor(shortcuts: shortcuts, onSave: onUpdateShortcuts)
+        }
+    }
+
+    private func selectionPlate(anchors: [HubFileTypePlateTarget: Anchor<CGRect>], target: HubFileTypePlateTarget) -> some View {
+        GeometryReader { geometry in
+            HubSelectionPlate(selectionFrame: anchors[target].map { geometry[$0] }, cornerRadius: 5,
+                motion: HubInterfaceMotion(enabled: motion.enabled && !reduceMotion && isEnabled, speed: motion.speed))
+                .allowsHitTesting(false).accessibilityHidden(true)
         }
     }
 
@@ -41,8 +68,6 @@ struct HubFileTypeFilterBar: View {
             Text(L("全部")).font(.system(size: 10))
                 .foregroundStyle(selection == nil ? Color.primary : Color.secondary)
                 .padding(.horizontal, 7).frame(minWidth: 28, minHeight: 24)
-                .background(selection == nil ? Color.primary.opacity(0.10) : .clear,
-                            in: RoundedRectangle(cornerRadius: 5))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -50,6 +75,7 @@ struct HubFileTypeFilterBar: View {
         .accessibilityAddTraits(selection == nil ? .isSelected : [])
         .accessibilityLabel(L("全部类型"))
         .help(L("清除类型筛选"))
+        .anchorPreference(key: HubFileTypePlateKey.self, value: .bounds) { [.all: $0] }
     }
 
     private func compactClearButton(_ type: String) -> some View {
@@ -61,13 +87,13 @@ struct HubFileTypeFilterBar: View {
             }
             .font(.system(size: 10)).foregroundStyle(Color.primary)
             .padding(.horizontal, 7).frame(minWidth: 28, minHeight: 24)
-            .background(Color.primary.opacity(0.10), in: RoundedRectangle(cornerRadius: 5))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("filedock.type-filter.clear")
         .accessibilityLabel(L("清除类型筛选"))
         .help(L("筛选：\(HubFileType.title(for: type))") + "\n" + L("清除类型筛选"))
+        .anchorPreference(key: HubFileTypePlateKey.self, value: .bounds) { [.clear: $0] }
     }
 
     private func typeButton(_ type: String) -> some View {
@@ -80,8 +106,6 @@ struct HubFileTypeFilterBar: View {
                 .foregroundStyle(selected ? Color.primary : Color.secondary)
                 .frame(maxWidth: 90)
                 .padding(.horizontal, 7).frame(minWidth: 28, minHeight: 24)
-                .background(selected ? Color.primary.opacity(0.10) : .clear,
-                            in: RoundedRectangle(cornerRadius: 5))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -89,6 +113,7 @@ struct HubFileTypeFilterBar: View {
         .accessibilityAddTraits(selected ? .isSelected : [])
         .accessibilityLabel(HubFileType.title(for: type))
         .help(L("再次点按已选类型可清除类型筛选。"))
+        .anchorPreference(key: HubFileTypePlateKey.self, value: .bounds) { [.type(type): $0] }
     }
 
     private func moreMenu(markSelected: Bool) -> some View {
@@ -117,11 +142,10 @@ struct HubFileTypeFilterBar: View {
         }
         .menuStyle(.borderlessButton).menuIndicator(.hidden)
         .frame(width: 23, height: 24)
-        .background(markSelected ? Color.primary.opacity(0.10) : .clear,
-                    in: RoundedRectangle(cornerRadius: 5))
         .accessibilityIdentifier("filedock.type-filter.more")
         .accessibilityLabel(L("更多文件类型"))
         .help(L("筛选：\(selection.map(HubFileType.title(for:)) ?? L("全部类型"))") + "\n" + L("选择当前面板中的类型，或自定义快捷类型。"))
+        .anchorPreference(key: HubFileTypePlateKey.self, value: .bounds) { [.more: $0] }
     }
 }
 
