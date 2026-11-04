@@ -8,7 +8,10 @@ enum HubDropUndo {
     enum Transfer: Sendable { case copy, move, metadataOnly }
     struct CopySnapshot: Sendable { fileprivate let digest: Data }
     /// nil data means the xattr was absent, which differs from empty data.
-    struct TagSnapshot: Equatable, Sendable { fileprivate let data: Data? }
+    struct TagSnapshot: Equatable, Sendable {
+        fileprivate let data: Data?
+        var estimatedBytes: Int { data?.count ?? 0 }
+    }
     struct Record: Sendable {
         let source: URL?
         let destination: URL
@@ -21,6 +24,12 @@ enum HubDropUndo {
         fileprivate let appliedTags: [String]?
         fileprivate let identity: Identity
         fileprivate let fingerprint: Data?
+        var estimatedBytes: Int {
+            1024 + destination.path.utf8.count + (source?.path.utf8.count ?? 0) +
+            (originalTagSnapshot?.data?.count ?? 0) + (appliedTagSnapshot?.data?.count ?? 0) +
+            (originalTags ?? []).reduce(0) { $0 + $1.utf8.count + 32 } +
+            (appliedTags ?? []).reduce(0) { $0 + $1.utf8.count + 32 }
+        }
     }
     struct Result: Sendable {
         var restored: [URL] = []
@@ -28,6 +37,9 @@ enum HubDropUndo {
         var relocations: [(URL, URL)] = []
         var failures: [String] = []
         var remaining: [Record] = []
+        var inverse: [HubFileOperationUndo.Record] = []
+        /// Redo admission must not make a previously safe strict undo fail.
+        var inverseUnavailable = 0
     }
     fileprivate struct Identity: Equatable, Sendable { let device: UInt64; let inode: UInt64 }
     enum Failure: LocalizedError {
@@ -89,10 +101,8 @@ enum HubDropUndo {
                       appliedTags: currentTags, identity: identity, fingerprint: digest)
     }
 
-    static func undo(_ records: [Record], trash: (URL) throws -> Void = { url in
-        var resulting: NSURL?
-        try FileManager.default.trashItem(at: url, resultingItemURL: &resulting)
-    }) -> Result {
+    static func undo(_ records: [Record], trash: ((URL) throws -> Void)? = nil,
+                     recoverableTrash: ((URL) throws -> URL)? = nil) -> Result {
         var result = Result()
         // Reverse order makes repeated operations on a common path predictable.
         for record in records.reversed() {
@@ -106,12 +116,26 @@ enum HubDropUndo {
                     guard (values.labelNumber ?? 0) == applied, (values.tagNames ?? []).sorted() == record.appliedTags,
                           try captureTags(record.destination) == record.appliedTagSnapshot else { throw Failure.labelChanged }
                 }
+                // Only the small native metadata snapshot is needed for redo;
+                // all original strict fingerprint/tag checks above stay intact.
+                let appliedMetadata = record.appliedLabel != nil && record.transfer != .copy
+                    ? try? HubFileOperationUndo.captureMetadata(record.destination) : nil
                 guard try identity(record.destination) == record.identity else { throw Failure.changed }
                 switch record.transfer {
                 case .copy:
-                    try trash(record.destination)
+                    let location: URL?
+                    if let recoverableTrash { location = try recoverableTrash(record.destination) }
+                    else if let trash { try trash(record.destination); location = nil }
+                    else {
+                        var resulting: NSURL?
+                        try FileManager.default.trashItem(at: record.destination, resultingItemURL: &resulting)
+                        location = resulting as URL?
+                    }
                     mutationStarted = true
                     result.restored.append(record.destination)
+                    if let location, let inverse = try? HubFileOperationUndo.moved(from: record.destination, to: location) {
+                        result.inverse.append(inverse)
+                    } else { result.inverseUnavailable += 1 }
                 case .move:
                     guard let source = record.source, source != record.destination else { throw Failure.unsafe }
                     guard !FileManager.default.fileExists(atPath: source.path) else { throw Failure.occupied }
@@ -123,11 +147,30 @@ enum HubDropUndo {
                         try restoreLabel(label, tags: record.originalTagSnapshot, url: source)
                     }
                     result.restored.append(source)
+                    do {
+                        var inverse = [try HubFileOperationUndo.moved(from: record.destination, to: source)]
+                        if record.originalLabel != nil {
+                            guard let appliedMetadata else { throw Failure.unsafe }
+                            if let metadata = try HubFileOperationUndo.restoringMetadata(snapshot: appliedMetadata, to: source) {
+                                // apply() reverses this array: set the applied
+                                // label at the restored source, then move it.
+                                inverse.append(metadata)
+                            }
+                        }
+                        result.inverse += inverse
+                    } catch { result.inverseUnavailable += 1 }
                 case .metadataOnly:
                     guard let label = record.originalLabel else { throw Failure.unsafe }
                     mutationStarted = true
                     try restoreLabel(label, tags: record.originalTagSnapshot, url: record.destination)
                     result.restored.append(record.destination)
+                    if let appliedMetadata {
+                        do {
+                            if let inverse = try HubFileOperationUndo.restoringMetadata(snapshot: appliedMetadata, to: record.destination) {
+                                result.inverse.append(inverse)
+                            }
+                        } catch { result.inverseUnavailable += 1 }
+                    } else { result.inverseUnavailable += 1 }
                 }
             } catch {
                 result.failures.append("\(record.destination.lastPathComponent)：\(error.localizedDescription)")

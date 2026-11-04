@@ -106,8 +106,9 @@ private final class FolderReadGate: @unchecked Sendable {
         precondition(model.canOfferFolderWorkspaceDrop([root.appendingPathComponent("not-read-during-hover")]),
                      "Hover checks must not access metadata or reject unknown external URL kinds")
         try await delayedDrops(root: root, folder: c, left: left, right: right)
+        try await ramOnlyBookmarkAdmission(root: root, folder: c)
         try await stalledReads(folder: c)
-        print("PASS: real folder-tab batches, exact insertion/order/selection, deduplication, one-write persistence/restart, original SVG/folders untouched, atomic mixed rejection, URL admission, cached hover hints, stale/duplicate callbacks and timeout worker bounds")
+        print("PASS: real folder-tab batches, exact insertion/order/selection, deduplication, one-write persistence/restart, original SVG/folders untouched, atomic mixed rejection, URL admission, cached hover hints, stale/duplicate callbacks, RAM-only undo bookmark admission and timeout worker bounds")
     }
 
     @MainActor private static func delayedDrops(root: URL, folder: URL, left: Workspace, right: Workspace) async throws {
@@ -148,6 +149,72 @@ private final class FolderReadGate: @unchecked Sendable {
         let third = try await Task.detached { try HubFolderWorkspacePreparer.readFolders([folder], cancellation: HubFolderWorkspaceCancellation()) }.value
         deferred.completion?(.success(third))
         precondition(model.workspaces == filled && model.fileOperationsInProgress == 0)
+    }
+
+    @MainActor private static func ramOnlyBookmarkAdmission(root: URL, folder: URL) async throws {
+        let storage = root.appendingPathComponent("ram-bookmark-admission.json")
+        let oldFile = root.appendingPathComponent("old-reference.txt")
+        try Data("original file remains untouched".utf8).write(to: oldFile)
+        let otherFile = root.appendingPathComponent("other-reference.txt")
+        try Data("other reference remains untouched".utf8).write(to: otherFile)
+        let deferred = DeferredFolderDrop()
+        let model = HubModel(storageURL: storage, directoryLoader: EmptyFolderDropLoader(), folderWorkspacePreparer: deferred)
+        let reference = Workspace(name: "Old Reference", mode: .references, referencePaths: [oldFile.path, otherFile.path])
+        model.settings.favoriteShortcutEnabled = false
+        model.settings.stagingEnabled = false
+        model.workspaces = [reference]
+        model.selectWorkspace(reference.id)
+        model.save()
+        var imported = try JSONSerialization.jsonObject(with: Data(contentsOf: storage)) as! [String: Any]
+        // Each fake opaque bookmark is 6 MiB (8 MiB after JSON base64). It
+        // deliberately cannot resolve; this is a size/admission fixture, not
+        // a permission grant or an attempt to access another file.
+        let opaqueBookmark = Data(repeating: 0, count: 6 * 1024 * 1024)
+        imported["bookmarks"] = [oldFile.path: opaqueBookmark.base64EncodedString()]
+        let importedData = try JSONSerialization.data(withJSONObject: imported)
+        precondition(importedData.count < 16 * 1024 * 1024)
+        try model.importConfiguration(data: importedData)
+        model.selectWorkspace(reference.id)
+        model.removeReferences([oldFile])
+        precondition(model.canUndoFileDrop && model.workspaces.first { $0.id == reference.id }!.referencePaths == [otherFile.path],
+                     "Removing the reference keeps its inverse and authorization only in RAM")
+        let emptied = try JSONSerialization.jsonObject(with: Data(contentsOf: storage)) as! [String: Any]
+        precondition((emptied["bookmarks"] as! [String: Any])[oldFile.path] == nil,
+                     "An undo-only bookmark cannot be serialized after its last persistent reference was removed")
+        precondition(model.undoLastFileDrop())
+        try await wait { model.fileOperationsInProgress == 0 }
+        let restored = try JSONSerialization.jsonObject(with: Data(contentsOf: storage)) as! [String: Any]
+        precondition((restored["bookmarks"] as! [String: String])[oldFile.path] == opaqueBookmark.base64EncodedString(),
+                     "Reference removal must append its inverse before pruning the last live authorization")
+        precondition(model.redoLastFileOperation())
+        try await wait { model.fileOperationsInProgress == 0 }
+        precondition(model.errorMessage == nil)
+        let countBefore = model.workspaces.count
+        precondition(model.addFolderWorkspaces([folder], before: nil))
+        let prepared = HubPreparedFolderWorkspaces(folders: [.init(url: folder, name: "New Folder", bookmark: opaqueBookmark)],
+                                                  scopes: HubFolderWorkspaceScopes([]))
+        deferred.completion?(.success(prepared))
+        precondition(model.fileOperationsInProgress == 0 && model.errorMessage == nil,
+                     "RAM-only undo bookmarks must not count toward a folder tab's persistent configuration admission")
+        precondition(model.workspaces.count == countBefore + 1 && model.workspaces.contains { $0.rootPath == folder.path })
+        let saved = try Data(contentsOf: storage)
+        precondition(saved.count < 16 * 1024 * 1024)
+        let state = try JSONSerialization.jsonObject(with: saved) as! [String: Any]
+        let bookmarks = state["bookmarks"] as! [String: String]
+        precondition(bookmarks[oldFile.path] == nil && bookmarks[folder.path] == opaqueBookmark.base64EncodedString(),
+                     "Only the new persistent bookmark may be serialized; old undo authorization remains RAM-only")
+        precondition(model.canUndoFileDrop, "Creating another tab cannot discard the reference removal history")
+        let newWorkspace = model.workspaces.first { $0.rootPath == folder.path }!
+        model.removeWorkspace(newWorkspace.id)
+        model.selectWorkspace(reference.id)
+        precondition(model.undoLastFileDrop())
+        try await wait { model.fileOperationsInProgress == 0 }
+        precondition(model.errorMessage == nil)
+        let undone = try JSONSerialization.jsonObject(with: Data(contentsOf: storage)) as! [String: Any]
+        precondition((undone["bookmarks"] as! [String: String])[oldFile.path] == opaqueBookmark.base64EncodedString(),
+                     "Admission must preserve the RAM authorization so reference undo can serialize its original bytes again")
+        let originalBytes = try Data(contentsOf: oldFile)
+        precondition(originalBytes == Data("original file remains untouched".utf8))
     }
 
     @MainActor private static func stalledReads(folder: URL) async throws {

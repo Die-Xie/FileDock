@@ -413,6 +413,8 @@ enum HubLocalizationCatalog {
         "搜索当前文件夹": "Search Current Folder",
         "搜索最近使用": "Search Recents",
         "撤销": "Undo",
+        "重做": "Redo",
+        "本次操作已撤销，但无法安全重做。": "The operation was undone, but cannot be redone safely.",
         "播放{0}": "Play {0}",
         "播放器": "Player",
         "播放器选择、连接与授权": "Player selection, connection, and permissions",

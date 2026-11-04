@@ -37,10 +37,15 @@ final class HubPanel: NSPanel {
         guard canHandleFileClipboard else { return }
         _ = clipboardModel?.undoLastFileDrop()
     }
+    @objc func redo(_ sender: Any?) {
+        guard canHandleFileClipboard else { return }
+        _ = clipboardModel?.redoLastFileOperation()
+    }
     override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
         if item.action == #selector(copy(_:)) { return canHandleFileClipboard && clipboardModel?.selectedURLs.isEmpty == false }
         if item.action == #selector(paste(_:)) { return canHandleFileClipboard && clipboardModel?.canPasteFiles == true }
         if item.action == #selector(undo(_:)) { return canHandleFileClipboard && clipboardModel?.canUndoFileDrop == true }
+        if item.action == #selector(redo(_:)) { return canHandleFileClipboard && clipboardModel?.canRedoFileOperation == true }
         return super.validateUserInterfaceItem(item)
     }
     override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool { true }
@@ -268,6 +273,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
                                      (L("粘贴"), "paste:", "v"), (L("全选"), "selectAll:", "a")] {
             editMenu.addItem(withTitle: title, action: Selector(action), keyEquivalent: key)
         }
+        let redoItem = NSMenuItem(title: L("重做"), action: #selector(HubPanel.redo(_:)), keyEquivalent: "z")
+        redoItem.keyEquivalentModifierMask = [.command, .shift]
+        editMenu.insertItem(redoItem, at: 1)
         editItem.submenu = editMenu
         menuBar.addItem(editItem)
         NSApp.mainMenu = menuBar
@@ -525,6 +533,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
         if event.window === panel, event.keyCode == UInt16(kVK_ANSI_Z),
            flags.intersection([.command, .control, .option, .shift]) == .command {
             return model.undoLastFileDrop()
+        }
+        if event.window === panel, event.keyCode == UInt16(kVK_ANSI_Z),
+           flags.intersection([.command, .control, .option, .shift]) == [.command, .shift] {
+            return model.redoLastFileOperation()
         }
         if event.keyCode == UInt16(kVK_Escape) { hidePanel(); return true }
         return false

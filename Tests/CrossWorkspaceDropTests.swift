@@ -183,7 +183,14 @@ import Foundation
         try await wait { labelModel.fileOperationsInProgress == 0 }
         labelModel.performFinderAction(.label(6), urls: [firstCopy])
         try await wait { labelModel.fileOperationsInProgress == 0 }
-        precondition(!labelModel.undoLastFileDrop(), "A later ordinary file action invalidates the stale drop journal")
+        precondition(labelModel.undoLastFileDrop(), "The later Finder label command must have its own undo step")
+        try await wait { labelModel.fileOperationsInProgress == 0 }
+        precondition(FileEntry(url: firstCopy).labelNumber == HubFinderLabel.green.rawValue,
+                     "Undo first restores the state before the later Finder command")
+        precondition(labelModel.undoLastFileDrop(), "A later ordinary file action cannot erase the earlier color-drop history")
+        try await wait { labelModel.fileOperationsInProgress == 0 }
+        precondition(FileEntry(url: firstCopy).labelNumber == 4,
+                     "A second undo restores the state before the preceding color drop")
         model.removeWorkspace(favoriteID)
         precondition(!model.acceptFileDrop([svg], workspaceID: favoriteID, directory: nil, copy: false))
         try await selectionFeedback(base: base.appendingPathComponent("selection-feedback"))

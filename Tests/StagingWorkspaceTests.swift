@@ -13,7 +13,8 @@ import Foundation
         try await transferSafety(base)
         try await directoryTransfer(base)
         try await transferDestinationAliases(base)
-        try persistenceTransactionsAndRetention(base)
+        try await persistenceTransactionsAndRetention(base)
+        try await undoBookmarksStayOutOfConfiguration(base)
         try freshAppearanceMetadata(base)
         try await backgroundRefreshSafety(base)
         print("PASS: staging persistence, scope retention, bounded writes, refresh concurrency, appearance metadata, path aliases, reference safety, partial transfers and blacklist settings")
@@ -253,7 +254,7 @@ import Foundation
         precondition(reloaded.stagedURLs.isEmpty && fm.fileExists(atPath: targets[0].path))
     }
 
-    @MainActor private static func persistenceTransactionsAndRetention(_ base: URL) throws {
+    @MainActor private static func persistenceTransactionsAndRetention(_ base: URL) async throws {
         let fm = FileManager.default
         let root = base.appendingPathComponent("persistence-source")
         try fm.createDirectory(at: root, withIntermediateDirectories: true)
@@ -263,7 +264,7 @@ import Foundation
             return url
         }
         let storage = base.appendingPathComponent("batch/config.json")
-        let model = makeTestModel(storageURL: storage)
+        var model = makeTestModel(storageURL: storage)
         var writes = model.configurationWriteCount
         precondition(model.stageFiles(files))
         precondition(model.configurationWriteCount == writes + 1, "A batch of bookmarks and a lazy shelf must persist once")
@@ -274,7 +275,17 @@ import Foundation
         try expect(bookmarks().isSuperset(of: files.map(\.path)))
         let collection = model.addWorkspace(name: "Retained child", mode: .references, urls: [files[0]])!
         model.clearStagedFiles()
-        try expect(bookmarks() == [files[0].path], "Clearing the shelf removes unused bookmarks while retaining shared references")
+        try expect(bookmarks() == [files[0].path], "Undo-only authorization stays in RAM instead of inflating configuration bookmarks")
+        precondition(model.undoLastFileDrop())
+        try await waitForFileWork(model)
+        precondition(Set(model.stagedURLs) == Set(files))
+        try expect(bookmarks().isSuperset(of: files.map(\.path)), "Restored references re-persist their retained authorization")
+        precondition(model.redoLastFileOperation())
+        try await waitForFileWork(model)
+        try expect(bookmarks() == [files[0].path], "Redo removes undo-only scopes from configuration again")
+        model.save()
+        model = makeTestModel(storageURL: storage); model.save()
+        try expect(bookmarks() == [files[0].path], "A fresh session retains only the shared reference")
         // A parent security scope is still useful when only a child remains referenced.
         let folder = model.addWorkspace(name: "Parent authorization", mode: .folder, urls: [root])!
         model.selectWorkspace(collection.id)
@@ -283,10 +294,23 @@ import Foundation
         // Current directory/history keep access even after the collection reference is removed.
         model.appendReferences([root])
         model.navigate(to: root)
-        model.removeReferences([root, files[0]])
+        // Reloading a scoped bookmark can resolve /var through /private/var.
+        // Remove the current reference URLs, just as the real UI does.
+        model.removeReferences(model.selectedWorkspace!.referencePaths.map { URL(fileURLWithPath: $0) })
         try expect(bookmarks().contains(root.path), "Browsing/history must keep a folder scope alive")
         model.selectWorkspace(model.favoriteWorkspace!.id)
-        try expect(bookmarks().isEmpty, "Changing workspace releases scopes no longer referenced by history")
+        model.save()
+        try expect(bookmarks().isEmpty, "Changing workspace drops navigation-only authorization from configuration")
+        precondition(model.undoLastFileDrop())
+        try await waitForFileWork(model)
+        try expect(bookmarks().contains(root.path), "Reference undo can restore retained authorization after navigation changed")
+        precondition(model.redoLastFileOperation())
+        try await waitForFileWork(model)
+        try expect(bookmarks().isEmpty, "Redo returns restored authorization to session-only history")
+        model.save()
+        model = makeTestModel(storageURL: storage); model.save()
+        let remaining = try bookmarks()
+        expect(remaining.isEmpty, "A new session releases scopes no longer referenced by browsing or undo history: \(remaining)")
         var workspace = model.workspaces.first { $0.id == collection.id }!
         workspace.customIconPath = files[1].path
         model.updateWorkspace(workspace)
@@ -318,6 +342,50 @@ import Foundation
         model.workspaces[0].name = originalName
         precondition(model.configurationWriteCount == writes + 1)
         precondition(files.allSatisfy { fm.fileExists(atPath: $0.path) }, "Scope garbage collection must not remove files")
+    }
+
+    @MainActor private static func undoBookmarksStayOutOfConfiguration(_ base: URL) async throws {
+        let root = base.appendingPathComponent("undo-bookmark-batches", isDirectory: true)
+        let fm = FileManager.default
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+        let storage = base.appendingPathComponent("undo-bookmark-config.json")
+        let model = makeTestModel(storageURL: storage)
+        model.setStagingEnabled(true); model.openStagingWorkspace(); model.save()
+        let emptySize = try Data(contentsOf: storage).count
+        var lastBatch: [URL] = []
+        var lastBookmarks: [String: String] = [:]
+        func encodedBookmarks() throws -> [String: String] {
+            let value = try JSONSerialization.jsonObject(with: Data(contentsOf: storage)) as! [String: Any]
+            return value["bookmarks"] as! [String: String]
+        }
+        // One thousand real paths across twenty distinct batches exercises
+        // the history bound without requiring thousands of file contents.
+        for batch in 0..<20 {
+            let files = try (0..<50).map { item -> URL in
+                let url = root.appendingPathComponent("batch-\(batch)-\(item).txt")
+                try Data("fixture".utf8).write(to: url)
+                return url
+            }
+            precondition(model.stageFiles(files))
+            lastBookmarks = try encodedBookmarks()
+            precondition(lastBookmarks.count == files.count, "Only the current fifty references may be serialized")
+            try expect(Data(contentsOf: storage).count < 512 * 1024, "History cannot expand a small active shelf into a large configuration")
+            model.clearStagedFiles()
+            try expect(encodedBookmarks().isEmpty, "Undo-only bookmarks cannot remain in the saved configuration")
+            try expect(Data(contentsOf: storage).count <= emptySize + 1024,
+                "Repeated distinct batches must return to the original small configuration size")
+            precondition(model.errorMessage == nil)
+            lastBatch = files
+        }
+        precondition(model.undoLastFileDrop())
+        try await waitForFileWork(model)
+        precondition(Set(model.stagedURLs) == Set(lastBatch))
+        try expect(encodedBookmarks() == lastBookmarks,
+            "Undo reuses the same retained bookmark data when its references become persistent again")
+        precondition(model.redoLastFileOperation())
+        try await waitForFileWork(model)
+        try expect(encodedBookmarks().isEmpty)
+        precondition(fm.fileExists(atPath: lastBatch[0].path), "Configuration pruning never removes a file")
     }
 
     @MainActor private static func freshAppearanceMetadata(_ base: URL) throws {
@@ -412,6 +480,13 @@ import Foundation
             try await Task.sleep(nanoseconds: 5_000_000)
         }
         precondition(!model.isRefreshingInBackground, "Metadata refresh should finish within the fixture timeout")
+    }
+
+    @MainActor private static func waitForFileWork(_ model: HubModel) async throws {
+        let deadline = Date().addingTimeInterval(10)
+        while model.fileOperationsInProgress > 0 && Date() < deadline { try await Task.sleep(nanoseconds: 5_000_000) }
+        precondition(model.fileOperationsInProgress == 0 && model.errorMessage == nil,
+            "Fixture undo/redo must finish without errors: \(String(describing: model.errorMessage))")
     }
 
 }

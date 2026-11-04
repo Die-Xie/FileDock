@@ -142,18 +142,26 @@ struct HubSelectionPlate: NSViewRepresentable {
     var selectionFrame: CGRect?
     var cornerRadius: CGFloat = 8
     var motion: HubInterfaceMotion
+    // Type availability changes its strip's width and left origin together.
+    // Other strips keep their existing local-coordinate selection behavior.
+    var tracksContainerPosition = false
+    var duration: TimeInterval? = nil
     @Environment(\.colorScheme) private var colorScheme
 
     func makeNSView(context: Context) -> PlateView { PlateView() }
     func updateNSView(_ view: PlateView, context: Context) {
         view.update(frame: selectionFrame, cornerRadius: cornerRadius,
-                    color: (colorScheme == .dark ? NSColor.white : .black).withAlphaComponent(0.12), motion: motion)
+                    color: (colorScheme == .dark ? NSColor.white : .black).withAlphaComponent(0.12), motion: motion,
+                    tracksContainerPosition: tracksContainerPosition, duration: duration)
     }
 
     final class PlateView: NSView {
         private(set) var selectionLayer = CALayer()
         private(set) var targetFrame: CGRect?
         private var motionEnabled = false
+        private var tracksContainerPosition = false
+        private var windowOrigin: CGPoint?
+        private var transitionDuration: TimeInterval = 0.28
         var presentationFrame: CGRect? {
             guard targetFrame != nil else { return nil }
             return selectionLayer.presentation()?.frame ?? selectionLayer.frame
@@ -172,18 +180,35 @@ struct HubSelectionPlate: NSViewRepresentable {
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
-            if window == nil { selectionLayer.removeAllAnimations() }
+            if window == nil { selectionLayer.removeAllAnimations(); windowOrigin = nil }
+            else { windowOrigin = convert(CGPoint.zero, to: nil) }
         }
+        override func setFrameOrigin(_ newOrigin: NSPoint) {
+            super.setFrameOrigin(newOrigin)
+            followContainerPosition()
+        }
+        override func setFrameSize(_ newSize: NSSize) {
+            super.setFrameSize(newSize)
+            followContainerPosition()
+        }
+        override func layout() { super.layout(); followContainerPosition() }
 
-        func update(frame: CGRect?, cornerRadius: CGFloat, color: NSColor, motion: HubInterfaceMotion) {
+        func update(frame: CGRect?, cornerRadius: CGFloat, color: NSColor, motion: HubInterfaceMotion,
+                    tracksContainerPosition: Bool = false, duration: TimeInterval? = nil) {
             let next = frame.flatMap { frame -> CGRect? in
                 frame.minX.isFinite && frame.minY.isFinite && frame.width.isFinite && frame.height.isFinite &&
                     frame.width > 0 && frame.height > 0 ? frame : nil
             }
             let previous = targetFrame
-            let current = presentationFrame
-            let changed = next != previous || motion.enabled != motionEnabled
+            let currentOrigin = window == nil ? nil : convert(CGPoint.zero, to: nil)
+            let correction = tracksContainerPosition && self.tracksContainerPosition ? containerCorrection() : .zero
+            let current = presentationFrame?.offsetBy(dx: correction.x, dy: correction.y)
+            let changed = next != previous || motion.enabled != motionEnabled || correction != .zero
             targetFrame = next; motionEnabled = motion.enabled
+            self.tracksContainerPosition = tracksContainerPosition
+            if tracksContainerPosition { layer?.masksToBounds = false }
+            windowOrigin = currentOrigin
+            transitionDuration = duration.flatMap { $0.isFinite && $0 > 0 ? min(1, $0) : nil } ?? motion.selectionDuration
             CATransaction.begin(); CATransaction.setDisableActions(true)
             selectionLayer.backgroundColor = color.cgColor
             selectionLayer.cornerRadius = cornerRadius
@@ -194,13 +219,32 @@ struct HubSelectionPlate: NSViewRepresentable {
             } else { selectionLayer.opacity = 0 }
             CATransaction.commit()
             guard changed, motion.enabled, previous != nil, let current, let next, current != next else { return }
+            animate(from: current, to: next)
+        }
+
+        private func containerCorrection() -> CGPoint {
+            guard window != nil, let windowOrigin else { return .zero }
+            let correction = convert(windowOrigin, from: nil)
+            return correction.x.isFinite && correction.y.isFinite ? correction : .zero
+        }
+        private func followContainerPosition() {
+            guard tracksContainerPosition, window != nil else { return }
+            let correction = containerCorrection()
+            windowOrigin = convert(CGPoint.zero, to: nil)
+            guard correction != .zero, let next = targetFrame, let current = presentationFrame else { return }
+            CATransaction.begin(); CATransaction.setDisableActions(true)
+            selectionLayer.removeAllAnimations(); selectionLayer.frame = next
+            CATransaction.commit()
+            if motionEnabled { animate(from: current.offsetBy(dx: correction.x, dy: correction.y), to: next) }
+        }
+        private func animate(from current: CGRect, to next: CGRect) {
             let position = CABasicAnimation(keyPath: "position")
             position.fromValue = NSValue(point: CGPoint(x: current.midX, y: current.midY))
             position.toValue = NSValue(point: CGPoint(x: next.midX, y: next.midY))
             let bounds = CABasicAnimation(keyPath: "bounds")
             bounds.fromValue = NSValue(rect: CGRect(origin: .zero, size: current.size))
             bounds.toValue = NSValue(rect: CGRect(origin: .zero, size: next.size))
-            let duration = motion.selectionDuration
+            let duration = transitionDuration
             position.duration = duration; bounds.duration = duration
             let animation = CAAnimationGroup()
             animation.animations = [position, bounds]; animation.duration = duration

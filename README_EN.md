@@ -82,6 +82,8 @@ The following technical documents and most earlier release notes are currently i
 - [Code quality and performance review](docs/QUALITY_REVIEW.md)
 - [Release notes](docs/releases/)
 
+**1.36.4** restores single and multiple file drops into folders, unifies undo and redo for common file operations, and adds visible, natural type-bar transitions when switching tabs. [Release notes](docs/releases/v1.36.4.md).
+
 **1.36.3** stabilizes footer counts and type-filter alignment, keeping the More anchor fixed while retaining short micro-animations. [Release notes](docs/releases/v1.36.3.md).
 
 **1.36.2** refines continuous tab and file transitions, coalesces selection saves and reuses directory snapshots to reduce switching stalls. [Release notes](docs/releases/v1.36.2.md).

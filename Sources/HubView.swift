@@ -1033,13 +1033,13 @@ struct HubView: View {
                     model.reorderEntries(urls, before: plan.slot?.before)
                     return true
                 }
-                if region == .staging { return model.stageFiles(urls) }
+                if region == .staging { return finishExternalColorDrop(model.stageFiles(urls), payload: payload) }
                 let label = region == .content && plan.item == nil ? model.colorLabelFilter : nil
                 let accepted = model.acceptFileDrop(urls, workspaceID: plan.workspaceID, directory: plan.directory, copy: copy,
                     insertionOrder: plan.slot == nil ? nil : order, before: plan.slot?.before, labelOnDrop: label)
                 if region == .content { hubFileDropLogger.notice("route=native-content color=\(label?.rawValue ?? -1, privacy: .public) folder=\(plan.item != nil, privacy: .public) accepted=\(accepted, privacy: .public)") }
                 if !accepted && model.errorMessage == nil { model.errorMessage = L("目标暂时不可用，文件尚未转移。请等待正在进行的操作完成后重试。") }
-                return label == nil ? accepted : finishExternalColorDrop(accepted, payload: payload)
+                return finishExternalColorDrop(accepted, payload: payload)
             })
     }
 
@@ -1139,6 +1139,26 @@ struct HubView: View {
             guard let id = model.selectedWorkspaceID, !model.isRecentsRoot else { return nil }
             let hit = frames.first(where: { $0.value.contains(point) })?.key
             let reorder = payload.map { HubFileDragData.shouldReorder($0, in: fileDragContext) } ?? false
+            // The middle of a folder is a filesystem destination, even when
+            // the source comes from this same collection. Resolve it before
+            // presentation reordering (including grouped/reference lists).
+            // Rows reserve only their top/bottom edges for insertion so the
+            // folder icon and name remain natural targets in wide list rows.
+            if let target = hit, let entry = model.entries.first(where: { $0.url == target && $0.exists && $0.canNavigate }),
+               let frame = frames[target],
+               frame.insetBy(dx: model.viewMode == .grid ? frame.width * 0.24 : 0,
+                             dy: frame.height * 0.18).contains(point) {
+                let directory = entry.url.standardizedFileURL
+                // No filesystem work while tracking the pointer. The worker
+                // repeats this check with canonical paths before transferring,
+                // which also covers aliases reached through symbolic links.
+                guard !urls.contains(where: { source in
+                    let source = source.standardizedFileURL
+                    return directory.path == source.path || directory.path.hasPrefix(source.path.hasSuffix("/") ? source.path : source.path + "/")
+                }) else { return nil }
+                return HubFileDropPlan(workspaceID: id, directory: directory, item: entry.url,
+                    title: entry.url.lastPathComponent, action: copy ? .copy : .move)
+            }
             // Group membership is determined by metadata. Reordering may
             // change presentation only and cannot move files across groups.
             if model.groupingActive && reorder {
@@ -1157,18 +1177,13 @@ struct HubView: View {
                 return HubFileDropPlan(workspaceID: id, directory: model.currentURL, item: nil,
                     title: group.title, action: .reorder, slot: slot, groupID: group.id)
             }
-            let folder = hit.flatMap { target -> URL? in
-                guard !reorder, !model.isReferenceRoot, !model.isStagingRoot, let entry = model.entries.first(where: { $0.url == target && $0.canNavigate }),
-                      let frame = frames[target], frame.insetBy(dx: frame.width * 0.24, dy: frame.height * 0.18).contains(point) else { return nil }
-                return entry.url
-            }
             let reference = model.isReferenceRoot || model.isStagingRoot
-            let slot = folder == nil && !model.groupingActive ? HubFileInsertionSlot.resolve(at: point, frames: frames, order: order,
+            let slot = !model.groupingActive ? HubFileInsertionSlot.resolve(at: point, frames: frames, order: order,
                 content: content, horizontal: model.viewMode != .grid || model.settings.horizontalScroll,
                 excluding: reorder ? Set(payload?.urls ?? []) : []) : nil
-            return HubFileDropPlan(workspaceID: id, directory: reference ? nil : folder ?? model.currentURL,
-                item: folder,
-                title: folder?.lastPathComponent ?? model.currentURL?.lastPathComponent ?? model.selectedWorkspace.map { model.displayName(for: $0) } ?? L("当前工作区"),
+            return HubFileDropPlan(workspaceID: id, directory: reference ? nil : model.currentURL,
+                item: nil,
+                title: model.currentURL?.lastPathComponent ?? model.selectedWorkspace.map { model.displayName(for: $0) } ?? L("当前工作区"),
                 action: reorder ? .reorder : reference ? .reference : copy ? .copy : .move, slot: slot)
         case .item, .tabViewport, .header, .headerControls, .headerMusic: return nil
         }

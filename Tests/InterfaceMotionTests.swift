@@ -14,6 +14,7 @@ import Combine
         try await lifecycle()
         try await stableHosting()
         try await nativePlatePresentation()
+        try await nativePlateContainerTracking()
         print("PASS: bounded/scaled interface motion, quiet short jobs, minimum indicator dwell, progress coalescing, hidden/cancelled tasks, selection-only animation and stable native file/tab destinations under rapid switching")
         print("LIMIT: Hidden hosting and callback tests do not measure WindowServer frame rate or subjective motion quality")
     }
@@ -282,6 +283,36 @@ import Combine
         precondition(view.presentationFrame == nil && view.selectionLayer.opacity == 0,
                      "Leaving a strip hides its plate instead of moving it across the physical notch")
         print("PASS: native selection plate intermediate positions \(positions), presentation-based interruption and immediate cancellation")
+    }
+
+    @MainActor private static func nativePlateContainerTracking() async throws {
+        let host = NSView(frame: CGRect(x: 0, y: 0, width: 400, height: 100))
+        let regular = HubSelectionPlate.PlateView(frame: CGRect(x: 20, y: 10, width: 120, height: 32))
+        let tracked = HubSelectionPlate.PlateView(frame: CGRect(x: 20, y: 52, width: 120, height: 32))
+        host.addSubview(regular); host.addSubview(tracked)
+        let panel = NSPanel(contentRect: CGRect(x: -2000, y: -2000, width: 400, height: 100),
+                            styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        panel.isReleasedWhenClosed = false; panel.ignoresMouseEvents = true; panel.contentView = host
+        defer { panel.orderOut(nil); panel.contentView = nil; panel.close() }
+        panel.orderFrontRegardless()
+        let target = CGRect(x: 2, y: 2, width: 30, height: 24), motion = HubInterfaceMotion(enabled: true)
+        regular.update(frame: target, cornerRadius: 5, color: .white, motion: motion)
+        tracked.update(frame: target, cornerRadius: 5, color: .white, motion: motion, tracksContainerPosition: true, duration: 0.36)
+        CATransaction.flush(); try await Task.sleep(nanoseconds: 40_000_000)
+        let originalCenter = tracked.convert(tracked.presentationFrame!, to: host).midX
+        regular.setFrameOrigin(CGPoint(x: 180, y: 10)); tracked.setFrameOrigin(CGPoint(x: 180, y: 52))
+        CATransaction.flush(); try await Task.sleep(nanoseconds: 40_000_000)
+        let rendered = tracked.convert(tracked.presentationFrame!, to: host).midX
+        let finalCenter = tracked.convert(target, to: host).midX
+        precondition(rendered > originalCenter + 2 && rendered < finalCenter - 2,
+                     "Opt-in type plates follow a changed native container origin from their previous rendered position")
+        precondition(regular.selectionLayer.animation(forKey: "selection") == nil && regular.presentationFrame == target,
+                     "Header/color plates retain default local-coordinate behavior when opt-in tracking is absent")
+        tracked.update(frame: target, cornerRadius: 5, color: .white, motion: HubInterfaceMotion(enabled: false), tracksContainerPosition: true, duration: 0.36)
+        CATransaction.flush()
+        precondition(tracked.selectionLayer.animation(forKey: "selection") == nil && tracked.presentationFrame == target)
+        precondition(tracked.hitTest(.zero) == nil && tracked.registeredDraggedTypes.isEmpty)
+        print("PASS: opt-in container-origin tracking preserves global plate continuity without changing header/default behavior")
     }
 }
 
