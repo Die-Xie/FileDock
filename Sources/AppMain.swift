@@ -246,6 +246,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
             } else {
                 self.configureHotKeys()
                 self.updatePanelLevel()
+                // A picker may close with the pointer outside the browser.
+                // Give it the same bounded return period as a context menu,
+                // then resume the normal hide policy without changing pinning.
+                self.panelInteractionGrace.begin(now: ProcessInfo.processInfo.systemUptime)
+                self.hoverDismissal.reset()
+                self.fileDragDismissal.reset()
             }
         }
     }
@@ -834,6 +840,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, @pre
 
     func windowWillMove(_ notification: Notification) {
         guard !restoringSize, let window = notification.object as? NSWindow, window === panel,
+              windowDragSession != nil, !hasActiveDialog,
               desiredVisible, !panel.inLiveResize, !surface.isResizing, attachedToNotch || anchoredCorner != nil else { return }
         attachedToNotch = false
         anchoredCorner = nil

@@ -10,6 +10,14 @@ enum HubWindowPresentation {
 
     static var isPresentingDialog: Bool { !dialogStack.isEmpty }
 
+    /// A SwiftUI context-menu callback still belongs to AppKit's tracking
+    /// loop. Starting a modal picker there nests two owners of focus and
+    /// dismissal. Return from the menu first; default mode also waits for any
+    /// submenu tracking to finish, unlike DispatchQueue.main.async.
+    static func performMenuAction(_ action: @escaping @MainActor () -> Void) {
+        RunLoop.main.perform(inModes: [.default]) { MainActor.assumeIsolated { action() } }
+    }
+
     /// Embedded chrome stays in place above the menu bar. Its own settings,
     /// preview and modal windows receive higher levels instead of exposing it.
     static func browserLevel(embedded: Bool) -> NSWindow.Level {

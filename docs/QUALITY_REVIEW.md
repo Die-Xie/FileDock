@@ -1,5 +1,16 @@
 # FileDock 代码质量与性能 Review — 2026-10-24
 
+## 1.36.5 右键选择器与自动收回复审（2026-11-05–06）
+
+- 运行中的旧版 AppKit 日志确认：`HubFileNameHoverRouter` 收到 `mouseEntered:` / `mouseExited:` 时抛出 unrecognized selector。该对象继承 NSObject，Swift 的 `mouseEntered(with:)` 不会继承 NSResponder 的 Objective-C 名称映射。异常发生在 NSSavePanel 模态循环内部，打断选择器，并可绕过 Swift `defer` 的作用域清理，使自动收回持续认为存在弹窗。
+- 为两个跟踪回调明确注册 AppKit 的原生 selector；退出窗口直接撤销悬停提示。已有提示的延迟任务和移动路由也检查原生模态窗口及当前窗口的附着 sheet，避免选择器或编辑窗口打开时在后台显示提示。不增加轮询、全局事件监听或逐帧状态发布。
+- `HubMenuButton` 在主运行循环的 default mode 执行动作，等右键菜单及子菜单的 tracking mode 完整退出；不使用仍可能在菜单内执行的普通主队列异步回调。动作只执行一次，保持顺序。
+- 模态作用域结束后重置收回计时，并启用已有的、有明确到期时间的鼠标返回宽限；不修改用户固定偏好。`windowWillMove` 只处理已由标题拖动入口登记的真实拖动会话，系统窗口通知不能误触发自动固定。
+- 新增 selector 实际分发断言：旧源码明确失败于 `mouseEntered:`，修复版通过。新增可选的 ContextMenuPickerLifecycleTests：调用真实 SwiftUI 菜单的 target/action，在网格、列表、分栏分别连续打开并自动取消两次添加选择器，另覆盖暂存项的复制、移动及“打开方式 → 其他应用…”子菜单，共九次；验证动作在 tracking 退出后执行、层级高于面板、模态状态与原始位置／固定状态／层级正确恢复。子菜单的独立选择器也接入统一菜单调度。当前 macOS 的选择器远程服务要求真实 bundle，因此可见测试打包为独立临时 App；不加载用户配置或添加用户文件。
+- WindowPresentationTests 覆盖嵌套、异常退出、观察者回收及菜单调度；HoverActivationTests 与 WindowAttachmentTests 复测收回计时、有限宽限和拖出固定所有权。文件名测试覆盖 Unicode、截断判定、原生 selector 分发、透明命中及窗口尺寸。
+- 扩展 ModalPanelLifecycleTests：验证工作区／引用／转移选择器、重复调用、设置导出、独立面板和附着编辑窗口内的嵌套选择器，共七次真实打开与自动取消；验证 WindowServer 层级、内层取消保留外层 sheet，外层关闭后所有模态状态释放。HeaderWindowDragTests、BackgroundContextMenuTests 与 SharingWindowTests 也通过。
+- 验证边界：原生回归没有合成系统鼠标输入。安装版的右键添加选择器已稳定显示，用户确认完成或取消后面板可以正常自动收回；重启保留八个工作区和已有设置。没有据此宣称完成 GPU 帧率测量。
+
 基线：本地发布版本 1.14.1/build19。本轮检查源代码、异步任务与资源生命周期，并使用隔离文件和模拟后端验证，不修改用户文档或音乐播放状态。性能数字来自本机测试，不代表屏幕帧率。
 
 ## 本轮已修复

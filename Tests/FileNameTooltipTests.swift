@@ -4,6 +4,15 @@ import SwiftUI
 @main
 struct FileNameTooltipTests {
     @MainActor static func main() async {
+        _ = NSApplication.shared
+        let router = HubFileNameHoverRouter.shared
+        for (name, type) in [("mouseEntered:", NSEvent.EventType.mouseEntered), ("mouseExited:", .mouseExited)] {
+            let selector = NSSelectorFromString(name)
+            precondition(router.responds(to: selector), "Tracking-area owners must implement AppKit's exact \(name) selector")
+            let event = NSEvent.enterExitEvent(with: type, location: .zero, modifierFlags: [], timestamp: 0,
+                windowNumber: 0, context: nil, eventNumber: 0, trackingNumber: 0, userData: nil)!
+            router.perform(selector, with: event)
+        }
         let short = "报告🚀.txt"
         let long = String(repeating: "完整文件名🚀-", count: 15) + ".svg"
         precondition(!HubFileNameTooltip.isTruncated(short, fontSize: 12, lines: 1, size: NSSize(width: 500, height: 20)))
@@ -28,6 +37,6 @@ struct FileNameTooltipTests {
         popup.prepareContent("short.txt")
         precondition(popup.contentSize.width > 40 && popup.contentSize.height >= 28 && popup.contentSize.width < expanded.width,
                      "Reused popup windows must resize to the next filename")
-        print("PASS: filename truncation, multiline Unicode and non-intercepting tracking")
+        print("PASS: exact native tracking selectors and dispatch, filename truncation, multiline Unicode and non-intercepting tracking")
     }
 }

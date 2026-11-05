@@ -182,10 +182,15 @@ final class HubFileNameHoverRouter: NSObject {
             if let deactivation { NotificationCenter.default.removeObserver(deactivation) }; deactivation = nil
         }
     }
-    @objc func mouseEntered(with event: NSEvent) { handle(event) }
-    @objc func mouseExited(with event: NSEvent) { handle(event) }
+    // NSObject does not inherit NSResponder's selector mapping. Without the
+    // explicit names Swift exports mouseExitedWithEvent:, while NSTrackingArea
+    // sends mouseExited:. An exception here can unwind AppKit's modal loop
+    // without unwinding Swift's dialog scope, leaving auto-hide suspended.
+    @objc(mouseEntered:) func mouseEntered(with event: NSEvent) { handle(event) }
+    @objc(mouseExited:) func mouseExited(with event: NSEvent) { HubFileNamePopup.shared.dismiss() }
     func handle(_ event: NSEvent) {
-        guard let window = event.window, NSEvent.pressedMouseButtons == 0 else { HubFileNamePopup.shared.dismiss(); return }
+        guard NSApp.modalWindow == nil, let window = event.window, window.attachedSheet == nil,
+              NSEvent.pressedMouseButtons == 0 else { HubFileNamePopup.shared.dismiss(); return }
         let area = areas.values.first { item in
             guard let view = item.view else { return false }
             return view.window === window && view.enabled && !view.isHiddenOrHasHiddenAncestor &&
@@ -235,6 +240,7 @@ final class HubFileNamePopup {
             guard let self, self.generation == ticket else { return }
             guard let view, self.owner === view, view.enabled,
                   let window = view.window, window.isVisible, NSApp.isActive,
+                  NSApp.modalWindow == nil, window.attachedSheet == nil,
                   NSEvent.pressedMouseButtons == 0 else { self.dismiss(); return }
             self.pending = nil
             self.prepareContent(view.name)

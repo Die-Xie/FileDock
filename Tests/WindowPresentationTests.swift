@@ -4,6 +4,23 @@ import AppKit
 @main struct WindowPresentationTests {
     @MainActor static func main() {
         _ = NSApplication.shared
+        var menuActions: [Int] = []
+        var actionModes: [RunLoop.Mode?] = []
+        RunLoop.main.perform(inModes: [.eventTracking]) {
+            MainActor.assumeIsolated {
+                for value in 0..<3 {
+                    HubWindowPresentation.performMenuAction {
+                        actionModes.append(RunLoop.current.currentMode)
+                        menuActions.append(value)
+                    }
+                }
+            }
+        }
+        for _ in 0..<3 { RunLoop.main.run(mode: .eventTracking, before: Date().addingTimeInterval(0.01)) }
+        expect(menuActions.isEmpty, "Menu actions must wait for the entire tracking loop to unwind")
+        for _ in 0..<3 { RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.01)) }
+        expect(menuActions == [0, 1, 2] && actionModes.allSatisfy { $0 == .default },
+               "Menu actions execute once, in order, outside nested tracking")
         let browser = window(level: .floating), bridge = window(level: .statusBar)
         let settings = window(level: .floating), sheet = window(level: .floating)
         browser.addChildWindow(sheet, ordered: .above)

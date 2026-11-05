@@ -11,7 +11,11 @@ private struct HubMenuButton: View {
     var role: ButtonRole?
     var action: () -> Void
     init(_ title: String, systemImage: String, role: ButtonRole? = nil, action: @escaping () -> Void) { self.title = title; self.systemImage = systemImage; self.role = role; self.action = action }
-    var body: some View { Button(role: role, action: action) { Label(title, systemImage: systemImage) } }
+    var body: some View {
+        Button(role: role) { HubWindowPresentation.performMenuAction(action) } label: {
+            Label(title, systemImage: systemImage)
+        }
+    }
 }
 
 /// A shallow full-width tint gives the notch join a shared surface; the
@@ -1669,7 +1673,9 @@ struct HubView: View {
                 ForEach(NSWorkspace.shared.urlsForApplications(toOpen: entry.url), id: \.self) { application in
                     Button { NSWorkspace.shared.open([entry.url], withApplicationAt: application, configuration: NSWorkspace.OpenConfiguration()) } label: { Text(application.deletingPathExtension().lastPathComponent) }
                 }
-                Button(L("其他应用…")) { chooseApplication(for: entry.url) }
+                Button(L("其他应用…")) {
+                    HubWindowPresentation.performMenuAction { chooseApplication(for: entry.url) }
+                }
             }
         }
         HubMenuButton(L("快速查看"), systemImage: "eye") { preview(urls) }.disabled(HubInlinePreviewPolicy.quickLookURLs(urls).isEmpty)

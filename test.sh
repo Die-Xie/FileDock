@@ -303,6 +303,32 @@ swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache
     -framework QuickLookThumbnailing -framework ImageIO -framework ServiceManagement -framework UniformTypeIdentifiers -framework ApplicationServices \
     -F "$TASK_SPARKLE" -framework Sparkle -Xlinker -rpath -Xlinker "$TASK_SPARKLE"
 .build/background-context-menu-tests
+if [[ "${FILEDOCK_TEST_VISIBLE_PANELS:-0}" == 1 ]]; then
+    swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache "${TASK_VIEW_TEST_SOURCES[@]}" \
+        Tests/ModelTestSupport.swift Tests/ContextMenuPickerLifecycleTests.swift -o .build/context-menu-picker-lifecycle-tests \
+        -framework AppKit -framework SwiftUI -framework Combine -framework Carbon -framework Quartz \
+        -framework QuickLookThumbnailing -framework ImageIO -framework ServiceManagement -framework UniformTypeIdentifiers -framework ApplicationServices \
+        -F "$TASK_SPARKLE" -framework Sparkle -Xlinker -rpath -Xlinker "$TASK_SPARKLE"
+    # NSOpenPanel's remote service needs a real bundle on current macOS.
+    TASK_PICKER_APP=.build/ContextMenuPickerTests.app
+    mkdir -p "$TASK_PICKER_APP/Contents/MacOS"
+    cp .build/context-menu-picker-lifecycle-tests "$TASK_PICKER_APP/Contents/MacOS/ContextMenuPickerTests"
+    cat > "$TASK_PICKER_APP/Contents/Info.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>local.diexie.filedock.context-menu-tests</string><key>CFBundleExecutable</key><string>ContextMenuPickerTests</string><key>CFBundleName</key><string>FileDock Menu Tests</string><key>CFBundlePackageType</key><string>APPL</string><key>LSUIElement</key><true/></dict></plist>
+PLIST
+    codesign --force --sign - "$TASK_PICKER_APP"
+    "$TASK_PICKER_APP/Contents/MacOS/ContextMenuPickerTests"
+    swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache \
+        Sources/WindowPresentation.swift Tests/ModalPanelLifecycleTests.swift -o .build/modal-panel-lifecycle-tests \
+        -framework AppKit -framework CoreGraphics
+    TASK_MODAL_APP=.build/ModalPanelLifecycleTests.app
+    mkdir -p "$TASK_MODAL_APP/Contents/MacOS"
+    cp .build/modal-panel-lifecycle-tests "$TASK_MODAL_APP/Contents/MacOS/ModalPanelLifecycleTests"
+    sed 's/ContextMenuPickerTests/ModalPanelLifecycleTests/g; s/context-menu-tests/modal-panel-tests/g; s/FileDock Menu Tests/FileDock Modal Tests/g' \
+        "$TASK_PICKER_APP/Contents/Info.plist" > "$TASK_MODAL_APP/Contents/Info.plist"
+    codesign --force --sign - "$TASK_MODAL_APP"
+    "$TASK_MODAL_APP/Contents/MacOS/ModalPanelLifecycleTests"
+fi
 swiftc -swift-version 5 -parse-as-library -module-cache-path .build/module-cache "${TASK_VIEW_TEST_SOURCES[@]}" \
     Tests/ModelTestSupport.swift Tests/NativeReorderRoutingTests.swift -o .build/native-reorder-routing-tests \
     -framework AppKit -framework SwiftUI -framework Combine -framework Carbon -framework Quartz \

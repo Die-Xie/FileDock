@@ -46,8 +46,21 @@ import CoreGraphics
         browser.level = .floating
         HubWindowPresentation.backgroundWindows = { [browser] }
         check(folder, browser: browser, name: "detached browser")
+        browser.level = .statusBar
+        let editor = NSWindow(contentRect: NSRect(x: 350, y: 400, width: 400, height: 180),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        editor.isReleasedWhenClosed = false
+        browser.beginSheet(editor)
+        check(folder, browser: browser, name: "picker above attached editor", above: editor.level)
+        expect(browser.attachedSheet === editor && editor.isVisible,
+               "Cancelling an inner picker must preserve its outer editor")
+        browser.endSheet(editor, returnCode: .cancel)
+        editor.orderOut(nil)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        expect(browser.attachedSheet == nil && NSApp.modalWindow == nil,
+               "Closing both nested windows must release all modal owners")
         expect(browser.frame == frame, "Presenting a picker must never move the browser")
-        expect(transitions == Array(repeating: [true, false], count: 6).flatMap { $0 },
+        expect(transitions == Array(repeating: [true, false], count: 7).flatMap { $0 },
                "Every presentation must release its modal scope")
         print("PASS: real open/save modal lifecycle, WindowServer ordering, repeated presentation, settings and detached levels, automatic cancellation and restoration")
     }

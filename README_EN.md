@@ -82,7 +82,7 @@ The following technical documents and most earlier release notes are currently i
 - [Code quality and performance review](docs/QUALITY_REVIEW.md)
 - [Release notes](docs/releases/)
 
-**1.36.4** restores single and multiple file drops into folders, unifies undo and redo for common file operations, and adds visible, natural type-bar transitions when switching tabs. [Release notes](docs/releases/v1.36.4.md).
+**1.36.5** fixes the Add Items picker flashing or disappearing and leaving the panel unable to hide automatically. Folder drops, undo/redo and natural type-bar transitions are retained. [Release notes](docs/releases/v1.36.5.md).
 
 **1.36.3** stabilizes footer counts and type-filter alignment, keeping the More anchor fixed while retaining short micro-animations. [Release notes](docs/releases/v1.36.3.md).
 
